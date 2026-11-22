@@ -176,7 +176,7 @@ namespace BifrostQL.Server.Prometheus
                 return null;
 
             var carrier = new DefaultHttpContext { User = principal };
-            return _authFactory.CreateUserContext(carrier);
+            return UserContexts.Copy(_authFactory.CreateUserContext(carrier));
         }
     }
 }

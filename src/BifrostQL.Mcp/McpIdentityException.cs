@@ -14,8 +14,17 @@ namespace BifrostQL.Mcp
     internal sealed class McpIdentityException : Exception
     {
         internal McpIdentityException()
-            : base("Authentication failed: this request did not present a valid identity for the session.")
+            : base(RefusalText)
         {
         }
+
+        /// <summary>The same constant refusal, keeping the server-side cause.</summary>
+        internal McpIdentityException(Exception inner)
+            : base(RefusalText, inner)
+        {
+        }
+
+        private const string RefusalText =
+            "Authentication failed: this request did not present a valid identity for the session.";
     }
 }

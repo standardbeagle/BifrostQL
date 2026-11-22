@@ -242,8 +242,26 @@ namespace BifrostQL.Mcp
                 if (principal is not null)
                     carrier.User = principal;
 
-                return authContextFactory.CreateUserContext(carrier);
+                return NormalizeProjection(authContextFactory.CreateUserContext(carrier));
             };
+
+        /// <summary>
+        /// Normalises a factory projection to the case-insensitive user context every surface
+        /// reads. A host <see cref="IBifrostAuthContextFactory"/> may return an ordinal dictionary;
+        /// one holding keys that differ only in case is refused as
+        /// <see cref="McpIdentityException"/>, in the funnelled set, rather than escaping.
+        /// </summary>
+        internal static IDictionary<string, object?> NormalizeProjection(IDictionary<string, object?> projected)
+        {
+            try
+            {
+                return UserContexts.Copy(projected);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new McpIdentityException(ex);
+            }
+        }
 
         /// <summary>
         /// Resolves the presented credential into a candidate <see cref="ClaimsPrincipal"/>, or
@@ -331,19 +349,18 @@ namespace BifrostQL.Mcp
             if (principal is not null)
                 carrier.User = principal;
 
-            IDictionary<string, object?> projected;
+            IDictionary<string, object?> frozen;
             try
             {
-                projected = authContextFactory.CreateUserContext(carrier);
+                frozen = NormalizeProjection(authContextFactory.CreateUserContext(carrier));
             }
-            catch (UnmappedOidcIssuerException ex)
+            catch (Exception ex) when (ex is UnmappedOidcIssuerException or McpIdentityException)
             {
                 // Fail closed, sanitized: rethrow on every tool call so the handler maps it to a
                 // generic MCP error (invariant 3) instead of ever yielding an anonymous context.
                 return () => throw ex;
             }
 
-            var frozen = UserContexts.Copy(projected);
             return () => UserContexts.Copy(frozen);
         }
 

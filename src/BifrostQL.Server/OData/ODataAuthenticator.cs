@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using BifrostQL.Core.Auth;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -194,7 +195,7 @@ namespace BifrostQL.Server.OData
             try
             {
                 context.User = principal;
-                var projected = _authFactory.CreateUserContext(context);
+                var projected = UserContexts.Copy(_authFactory.CreateUserContext(context));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("OData identity projected to an empty user context; rejecting.");

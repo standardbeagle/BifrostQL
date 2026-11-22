@@ -44,11 +44,15 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
             "CREATE TABLE __outbox (id INTEGER PRIMARY KEY, aggregate TEXT NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL, tenant TEXT NULL, created_at TEXT NOT NULL, dispatched_at TEXT NULL, attempts INTEGER NOT NULL DEFAULT 0, dead INTEGER NOT NULL DEFAULT 0, change_set_id INTEGER NULL, state TEXT NULL);" +
             "CREATE TABLE pending_changes (id INTEGER PRIMARY KEY, \"table\" TEXT NOT NULL, op TEXT NOT NULL, intended_payload TEXT NOT NULL, requester TEXT NULL, tenant TEXT NULL, requester_context TEXT NULL, \"state\" TEXT NOT NULL, approver TEXT NULL, decided_at TEXT NULL, reason TEXT NULL);" +
             "INSERT INTO widgets (id, org, name) VALUES (1, 'acme', 'acme-widget'), (2, 'globex', 'globex-widget');");
-        await StartAsync(
-            ":root { tenant-context-key: org_id; history-table: main.__history; outbox-table: main.__outbox }",
-            "main.widgets { tenant-filter: org; deferrable: enabled; undo-window: 1h; concurrency-token: version; history: enabled; hold-events: until-approved }",
-            "main.orders { tenant-filter: org; approval: enabled; approver-role: manager }");
+        await StartAsync(authContextFactory: null);
     }
+
+    private static readonly string[] Metadata =
+    {
+        ":root { tenant-context-key: org_id; history-table: main.__history; outbox-table: main.__outbox }",
+        "main.widgets { tenant-filter: org; deferrable: enabled; undo-window: 1h; concurrency-token: version; history: enabled; hold-events: until-approved }",
+        "main.orders { tenant-filter: org; approval: enabled; approver-role: manager }",
+    };
 
     public async Task DisposeAsync()
     {
@@ -167,6 +171,66 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
         (await ScalarAsync("SELECT tenant FROM change_sets")).Should().Be("acme");
     }
 
+    [Fact]
+    public async Task HostFactory_OrdinalCaseVariantKey_ScopesReadAndMutationAlike()
+    {
+        // A host IBifrostAuthContextFactory returns an ORDINAL dictionary whose tenant key is
+        // "Org_Id" while the model says "org_id". The gate normalises it once, so the read path
+        // (which copies the context) and the mutation path (which reads it directly) agree.
+        await RestartWithFactoryAsync(() => new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["id"] = "a-1",
+            ["Org_Id"] = "acme",
+        });
+
+        using var read = await SendGraphQlAsync("{ widgets { data { name } } }", Member("a-1", "ignored"));
+        using var write = await SendGraphQlAsync(
+            """mutation { widgets(update: { id: 1, name: "acme-edited", version: 1 }) }""", Member("a-1", "ignored"));
+
+        Errors(read).Should().BeEmpty();
+        read.RootElement.GetProperty("data").GetProperty("widgets").GetProperty("data").EnumerateArray()
+            .Select(row => row.GetProperty("name").GetString()).Should().Equal("acme-widget");
+        Errors(write).Should().BeEmpty();
+        (await ScalarAsync("SELECT tenant FROM change_sets")).Should().Be("acme");
+    }
+
+    [Fact]
+    public async Task HostFactory_TwinCaseKeys_AreRefusedAtTheGate()
+    {
+        await RestartWithFactoryAsync(() => new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["id"] = "a-1",
+            ["org_id"] = "acme",
+            ["Org_Id"] = "globex",
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { query = "{ widgets { data { name } } }" }),
+                Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add(ClaimsHeader, Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(
+            new[] { new[] { ClaimTypes.NameIdentifier, "a-1" } })));
+        using var response = await _host!.GetTestClient().SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden, body);
+        body.Should().NotContain("widget");
+    }
+
+    private sealed class FixedAuthContextFactory : IBifrostAuthContextFactory
+    {
+        private readonly Func<IDictionary<string, object?>> _create;
+        public FixedAuthContextFactory(Func<IDictionary<string, object?>> create) => _create = create;
+        public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext context) => _create();
+    }
+
+    private async Task RestartWithFactoryAsync(Func<IDictionary<string, object?>> create)
+    {
+        _host?.Dispose();
+        await StartAsync(new FixedAuthContextFactory(create));
+    }
+
     private async Task<long> AcmeEditsItsWidgetAsync()
     {
         using var reply = await SendGraphQlAsync(
@@ -187,8 +251,9 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
         => reply.RootElement.GetProperty("data").GetProperty("pending_changes").GetProperty("data")
             .EnumerateArray().Select(row => row.GetProperty("id").GetInt64()).ToList();
 
-    private async Task StartAsync(params string[] metadata)
+    private async Task StartAsync(IBifrostAuthContextFactory? authContextFactory)
     {
+        var metadata = Metadata;
         var settings = new Dictionary<string, string?>
         {
             ["Bifrost:DisableAuth"] = "true",
@@ -209,6 +274,8 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
                     .BindConnectionString($"Data Source={_dbPath}")
                     .BindProvider("sqlite"));
                 services.AddBifrostEngine();
+                if (authContextFactory is not null)
+                    services.AddSingleton(authContextFactory);
             });
             web.Configure(app =>
             {

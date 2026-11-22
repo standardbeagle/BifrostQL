@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -58,7 +59,7 @@ namespace BifrostQL.Server.Grpc
             IDictionary<string, object?> projected;
             try
             {
-                projected = authFactory.CreateUserContext(http);
+                projected = UserContexts.Copy(authFactory.CreateUserContext(http));
             }
             catch (Exception ex)
             {

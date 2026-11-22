@@ -124,7 +124,8 @@ namespace BifrostQL.Server
                     RequestServices = scope?.ServiceProvider ?? services!,
                     User = principal,
                 };
-                var projected = authFactory.CreateUserContext(carrier);
+                // Normalised inside the try: keys differing only in case refuse the login.
+                var projected = BifrostQL.Core.Auth.UserContexts.Copy(authFactory.CreateUserContext(carrier));
                 if (projected.Count == 0)
                 {
                     Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(

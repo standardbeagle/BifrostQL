@@ -67,6 +67,46 @@ public class AdapterIdentityProjectionTests
     }
 
     [Fact]
+    public void Project_AHostFactorysOrdinalContext_IsNormalisedToCaseInsensitiveKeys()
+    {
+        // A host factory returns an ordinal dictionary keyed "Org_Id"; the model reads "org_id".
+        var projected = AdapterIdentityProjection.TryProject(
+            new FixedAuthContextFactory(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["id"] = "u", ["Org_Id"] = "acme",
+            }),
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+
+        projected.Should().BeTrue();
+        userContext.TryGetValue("org_id", out var tenant).Should().BeTrue();
+        tenant.Should().Be("acme");
+    }
+
+    [Fact]
+    public void Project_AHostFactorysTwinCaseKeys_AreRefused()
+    {
+        var projected = AdapterIdentityProjection.TryProject(
+            new FixedAuthContextFactory(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["id"] = "u", ["org_id"] = "acme", ["Org_Id"] = "globex",
+            }),
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+
+        projected.Should().BeFalse("which of two case-variant tenant keys a module reads is undefined");
+        userContext.Should().BeEmpty();
+    }
+
+    private static ClaimsPrincipal AuthenticatedPrincipal()
+        => new(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "u") }, "t"));
+
+    private sealed class FixedAuthContextFactory : IBifrostAuthContextFactory
+    {
+        private readonly IDictionary<string, object?> _context;
+        public FixedAuthContextFactory(IDictionary<string, object?> context) => _context = context;
+        public IDictionary<string, object?> CreateUserContext(HttpContext context) => _context;
+    }
+
+    [Fact]
     public void RawWireAdapters_ProjectIdentityOnlyThroughTheSharedSeam()
     {
         var serverRoot = LocateServerSourceRoot();

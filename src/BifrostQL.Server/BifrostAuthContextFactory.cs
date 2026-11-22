@@ -23,6 +23,9 @@ namespace BifrostQL.Server
         /// principal is projected into the full Bifrost user context; an unauthenticated
         /// request yields an empty, mutable dictionary. Throws when the principal carries
         /// an OIDC issuer this deployment has no claim mapper for (fail closed).
+        /// Every projection seam copies the result through <see cref="UserContexts.Copy"/>, so keys
+        /// compare case-insensitively whatever comparer the returned dictionary uses; one holding
+        /// two keys that differ only in case is refused like an unprojectable identity.
         /// </summary>
         IDictionary<string, object?> CreateUserContext(HttpContext context);
 

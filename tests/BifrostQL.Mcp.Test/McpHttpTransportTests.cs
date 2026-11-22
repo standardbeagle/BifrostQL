@@ -286,6 +286,71 @@ namespace BifrostQL.Mcp.Test
             text.Should().NotContain("unmapped.example");
         }
 
+        // ---- a host factory's ordinal context is normalised at the projection seam ----
+
+        private static IDictionary<string, object?> TwinTenantKeys() =>
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["id"] = "user-a", ["tenant_id"] = "tenant-a", ["Tenant_Id"] = "tenant-b",
+            };
+
+        [Fact]
+        public async Task Stdio_HostFactoryTwinCaseKeys_RefusesAsSanitizedError()
+        {
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(
+                new FixedAuthContextFactory(TwinTenantKeys), _host.Services, StdioBearer(ValidToken));
+
+            var result = await StdioQueryOrdersAsync(provider);
+            result.IsError.Should().BeTrue("which of two case-variant tenant keys a module reads is undefined");
+            result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("Authentication failed");
+        }
+
+        [Fact]
+        public async Task Stdio_HostFactoryOrdinalCaseVariantKey_IsNormalised()
+        {
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(
+                new FixedAuthContextFactory(() => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["id"] = "user-a", ["Tenant_Id"] = "tenant-a",
+                }), _host.Services, StdioBearer(ValidToken));
+
+            var context = await provider(CancellationToken.None);
+            context.TryGetValue("tenant_id", out var tenant).Should().BeTrue();
+            tenant.Should().Be("tenant-a");
+        }
+
+        [Fact]
+        public async Task Http_HostFactoryTwinCaseKeys_RefusedAtRevalidation()
+        {
+            var services = new ServiceCollection()
+                .AddSingleton<IBifrostAuthContextFactory>(new FixedAuthContextFactory(TwinTenantKeys))
+                .BuildServiceProvider();
+            var httpContext = new DefaultHttpContext { RequestServices = services };
+            httpContext.Request.Headers.Authorization = $"Bearer {ValidToken}";
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var identity = new BifrostMcpHttpExtensions.McpHttpSessionIdentity(Auth, accessor, ValidToken);
+
+            var act = () => identity.RevalidateAsync(CancellationToken.None).AsTask();
+
+            await act.Should().ThrowAsync<McpIdentityException>();
+        }
+
+        [Fact]
+        public void ProjectionProvider_HostFactoryTwinCaseKeys_RefusesOnEveryCall_NotAtSetup()
+        {
+            var provider = BifrostMcpAdapter.CreateProjectionProvider(
+                new FixedAuthContextFactory(TwinTenantKeys), _host.Services, TenantPrincipal("user-a", "tenant-a"));
+
+            FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();
+        }
+
+        private sealed class FixedAuthContextFactory : IBifrostAuthContextFactory
+        {
+            private readonly Func<IDictionary<string, object?>> _create;
+            public FixedAuthContextFactory(Func<IDictionary<string, object?>> create) => _create = create;
+            public IDictionary<string, object?> CreateUserContext(HttpContext context) => _create();
+        }
+
         // ---- helpers ---------------------------------------------------------
 
         private async Task<McpClient> ConnectHttpAsync(string? authorization)

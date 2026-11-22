@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -72,10 +73,14 @@ namespace BifrostQL.Server
             IDictionary<string, object?> projected;
             try
             {
+                // Normalised once, here: a host factory may return an ordinal dictionary, and the
+                // surfaces that read the context directly must agree with the ones that copy it.
+                // Keys differing only in case throw inside this try and are refused like any
+                // other unprojectable identity.
                 var factory = BifrostAuthContextFactory.Resolve(services);
-                projected = factory is BifrostAuthContextFactory shared
+                projected = UserContexts.Copy(factory is BifrostAuthContextFactory shared
                     ? shared.CreateUserContext(context, services)
-                    : factory.CreateUserContext(context);
+                    : factory.CreateUserContext(context));
             }
             catch (Exception ex)
             {

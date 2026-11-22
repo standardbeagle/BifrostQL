@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
+using BifrostQL.Core.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
@@ -127,7 +128,7 @@ namespace BifrostQL.Server.S3
             try
             {
                 request.HttpContext.User = principal;
-                var projected = _authFactory.CreateUserContext(request.HttpContext);
+                var projected = UserContexts.Copy(_authFactory.CreateUserContext(request.HttpContext));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("S3 access key projected to an empty user context; rejecting.");

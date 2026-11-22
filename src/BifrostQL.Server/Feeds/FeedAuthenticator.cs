@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using BifrostQL.Core.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -151,7 +152,7 @@ namespace BifrostQL.Server.Feeds
             try
             {
                 context.User = principal;
-                var projected = _authFactory.CreateUserContext(context);
+                var projected = UserContexts.Copy(_authFactory.CreateUserContext(context));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("Feed identity projected to an empty user context; failing closed.");

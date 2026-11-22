@@ -39,8 +39,19 @@ public class SqlServerFullIntegrationTests : FullIntegrationTestBase, IAsyncLife
         var builder = new SqlConnectionStringBuilder(masterConnString) { InitialCatalog = _testDbName };
         _connectionString = builder.ConnectionString;
 
-        var factory = new SqlServerDbConnFactory(_connectionString);
-        await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync);
+        try
+        {
+            var factory = new SqlServerDbConnFactory(_connectionString);
+            await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync);
+        }
+        catch
+        {
+            // Drop here rather than rely on DisposeAsync after a failed InitializeAsync.
+            await base.CleanupAsync();
+            await DropTestDatabaseAsync(masterConnString);
+            _testDbName = null;
+            throw;
+        }
     }
 
     public async Task DisposeAsync()
@@ -49,16 +60,27 @@ public class SqlServerFullIntegrationTests : FullIntegrationTestBase, IAsyncLife
 
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")
-                ?? "Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
-            await using var conn = new SqlConnection(masterConnString);
-            await conn.OpenAsync();
-            var dropCmd = new SqlCommand($"DROP DATABASE IF EXISTS [{_testDbName}]", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch { }
+        await DropTestDatabaseAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!);
+    }
+
+    // Pooled connections keep the database in use, so a bare DROP fails with error 3702. Clearing
+    // the pool and forcing SINGLE_USER WITH ROLLBACK IMMEDIATE ends every session first. A failed
+    // drop throws: swallowing it leaked one BifrostFullInt_* database per test.
+    private async Task DropTestDatabaseAsync(string masterConnString)
+    {
+        if (_connectionString != null)
+            SqlConnection.ClearPool(new SqlConnection(_connectionString));
+
+        await using var conn = new SqlConnection(masterConnString);
+        await conn.OpenAsync();
+        var dropCmd = new SqlCommand($"""
+            IF DB_ID(N'{_testDbName}') IS NOT NULL
+            BEGIN
+                ALTER DATABASE [{_testDbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                DROP DATABASE [{_testDbName}];
+            END
+            """, conn);
+        await dropCmd.ExecuteNonQueryAsync();
     }
 
     private static async Task CreateSchemaAsync(System.Data.Common.DbConnection conn)

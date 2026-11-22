@@ -33,7 +33,12 @@ namespace BifrostQL.Server
     /// <summary>The outcome of <see cref="BifrostIdentityGate.ProjectAsync(HttpContext)"/> and the
     /// context it yields: empty for every outcome but <see cref="BifrostIdentityOutcome.Projected"/>.</summary>
     internal readonly record struct BifrostIdentityProjection(
-        BifrostIdentityOutcome Outcome, IDictionary<string, object?> UserContext);
+        BifrostIdentityOutcome Outcome, IDictionary<string, object?> UserContext)
+    {
+        /// <summary>The grant resolver threw and the context carries the E9 empty permission set:
+        /// served to this call, never reused by <see cref="IdentityProjectionMemo"/>.</summary>
+        public bool GrantResolutionFailed { get; init; }
+    }
 
     /// <summary>
     /// The one identity projection every HTTP surface in this assembly runs its callers
@@ -119,6 +124,7 @@ namespace BifrostQL.Server
                 return new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>());
 
             IDictionary<string, object?> projected;
+            bool grantResolutionFailed;
             try
             {
                 // Normalised once, here: a host factory may return an ordinal dictionary, and the
@@ -127,8 +133,13 @@ namespace BifrostQL.Server
                 // other unprojectable identity. A snapshot, so the projection shares no collection
                 // value (a host's List<string>, the roles/permissions arrays) with the factory or
                 // with any other caller handed a copy of a memoized projection.
-                projected = UserContexts.Snapshot(await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
-                    context, services, context.RequestAborted));
+                var created = await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
+                    context, services, context.RequestAborted);
+                // Read before the snapshot drops the type. A host factory that decorates the
+                // default one and returns a copy loses the flag, and its degraded projection is
+                // memoized for the scope as before.
+                grantResolutionFailed = created is BifrostContext { GrantResolutionFailed: true };
+                projected = UserContexts.Snapshot(created);
             }
             catch (Exception ex)
             {
@@ -144,7 +155,7 @@ namespace BifrostQL.Server
 
             return projected.Count == 0
                 ? new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>())
-                : new(BifrostIdentityOutcome.Projected, projected);
+                : new(BifrostIdentityOutcome.Projected, projected) { GrantResolutionFailed = grantResolutionFailed };
         }
 
         /// <summary>

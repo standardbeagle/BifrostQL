@@ -15,8 +15,11 @@ namespace BifrostQL.Server
     ///
     /// <para>Concurrent callers in one scope share one projection task, published lock-free by
     /// compare-exchange (the <see cref="PolicyGateAccessor"/> pattern), so the grant resolver runs
-    /// once. Only a <see cref="BifrostIdentityOutcome.Projected"/> result is reused: a refusal, or a
-    /// task that faulted, is replaced by the next caller. A slot is reused only for the principal
+    /// once. Only a <see cref="BifrostIdentityOutcome.Projected"/> result whose grant resolver
+    /// succeeded is reused: a refusal, a degraded projection (the resolver threw, E9), or a task
+    /// that faulted, is replaced by the next caller. A slot in flight is never replaced: a caller it
+    /// does not match waits for it to finish, so one scope never runs two projections at once on its
+    /// scoped resolver (an EF DbContext refuses a second concurrent operation). A slot is reused only for the principal
     /// and factory instances it was built from, and only while the principal's shape (identity
     /// count, total claim count) is unchanged, so a step-up identity or a removed claim on the same
     /// principal instance within the scope re-projects. A same-count swap (one claim removed and
@@ -31,9 +34,15 @@ namespace BifrostQL.Server
             ClaimsPrincipal User, PrincipalShape Shape, IBifrostAuthContextFactory Factory,
             Task<BifrostIdentityProjection> Projection)
         {
-            /// <summary>A refusal or a fault is never memoized; an in-flight projection is shared.</summary>
+            /// <summary>A refusal, a degraded projection or a fault is never memoized; an in-flight
+            /// projection is shared.</summary>
             public bool IsReusable => !Projection.IsCompleted
-                || (Projection.IsCompletedSuccessfully && Projection.Result.Outcome == BifrostIdentityOutcome.Projected);
+                || (Projection.IsCompletedSuccessfully
+                    && Projection.Result.Outcome == BifrostIdentityOutcome.Projected
+                    && !Projection.Result.GrantResolutionFailed);
+
+            public bool Serves(ClaimsPrincipal user, PrincipalShape shape, IBifrostAuthContextFactory factory)
+                => ReferenceEquals(User, user) && Shape == shape && ReferenceEquals(Factory, factory);
         }
 
         /// <summary>A cheap fingerprint of a principal's in-place mutations (<c>AddIdentity</c>,
@@ -56,7 +65,7 @@ namespace BifrostQL.Server
         internal async ValueTask<BifrostIdentityProjection> ProjectAsync(
             HttpContext context, IServiceProvider scope, IBifrostAuthContextFactory factory)
         {
-            var projection = await CurrentSlot(context, scope, factory).Projection;
+            var projection = await (await CurrentSlotAsync(context, scope, factory)).Projection;
             return projection.Outcome == BifrostIdentityOutcome.Projected
                 ? projection with { UserContext = UserContexts.Snapshot(projection.UserContext) }
                 : projection;
@@ -65,19 +74,24 @@ namespace BifrostQL.Server
         /// <summary>
         /// The scope's shared projection, starting one when none matches this caller. A candidate is
         /// created unstarted and published by compare-exchange; only the caller whose candidate won
-        /// starts it.
+        /// starts it. An in-flight slot that does not match is awaited, never replaced.
         /// </summary>
-        private Slot CurrentSlot(HttpContext context, IServiceProvider scope, IBifrostAuthContextFactory factory)
+        private async ValueTask<Slot> CurrentSlotAsync(
+            HttpContext context, IServiceProvider scope, IBifrostAuthContextFactory factory)
         {
             var user = context.User;
             var shape = PrincipalShape.Of(user);
             while (true)
             {
                 var current = Volatile.Read(ref _slot);
-                if (current is not null && current.IsReusable
-                    && ReferenceEquals(current.User, user) && current.Shape == shape
-                    && ReferenceEquals(current.Factory, factory))
+                if (current is not null && current.IsReusable && current.Serves(user, shape, factory))
                     return current;
+                if (current is { Projection.IsCompleted: false })
+                {
+                    // Its outcome is its own callers' concern; this caller only waits for the scope.
+                    await ((Task)current.Projection).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                    continue;
+                }
 
                 var start = new Task<Task<BifrostIdentityProjection>>(
                     () => BifrostIdentityGate.ProjectFreshAsync(context, scope).AsTask());

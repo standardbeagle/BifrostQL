@@ -255,6 +255,83 @@ public sealed class IdentityProjectionScopeTests
     }
 
     [Fact]
+    public async Task ADegradedProjection_IsServedOnce_ThenTheNextCallInTheScopeRetriesTheResolver()
+    {
+        // E9: a throwing resolver degrades the caller to an empty permission set for that call. The
+        // memo kept the degraded projection for the rest of the scope.
+        var host = new Host(onResolve: (call, _) =>
+        {
+            if (call == 1)
+                throw new InvalidOperationException("grant store unavailable");
+        });
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var degraded = await http.GetBifrostUserContextAsync();
+        var retried = await http.GetBifrostUserContextAsync();
+
+        PolicyIdentity.ExtractPermissions(degraded).Should().BeEmpty("E9 fails closed for the failed call");
+        PolicyIdentity.ExtractPermissions(retried).Should().Contain(Grants,
+            "a degraded projection is never reused");
+        host.ResolverCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ACallerWithAnotherPrincipal_WaitsForTheInFlightProjection_NeverRunsASecondOneInTheScope()
+    {
+        // Two principals in one scope: the second caller's slot replaced the in-flight one and
+        // started a second projection on the same scoped resolver (an EF DbContext throws "a second
+        // operation was started on this context").
+        using var firstEntered = new ManualResetEventSlim();
+        using var secondEntered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var inFlight = 0;
+        var maxInFlight = 0;
+        var host = new Host(onResolve: (call, _) =>
+        {
+            var now = Interlocked.Increment(ref inFlight);
+            InterlockedMax(ref maxInFlight, now);
+            if (call == 1)
+            {
+                firstEntered.Set();
+                release.Wait(Budget);
+            }
+            else
+            {
+                secondEntered.Set();
+            }
+            Interlocked.Decrement(ref inFlight);
+        });
+        await using var request = host.Root.CreateAsyncScope();
+        var httpA = host.RequestContext(request.ServiceProvider, userId: "user-1");
+        var httpB = host.RequestContext(request.ServiceProvider, userId: "user-2");
+
+        var first = Task.Run(() => BifrostIdentityGate.ProjectAsync(httpA).AsTask());
+        firstEntered.Wait(Budget).Should().BeTrue("the first caller reaches the resolver");
+        var second = Task.Run(() => BifrostIdentityGate.ProjectAsync(httpB).AsTask());
+        var secondRanAlongside = secondEntered.Wait(TimeSpan.FromMilliseconds(500));
+        release.Set();
+        var results = await Task.WhenAll(first, second).WaitAsync(Budget);
+
+        secondRanAlongside.Should().BeFalse("the second principal's projection waits for the in-flight one");
+        Volatile.Read(ref maxInFlight).Should().Be(1, "one scope never runs two projections at once");
+        host.ResolverCalls.Should().Be(2, "each principal is projected once");
+        PolicyIdentity.FromUserContext(results[0].UserContext).Id.Should().Be("user-1");
+        PolicyIdentity.FromUserContext(results[1].UserContext).Id.Should().Be("user-2");
+    }
+
+    private static void InterlockedMax(ref int target, int value)
+    {
+        var current = Volatile.Read(ref target);
+        while (value > current)
+        {
+            var seen = Interlocked.CompareExchange(ref target, value, current);
+            if (seen == current) return;
+            current = seen;
+        }
+    }
+
+    [Fact]
     public async Task AStepUpIdentityAddedToTheSamePrincipal_IsProjectedAfresh()
     {
         var host = new Host();

@@ -147,7 +147,7 @@ namespace BifrostQL.Server
         /// </summary>
         private static async ValueTask ApplyGrantResolverAsync(
             HttpContext context, IServiceProvider services, IGrantResolver resolver,
-            IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+            BifrostContext userContext, CancellationToken cancellationToken)
         {
             // The factory runs before any model is resolved, so the tenant comes from the key the
             // identity mapper writes it under (tenant_id), the identity's own tenant. The key-less
@@ -174,6 +174,7 @@ namespace BifrostQL.Server
                         "Grant resolver failed for identity '{IdentityId}'; continuing with an empty permission set.",
                         identity.Id);
                 userContext[MetadataKeys.Auth.DefaultPermissionsContextKey] = Array.Empty<string>();
+                userContext.GrantResolutionFailed = true;
                 return;
             }
 

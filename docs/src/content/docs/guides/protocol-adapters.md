@@ -64,10 +64,11 @@ Resolve `IBifrostAuthContextFactory` from DI and project every request's princip
 var identityCarrier = new DefaultHttpContext { RequestServices = _services };
 if (principal is not null)
     identityCarrier.User = principal;
-var userContext = _authFactory.CreateUserContext(identityCarrier);
+var userContext = await _authFactory.CreateUserContextAsync(
+    identityCarrier, identityCarrier.RequestServices, cancellationToken);
 ```
 
-`CreateUserContext` is synchronous, so it cannot run a registered `IGrantResolver` without blocking a thread. While a resolver is registered, the default factory refuses an authenticated principal on this call: it throws `InvalidOperationException`, and your adapter must treat that as a refused login. Bifrost's own adapters project through an internal async path that awaits the resolver.
+Await `CreateUserContextAsync`, the projection every Bifrost gate awaits: the default factory runs a registered `IGrantResolver` there, resolving it from the `services` argument. The synchronous `CreateUserContext` cannot run the resolver without blocking a thread, so while one is registered the default factory refuses an authenticated principal on that call (it throws `InvalidOperationException`). Treat any throw from either call as a refused login.
 
 An authenticated principal yields the full claim projection; an unauthenticated request yields an empty context, which the tenant transformers downstream refuse on tenant-filtered tables. Pass entries your frontend already parsed from the wire through `BifrostRequest.WireContext`. After resolving the model, the engine merges them with `WireContextMerger`: identity-derived keys always win, and identity-owned and security-context keys are excluded even when the identity did not supply them.
 

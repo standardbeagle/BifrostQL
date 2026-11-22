@@ -130,8 +130,8 @@ namespace BifrostQL.Server.S3
             {
                 var context = request.HttpContext;
                 context.User = principal;
-                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    _authFactory, context, context.RequestServices, ct));
+                var projected = UserContexts.Copy(await _authFactory.CreateUserContextAsync(
+                    context, context.RequestServices, ct));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("S3 access key projected to an empty user context; rejecting.");

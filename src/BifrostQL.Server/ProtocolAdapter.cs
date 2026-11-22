@@ -127,8 +127,8 @@ namespace BifrostQL.Server
                     User = principal,
                 };
                 // Normalised inside the try: keys differing only in case refuse the login.
-                var projected = BifrostQL.Core.Auth.UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    authFactory, carrier, carrier.RequestServices, cancellationToken));
+                var projected = BifrostQL.Core.Auth.UserContexts.Copy(await authFactory.CreateUserContextAsync(
+                    carrier, carrier.RequestServices, cancellationToken));
                 if (projected.Count == 0)
                 {
                     Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(

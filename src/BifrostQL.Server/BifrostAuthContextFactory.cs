@@ -15,10 +15,11 @@ namespace BifrostQL.Server
     /// an authenticated principal yields the full claim projection, an unauthenticated
     /// request yields an empty context, and a token from an unmapped OIDC issuer throws
     /// (the caller translates that to 403/error, never a degraded identity).
-    /// The contract is synchronous, so it cannot run a registered <see cref="IGrantResolver"/>:
-    /// Bifrost's own gates project the default factory asynchronously and await the resolver,
-    /// and a direct call to the default <see cref="CreateUserContext"/> with a resolver
-    /// registered refuses an authenticated caller (throws) rather than block on it.
+    /// Every shipped gate awaits <see cref="CreateUserContextAsync"/>, the projection that can run a
+    /// registered <see cref="IGrantResolver"/>; a host factory or a third-party adapter does the same.
+    /// The synchronous <see cref="CreateUserContext"/> cannot await the resolver, so with one
+    /// registered the default factory's sync call refuses an authenticated caller (throws) rather
+    /// than block on it.
     /// </summary>
     public interface IBifrostAuthContextFactory
     {
@@ -32,6 +33,20 @@ namespace BifrostQL.Server
         /// two keys that differ only in case is refused like an unprojectable identity.
         /// </summary>
         IDictionary<string, object?> CreateUserContext(HttpContext context);
+
+        /// <summary>
+        /// The asynchronous projection every Bifrost gate awaits, with the same contract as
+        /// <see cref="CreateUserContext"/>. The default factory awaits the registered
+        /// <see cref="IGrantResolver"/> here, resolving it (and the scoped services it reads) from
+        /// <paramref name="services"/>: pass <c>context.RequestServices</c> for an ordinary request,
+        /// or the scope that owns the unit of work (the binary transport passes each message's
+        /// scope). A factory that decorates another awaits the inner one's
+        /// <c>CreateUserContextAsync</c>, so the resolver still runs. The default implementation
+        /// calls <see cref="CreateUserContext"/>, which keeps a sync-only factory working unchanged.
+        /// </summary>
+        ValueTask<IDictionary<string, object?>> CreateUserContextAsync(
+            HttpContext context, IServiceProvider? services, CancellationToken cancellationToken)
+            => new(CreateUserContext(context));
 
         // NOTE: the former merge overload — CreateUserContext(context, existing) — was
         // REMOVED, not deprecated. It stripped identity-owned keys using only the DEFAULT
@@ -71,8 +86,8 @@ namespace BifrostQL.Server
         /// would block the calling thread. With a resolver registered in
         /// <c>context.RequestServices</c> an authenticated caller is therefore refused (throws,
         /// which every gate maps to an unprojectable identity) rather than served without its
-        /// grants. Bifrost's own transport gates project through <see cref="ProjectAsync"/>,
-        /// which awaits the resolver.
+        /// grants. Bifrost's own transport gates await <see cref="CreateUserContextAsync"/>,
+        /// which runs the resolver.
         /// </summary>
         public IDictionary<string, object?> CreateUserContext(HttpContext context)
         {
@@ -86,21 +101,12 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// The one asynchronous projection every transport gate in Bifrost awaits. The default
-        /// factory awaits the registered grant resolver, taking scoped services (the resolver and
-        /// the DbContext it reads) from <paramref name="services"/> rather than the request's own
+        /// Awaits the registered grant resolver, taking scoped services (the resolver and the
+        /// DbContext it reads) from <paramref name="services"/> rather than the request's own
         /// scope: the binary transport passes each message's scope, and the raw-wire adapters a
-        /// per-login scope. A host-registered factory has only the synchronous contract and runs
-        /// no grant resolver, so it is called as before.
+        /// per-login scope.
         /// </summary>
-        internal static ValueTask<IDictionary<string, object?>> ProjectAsync(
-            IBifrostAuthContextFactory factory, HttpContext context, IServiceProvider? services,
-            CancellationToken cancellationToken)
-            => factory is BifrostAuthContextFactory shared
-                ? shared.CreateUserContextAsync(context, services, cancellationToken)
-                : new ValueTask<IDictionary<string, object?>>(factory.CreateUserContext(context));
-
-        private async ValueTask<IDictionary<string, object?>> CreateUserContextAsync(
+        public async ValueTask<IDictionary<string, object?>> CreateUserContextAsync(
             HttpContext context, IServiceProvider? services, CancellationToken cancellationToken)
         {
             if (!IsAuthenticated(context))

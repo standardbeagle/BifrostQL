@@ -275,7 +275,7 @@ namespace BifrostQL.Server.Test
 
         /// <summary>
         /// Source-scan guard (M13 flow item 3): the HTTP mounts must never project a caller
-        /// directly — <c>.CreateUserContext(</c> or <c>BifrostAuthContextFactory.ProjectAsync(</c>
+        /// directly — <c>.CreateUserContext(</c> or <c>.CreateUserContextAsync(</c>
         /// may appear only in the factory itself,
         /// <c>BifrostIdentityGate.cs</c> and in the non-HTTP protocol-adapter authenticators,
         /// which project their own carrier types rather than an <c>HttpContext</c> mount. The
@@ -296,7 +296,7 @@ namespace BifrostQL.Server.Test
 
             // The sync contract and the async projection the gates await (it runs the grant resolver).
             var projectionCall = new Regex(
-                @"(?:\.CreateUserContext|BifrostAuthContextFactory\s*\.\s*ProjectAsync)\s*\(", RegexOptions.Compiled);
+                @"\.CreateUserContext(?:Async)?\s*\(", RegexOptions.Compiled);
             var perFile = files.ToDictionary(f => f, File.ReadAllText);
 
             // Non-HTTP protocol adapters project their own carrier (LDAP bind, RESP AUTH, S3

@@ -59,8 +59,8 @@ namespace BifrostQL.Server.Grpc
             IDictionary<string, object?> projected;
             try
             {
-                projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    authFactory, http, http.RequestServices, http.RequestAborted));
+                projected = UserContexts.Copy(await authFactory.CreateUserContextAsync(
+                    http, http.RequestServices, http.RequestAborted));
             }
             catch (Exception ex)
             {

@@ -106,7 +106,7 @@ namespace BifrostQL.Server.Test
 
         /// <summary>The async projection every transport gate awaits; it runs the grant resolver.</summary>
         private static ValueTask<IDictionary<string, object?>> ProjectAsync(HttpContext context)
-            => BifrostAuthContextFactory.ProjectAsync(Factory, context, context.RequestServices, CancellationToken.None);
+            => Factory.CreateUserContextAsync(context, context.RequestServices, CancellationToken.None);
 
         [Fact]
         public void CreateUserContext_SyncContract_WithAGrantResolver_RefusesInsteadOfBlocking()
@@ -133,9 +133,82 @@ namespace BifrostQL.Server.Test
             invoked.Should().BeFalse();
         }
 
+        [Fact]
+        public async Task HostDecoratorFactory_AwaitsTheDefaultProjection_GateServesTheCallerWithGrants()
+        {
+            // A host factory that decorates the default one (DI decoration of the registered
+            // IBifrostAuthContextFactory) must be able to run the grant resolver. The gate awaits
+            // the decorator's async projection, which awaits the inner default's: the caller is
+            // served with its grants and the decorator's own key, never refused.
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddSingleton<IBifrostAuthContextFactory>(new DecoratingAuthContextFactory(Factory))
+                    .AddBifrostGrantResolver(async (identity, sp, ct) =>
+                    {
+                        await Task.Yield();
+                        return (IReadOnlyCollection<string>)new[] { "decorated.grant" };
+                    })
+                    .BuildServiceProvider(),
+            };
+
+            var userContext = await context.GetBifrostUserContextAsync();
+
+            userContext.Should().ContainKey(DecoratingAuthContextFactory.MarkerKey,
+                "the gate projected through the host's decorator, not around it");
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext)
+                .Should().Contain("decorated.grant");
+        }
 
         [Fact]
-        public async Task ProjectAsync_GrantResolverRegistered_UnionsGrantsIntoPermissions()
+        public async Task CustomAdapter_PublicAsyncProjection_WithAsyncResolver_YieldsTheGrants()
+        {
+            // A third-party IProtocolAdapter projects its carrier through the public contract
+            // (docs/src/content/docs/guides/protocol-adapters.md). With a resolver registered the
+            // async projection delivers the grants instead of refusing the login.
+            var services = new ServiceCollection()
+                .AddBifrostGrantResolver(async (identity, sp, ct) =>
+                {
+                    await Task.Yield();
+                    return (IReadOnlyCollection<string>)new[] { "adapter.grant" };
+                })
+                .BuildServiceProvider();
+            IBifrostAuthContextFactory authFactory = Factory;
+            var identityCarrier = new DefaultHttpContext { RequestServices = services, User = AuthenticatedLocalPrincipal() };
+
+            var userContext = await authFactory.CreateUserContextAsync(
+                identityCarrier, identityCarrier.RequestServices, CancellationToken.None);
+
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext)
+                .Should().Contain("adapter.grant");
+        }
+
+        /// <summary>A host factory decorating another: it adds one key to the inner projection.</summary>
+        private sealed class DecoratingAuthContextFactory : IBifrostAuthContextFactory
+        {
+            public const string MarkerKey = "host_decorated";
+            private readonly IBifrostAuthContextFactory _inner;
+
+            public DecoratingAuthContextFactory(IBifrostAuthContextFactory inner) => _inner = inner;
+
+            public IDictionary<string, object?> CreateUserContext(HttpContext context)
+                => Decorate(_inner.CreateUserContext(context));
+
+            public async ValueTask<IDictionary<string, object?>> CreateUserContextAsync(
+                HttpContext context, IServiceProvider? services, CancellationToken cancellationToken)
+                => Decorate(await _inner.CreateUserContextAsync(context, services, cancellationToken));
+
+            private static IDictionary<string, object?> Decorate(IDictionary<string, object?> userContext)
+            {
+                userContext[MarkerKey] = true;
+                return userContext;
+            }
+        }
+
+
+        [Fact]
+        public async Task CreateUserContextAsync_GrantResolverRegistered_UnionsGrantsIntoPermissions()
         {
             // Arrange: a local-auth principal plus a resolver granting "x".
             var context = new DefaultHttpContext
@@ -156,7 +229,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ProjectAsync_GrantResolver_ReceivesTheIdentityTenant()
+        public async Task CreateUserContextAsync_GrantResolver_ReceivesTheIdentityTenant()
         {
             // A host's resolver typically loads grants per (user, tenant). The identity it is
             // handed carries the tenant the identity mapper wrote (tenant_id), not null.
@@ -184,7 +257,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ProjectAsync_GrantResolver_SeesTheRawClaimsOfThePrincipal()
+        public async Task CreateUserContextAsync_GrantResolver_SeesTheRawClaimsOfThePrincipal()
         {
             // With tenant-context-key: org_id fed by a raw org_id claim, the resolver gets
             // TenantId = null. The documented answer is to read the claim; the resolver is handed
@@ -216,7 +289,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ProjectAsync_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
+        public async Task CreateUserContextAsync_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
         {
             // Arrange: an OIDC identity whose mapper grants permission "x" — the
             // pre-resolver set is NON-empty, so the fail-closed wipe is observable.
@@ -247,7 +320,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ProjectAsync_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
+        public async Task CreateUserContextAsync_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
         {
             // Arrange
             var log = new FakeLogCollector();

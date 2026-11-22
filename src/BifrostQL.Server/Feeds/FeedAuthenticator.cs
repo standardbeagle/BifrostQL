@@ -153,8 +153,8 @@ namespace BifrostQL.Server.Feeds
             try
             {
                 context.User = principal;
-                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    _authFactory, context, context.RequestServices, cancellationToken));
+                var projected = UserContexts.Copy(await _authFactory.CreateUserContextAsync(
+                    context, context.RequestServices, cancellationToken));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("Feed identity projected to an empty user context; failing closed.");

@@ -196,8 +196,8 @@ namespace BifrostQL.Server.OData
             try
             {
                 context.User = principal;
-                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    _authFactory, context, context.RequestServices, ct));
+                var projected = UserContexts.Copy(await _authFactory.CreateUserContextAsync(
+                    context, context.RequestServices, ct));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("OData identity projected to an empty user context; rejecting.");

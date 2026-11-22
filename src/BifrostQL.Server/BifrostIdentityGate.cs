@@ -81,8 +81,8 @@ namespace BifrostQL.Server
                 // surfaces that read the context directly must agree with the ones that copy it.
                 // Keys differing only in case throw inside this try and are refused like any
                 // other unprojectable identity.
-                projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
-                    BifrostAuthContextFactory.Resolve(services), context, services, context.RequestAborted));
+                projected = UserContexts.Copy(await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
+                    context, services, context.RequestAborted));
             }
             catch (Exception ex)
             {

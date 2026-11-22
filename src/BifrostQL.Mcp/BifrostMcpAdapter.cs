@@ -242,8 +242,8 @@ namespace BifrostQL.Mcp
                 if (principal is not null)
                     carrier.User = principal;
 
-                return NormalizeProjection(await BifrostAuthContextFactory.ProjectAsync(
-                    authContextFactory, carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
+                return NormalizeProjection(await authContextFactory.CreateUserContextAsync(
+                    carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
             };
 
         /// <summary>
@@ -358,8 +358,8 @@ namespace BifrostQL.Mcp
             IDictionary<string, object?> frozen;
             try
             {
-                frozen = NormalizeProjection(await BifrostAuthContextFactory.ProjectAsync(
-                    authContextFactory, carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
+                frozen = NormalizeProjection(await authContextFactory.CreateUserContextAsync(
+                    carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception ex) when (ex is UnmappedOidcIssuerException or McpIdentityException)
             {

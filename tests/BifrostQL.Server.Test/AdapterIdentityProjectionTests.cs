@@ -144,7 +144,7 @@ public class AdapterIdentityProjectionTests
         // Whole-file text: a C# argument list wraps freely, so a per-line scan reads a wrapped
         // call as a miss and a real offender passes.
         var perFile = files.ToDictionary(f => f, File.ReadAllText);
-        var projectionCall = new Regex(@"\b(?:CreateUserContext|BifrostAuthContextFactory\s*\.\s*ProjectAsync)\s*\(",
+        var projectionCall = new Regex(@"\bCreateUserContext(?:Async)?\s*\(",
             RegexOptions.Compiled | RegexOptions.Singleline);
 
         var home = Path.Combine(serverRoot!, "ProtocolAdapter.cs");

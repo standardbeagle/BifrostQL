@@ -229,6 +229,50 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task CreateUserContextAsync_CallerCancelled_RethrowsInsteadOfDegradingToEmptyPermissions()
+        {
+            // A projection that lost its grants to the caller's own cancellation is no identity:
+            // degrading it to empty permissions made it a valid projection the request memo kept.
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        return new ValueTask<IReadOnlyCollection<string>>(new[] { "x" });
+                    })
+                    .BuildServiceProvider(),
+            };
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+
+            await FluentActions.Awaiting(() => BifrostAuthContextFactory.Instance
+                    .CreateUserContextAsync(context, context.RequestServices, cancelled.Token).AsTask())
+                .Should().ThrowAsync<OperationCanceledException>();
+        }
+
+        [Fact]
+        public async Task CreateUserContextAsync_ResolverCancelsOnItsOwn_StillFailsClosedToEmptyPermissions()
+        {
+            // The strict half: a resolver's own timeout, with the caller's token live, is a
+            // throwing resolver like any other (E9), not a caller cancellation.
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                        throw new TaskCanceledException("resolver timed out"))
+                    .BuildServiceProvider(),
+            };
+
+            var userContext = await BifrostAuthContextFactory.Instance
+                .CreateUserContextAsync(context, context.RequestServices, CancellationToken.None);
+
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
+        }
+
+        [Fact]
         public async Task CreateUserContextAsync_GrantResolver_ReceivesTheIdentityTenant()
         {
             // A host's resolver typically loads grants per (user, tenant). The identity it is

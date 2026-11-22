@@ -140,7 +140,9 @@ namespace BifrostQL.Server
         ///
         /// Fail closed (E9): a throwing resolver leaves the caller with an EMPTY
         /// permission set — the pre-resolver permissions are wiped — and logs a Warning
-        /// naming the identity id; the exception never escapes. A null result is an
+        /// naming the identity id; the exception never escapes, except an
+        /// <see cref="OperationCanceledException"/> while <c>cancellationToken</c> is cancelled,
+        /// which propagates so a caller-cancelled projection is never served. A null result is an
         /// empty grant set: nothing is unioned, the identity's own permissions remain.
         /// </summary>
         private static async ValueTask ApplyGrantResolverAsync(
@@ -160,7 +162,10 @@ namespace BifrostQL.Server
             {
                 grants = await resolver.ResolveAsync(identity, cancellationToken);
             }
-            catch (Exception ex)
+            // The caller's own cancellation propagates: a projection degraded by it is no identity,
+            // and the request memo would keep it. A resolver's internal timeout is a throw like any
+            // other.
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 services.GetService<ILoggerFactory>()
                     ?.CreateLogger("BifrostQL.Server.BifrostAuthContextFactory")

@@ -1214,6 +1214,8 @@ namespace BifrostQL.Core.Resolvers
             if (!results.TryGetValue(resultName, out var tableData))
                 return;
 
+            var windowRows = PagedWindowRowIndexes(query, tableData);
+
             foreach (var column in providerColumns)
             {
                 if (!providers.TryGet(column.ComputedColumn!.ExpressionOrProvider, out var provider))
@@ -1226,9 +1228,12 @@ namespace BifrostQL.Core.Resolvers
                 tableData.index[column.GraphQlDbName] = newIndex;
 
                 var rowCount = tableData.data.Count;
-                var values = provider is IBatchComputedColumnProvider batch
-                    ? await ComputeBatchColumnValuesAsync(batch, query, column, tableData, context, connFactory)
-                    : await ComputeRowColumnValuesAsync(provider, query, column, tableData, context, connFactory);
+                var windowValues = provider is IBatchComputedColumnProvider batch
+                    ? await ComputeBatchColumnValuesAsync(batch, query, column, tableData, windowRows, context, connFactory)
+                    : await ComputeRowColumnValuesAsync(provider, query, column, tableData, windowRows, context, connFactory);
+                var values = new object?[rowCount];
+                for (var i = 0; i < windowRows.Count; i++)
+                    values[windowRows[i]] = windowValues[i];
 
                 for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
@@ -1242,6 +1247,29 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// The rows a provider computes for. A paged nested collection keeps one carrier row
+        /// for a parent whose window is empty, outside the window, only so the reader can take
+        /// that parent's total from it (<see cref="ISqlDialect.ConnectedPaging"/>). No caller
+        /// sees a carrier, so no provider computes for it and its value stays null. The
+        /// row-number column is present exactly when the windowed statement ran.
+        /// </summary>
+        private static IReadOnlyList<int> PagedWindowRowIndexes(
+            GqlObjectQuery query,
+            (IDictionary<string, int> index, IList<object?[]> data) tableData)
+        {
+            if (!query.IncludeResult || !tableData.index.TryGetValue(PagedKeys.RowNumber, out var rowNumberIndex))
+                return Enumerable.Range(0, tableData.data.Count).ToArray();
+
+            var inWindow = new List<int>(tableData.data.Count);
+            for (var rowIndex = 0; rowIndex < tableData.data.Count; rowIndex++)
+            {
+                if (GqlObjectQuery.IsInPagedWindow(Convert.ToInt64(tableData.data[rowIndex][rowNumberIndex]), query.Offset, query.Limit))
+                    inWindow.Add(rowIndex);
+            }
+            return inWindow;
+        }
+
+        /// <summary>
         /// A batch provider sees the whole result set at once, so a value that needs its own
         /// read (EAV <c>_meta</c>) costs one query for the page rather than one per row.
         /// </summary>
@@ -1250,12 +1278,13 @@ namespace BifrostQL.Core.Resolvers
             GqlObjectQuery query,
             GqlObjectColumn column,
             (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            IReadOnlyList<int> rowIndexes,
             IBifrostFieldContext context,
             IDbConnFactory connFactory)
         {
-            var rows = new IReadOnlyDictionary<string, object?>[tableData.data.Count];
-            for (var rowIndex = 0; rowIndex < rows.Length; rowIndex++)
-                rows[rowIndex] = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+            var rows = new IReadOnlyDictionary<string, object?>[rowIndexes.Count];
+            for (var i = 0; i < rows.Length; i++)
+                rows[i] = ToRowMap(tableData.data[rowIndexes[i]], tableData.index, skipColumn: column.GraphQlDbName);
             var values = await provider.ComputeBatchAsync(new ComputedColumnBatchContext
             {
                 Model = _dbModel,
@@ -1277,6 +1306,7 @@ namespace BifrostQL.Core.Resolvers
             GqlObjectQuery query,
             GqlObjectColumn column,
             (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            IReadOnlyList<int> rowIndexes,
             IBifrostFieldContext context,
             IDbConnFactory connFactory)
         {
@@ -1286,9 +1316,9 @@ namespace BifrostQL.Core.Resolvers
             // row indexes off a shared counter, capping concurrent provider/DB
             // calls while keeping every worker busy. Values land in a side
             // array, so rows stay untouched during compute.
-            return await ComputeColumnValuesAsync(tableData.data.Count, async rowIndex =>
+            return await ComputeColumnValuesAsync(rowIndexes.Count, async i =>
             {
-                var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+                var rowMap = ToRowMap(tableData.data[rowIndexes[i]], tableData.index, skipColumn: column.GraphQlDbName);
                 return await provider.ComputeAsync(new ComputedColumnContext
                 {
                     Model = _dbModel,

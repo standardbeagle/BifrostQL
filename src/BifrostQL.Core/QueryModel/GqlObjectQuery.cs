@@ -773,7 +773,7 @@ namespace BifrostQL.Core.QueryModel
                     link.TableName = m2mLink.TargetTable.DbName;
                     link.SchemaName = m2mLink.TargetTable.TableSchema;
                     Joins.Add(BuildTableJoin(
-                        link, link.GraphQlName,
+                        link, fieldName,
                         connectedColumn: m2mLink.TargetColumn.ColumnName,
                         connectedColumns: null,
                         fromColumn: m2mLink.SourceColumn.ColumnName,

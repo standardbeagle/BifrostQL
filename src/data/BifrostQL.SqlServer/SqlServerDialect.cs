@@ -18,10 +18,20 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// <summary> The longest identifier SQL Server accepts (sysname). </summary>
     private const int MaxIdentifierLength = 128;
 
-    // The loosest folding any SQL Server collation applies to identifiers.
-    private static readonly StringComparer LooseCollationComparer = StringComparer.Create(System.Globalization.CultureInfo.InvariantCulture,
-        System.Globalization.CompareOptions.IgnoreCase | System.Globalization.CompareOptions.IgnoreNonSpace |
-        System.Globalization.CompareOptions.IgnoreKanaType | System.Globalization.CompareOptions.IgnoreWidth);
+    // Whether two labels may name one identifier under some SQL Server collation. Only
+    // printable ASCII folds without culture data: case and trailing spaces. Any other character
+    // may fold to another (é/e, Ａ/A, ｶ/カ/か) or be ignored (U+00AD, controls) under some
+    // collation, and the runtime cannot be asked: under InvariantGlobalization the culture
+    // comparer ignores IgnoreNonSpace, IgnoreKanaType and IgnoreWidth, and String.Normalize
+    // leaves non-ASCII text unchanged. So a set holding any such label counts as colliding.
+    private static bool LabelsMayCollideAsIdentifiers(IReadOnlyList<string> labels)
+    {
+        if (labels.Count < 2)
+            return false;
+        if (labels.Any(label => label.Any(c => c is < ' ' or > '~')))
+            return true;
+        return labels.Select(label => label.TrimEnd(' ').ToUpperInvariant()).Distinct(StringComparer.Ordinal).Count() < labels.Count;
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -184,10 +194,11 @@ public sealed class SqlServerDialect : SqlDialectBase
         // column's collation, which can be stricter than the database's (an accent-sensitive
         // column keeps "cafe" and "café" apart in an accent-insensitive database), and the null
         // label is applied after it, so a literal "_null_ " beside a NULL still yields a pair.
-        // The database collation is unknown here, so labels equal under the loosest folding
-        // (case, accent, kana, width) take CASE WHEN; over-routing only costs the native form.
-        // A whitespace-only label is a valid identifier and stays native.
-        if (pivotAliases.Select(label => label.TrimEnd(' ')).Distinct(LooseCollationComparer).Count() < pivotAliases.Count)
+        // The database collation is unknown here, so labels that may be equal under any
+        // collation's folding (case, accent, kana, width, ignorable characters) take CASE WHEN;
+        // over-routing only costs the native form. A whitespace-only label is a valid
+        // identifier and stays native.
+        if (LabelsMayCollideAsIdentifiers(pivotAliases))
             return null;
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));

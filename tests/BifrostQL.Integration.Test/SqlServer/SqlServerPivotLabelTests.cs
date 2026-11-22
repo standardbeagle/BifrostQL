@@ -241,12 +241,77 @@ public sealed class SqlServerPivotLabelTests
     [InlineData("ｶﾀ", "カタ")]
     [InlineData("かた", "カタ")]
     [InlineData("A", "Ａ")]
+    [InlineData("cafe\u0301", "café")]
+    [InlineData("co\u00ADop", "coop")]
     public void Labels_equal_under_collation_folding_leave_the_native_pivot(string first, string second)
     {
         var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
 
         SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { first, second })
             .Should().BeNull();
+    }
+
+    /// <summary>
+    /// Controls for the folding theory: distinct printable-ASCII labels, and a lone non-ASCII
+    /// label (nothing to collide with), keep the native PIVOT.
+    /// </summary>
+    [Theory]
+    [InlineData("cafe", "cafes")]
+    [InlineData("café")]
+    public void Labels_that_cannot_collide_keep_the_native_pivot(params string[] labels)
+    {
+        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+
+        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", labels.Cast<object?>().ToArray())
+            .Should().NotBeNull();
+    }
+
+    private const string InvariantChildVariable = "BIFROST_TEST_INVARIANT_GLOBALIZATION_CHILD";
+
+    /// <summary>
+    /// Under InvariantGlobalization (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT) the culture
+    /// comparer ignores IgnoreNonSpace, IgnoreKanaType and IgnoreWidth, and String.Normalize
+    /// leaves non-ASCII text unchanged, so a fold built on either let cafe/café reach native
+    /// PIVOT and fail with error 8156. This runs the folding theory in a child test host with
+    /// that switch set, plus a probe proving the child really lacks culture data.
+    /// </summary>
+    [SkippableFact]
+    public async Task Labels_equal_under_collation_folding_leave_the_native_pivot_under_invariant_globalization()
+    {
+        // The child must never spawn another child.
+        Skip.If(Environment.GetEnvironmentVariable(InvariantChildVariable) == "1", "already the invariant-globalization child");
+
+        var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("test");
+        psi.ArgumentList.Add(typeof(SqlServerPivotLabelTests).Assembly.Location);
+        psi.ArgumentList.Add("--filter");
+        psi.ArgumentList.Add(
+            $"FullyQualifiedName={typeof(SqlServerPivotLabelTests).FullName}.{nameof(Labels_equal_under_collation_folding_leave_the_native_pivot)}" +
+            $"|FullyQualifiedName={typeof(SqlServerPivotLabelTests).FullName}.{nameof(Invariant_child_lacks_culture_folding)}");
+        psi.Environment["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
+        psi.Environment[InvariantChildVariable] = "1";
+
+        using var child = System.Diagnostics.Process.Start(psi)!;
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        await child.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
+        var output = await stdout + await stderr;
+
+        child.ExitCode.Should().Be(0, output);
+        output.Should().MatchRegex(@"Failed:\s+0, Passed:\s+7\b", output);
+    }
+
+    [SkippableFact]
+    public void Invariant_child_lacks_culture_folding()
+    {
+        Skip.If(Environment.GetEnvironmentVariable(InvariantChildVariable) != "1", "runs only in the invariant-globalization child");
+
+        string.Compare("cafe", "café", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.CompareOptions.IgnoreNonSpace)
+            .Should().NotBe(0, "the child must run without culture data, or it proves nothing");
     }
 
     private static async Task ExecAsync(SqlConnection conn, string sql)

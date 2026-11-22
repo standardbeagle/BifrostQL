@@ -77,6 +77,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`MetadataLoader(IConfiguration, string)` and `FileMetadataSource(IConfigurationSection, string)` are removed.** Use `new MetadataLoader(MetadataLoader.ReadMetadataRules(section))` or `new FileMetadataSource(MetadataLoader.ReadMetadataRules(section))`.
 - **No thread blocks on the grant resolver or the policy gate's model load.** `IPolicyGate` is no longer injectable: inject `IPolicyGateAccessor` and `await GetAsync(ct)`; the model loads only for requests that use the gate, so health checks and static routes never trigger a schema load. `HttpContext.GetBifrostUserContext()` is now `GetBifrostUserContextAsync()`. While an `IGrantResolver` is registered, the synchronous `IBifrostAuthContextFactory.CreateUserContext` refuses an authenticated principal instead of blocking; every shipped transport awaits the resolver.
 - **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
+- **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
 
 ### Fixed — fifth review pass
 
@@ -128,6 +129,12 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Docs: `AppIdentity.Claims` handed to `IGrantResolver` is the raw principal,** which can differ from the value the tenant filter scopes by; the guide names that value.
 - **`bifrost config-validate` refuses every config file `serve` refuses** (for example `"Path": 5`, a non-boolean `DisableAuth`, a non-string connection string); both read through one function.
 - **A host auth factory returning keys that differ only in case no longer fails the whole Prometheus scrape;** the affected row-scoped metrics are excluded and the detail is logged.
+- **A host `IBifrostAuthContextFactory` decorator or a third-party protocol adapter can run the grant resolver:** await the new `IBifrostAuthContextFactory.CreateUserContextAsync`, which every shipped gate awaits.
+- **A host auth factory that throws for the Prometheus service identity excludes only the row-scoped metrics** instead of faulting the whole scrape.
+- **gRPC retries the contract build after a failed model load** instead of rethrowing the first fault for the life of the process.
+- **Concurrent `IPolicyGateAccessor.GetAsync` calls in one request share one build,** and one caller's cancellation no longer faults the others.
+- **`bifrost serve --connection-string … --config f.json` refuses the same wrong-shaped config files `config-validate` refuses.**
+- **The grant resolver runs once per HTTP request** even when an endpoint projects the caller and then asks for the policy gate.
 
 ### Security — silent fallbacks
 

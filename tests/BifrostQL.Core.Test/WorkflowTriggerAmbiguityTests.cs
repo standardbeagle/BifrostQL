@@ -46,6 +46,40 @@ public class WorkflowTriggerAmbiguityTests
             .Which.Should().Contain("employee-changed").And.Contain("ambiguous");
     }
 
+    [Fact]
+    public async Task AmbiguousBareTrigger_WarnsOncePerModel_NotOncePerWrite()
+    {
+        var workflows = new[] { Workflow("employee-changed", """{ "table": "employee", "action": "update" }""") }
+            .ToDictionary(w => w.Name, StringComparer.OrdinalIgnoreCase);
+        var host = new WorkflowTriggerHost(workflows, new CapturingWorkflowRunner());
+        var hr = Table("employee", "hr");
+        var payroll = Table("employee", "payroll");
+        var model = new DbModel { Tables = new[] { hr, payroll }, Metadata = new Dictionary<string, object?>() };
+
+        using var log = new ErrorSinkCapture();
+        await host.OnMutationAsync(Write(model, payroll));
+        await host.OnMutationAsync(Write(model, hr));
+
+        log.Warnings.Should().ContainSingle().Which.Should().Contain("employee-changed");
+
+        // A reloaded model is a new configuration, so its ambiguity is reported afresh.
+        var reloaded = new DbModel { Tables = new[] { hr, payroll }, Metadata = new Dictionary<string, object?>() };
+        await host.OnMutationAsync(Write(reloaded, payroll));
+
+        log.Warnings.Should().HaveCount(2);
+    }
+
+    private static MutationObserverContext Write(IDbModel model, IDbTable table) => new()
+    {
+        Model = model,
+        Table = table,
+        MutationType = MutationType.Update,
+        Data = new Dictionary<string, object?> { ["id"] = 1 },
+        Result = 1,
+        UserContext = new Dictionary<string, object?>(),
+        MutationState = MutationObserverContext.NewMutationState(),
+    };
+
     private static WorkflowDefinition Workflow(string name, string triggerPayload) => new()
     {
         Name = name,

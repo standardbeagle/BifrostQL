@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
@@ -11,6 +13,11 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
 
     private readonly IReadOnlyDictionary<string, WorkflowDefinition> _workflows;
     private readonly IWorkflowRunner _runner;
+
+    // Workflows already reported as having an ambiguous trigger table, per model. The trigger is
+    // checked on every write, so without this the same warning floods the log. Keyed weakly on the
+    // model: a reloaded model is a new entry and reports afresh, and a retired one is collected.
+    private readonly ConditionalWeakTable<IDbModel, ConcurrentDictionary<string, byte>> _ambiguityReported = new();
 
     public WorkflowTriggerHost(
         IReadOnlyDictionary<string, WorkflowDefinition> workflows,
@@ -118,9 +125,10 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
     /// accepted only when it is unique in the model. An ambiguous one matches nothing rather
     /// than firing for every schema that defines it, and is logged as that workflow's fault:
     /// throwing here would end the caller's loop and stop every other workflow the write
-    /// matches. Identity is the resolved <see cref="IDbTable"/>, never a name compare.
+    /// matches. It is logged once per workflow per model, not on every write. Identity is the
+    /// resolved <see cref="IDbTable"/>, never a name compare.
     /// </summary>
-    private static bool MatchesTable(WorkflowDefinition workflow, JsonElement payload, IDbModel model, IDbTable table)
+    private bool MatchesTable(WorkflowDefinition workflow, JsonElement payload, IDbModel model, IDbTable table)
     {
         if (!payload.TryGetProperty("table", out var configured) || configured.GetString() is not { } name)
             return false;
@@ -136,6 +144,8 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
             return ReferenceEquals(bare, table);
 
         // The written table carries this name, so the miss is an ambiguous bare name.
+        if (!_ambiguityReported.GetOrCreateValue(model).TryAdd(workflow.Name, 0))
+            return false;
         Resolvers.BifrostErrorSink.Handled(
             nameof(WorkflowTriggerHost),
             $"Workflow '{workflow.Name}' was skipped: its trigger table '{name}' is ambiguous, more than one " +

@@ -64,6 +64,11 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+/** A read's filter as JSON: `@bifrostql/react` sends it in `variables.filter`, never in the document. */
+function filterOf(request: { variables: unknown }): string {
+  return JSON.stringify((request.variables as { filter?: unknown } | null)?.filter ?? null);
+}
+
 function createFetchMock(identity: TestIdentity | null) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -179,8 +184,8 @@ describe('ExpiredMembershipsReport', () => {
         r.query.includes('main_member_memberships'),
       );
       expect(query).toBeDefined();
-      expect(query!.query).toContain('status');
-      expect(query!.query).toContain('expired');
+      expect(query!.query).toContain('$filter');
+      expect(filterOf(query!)).toBe('{"status":{"_eq":"expired"}}');
     });
   });
 

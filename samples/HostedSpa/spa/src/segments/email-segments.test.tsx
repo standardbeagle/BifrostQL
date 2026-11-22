@@ -71,6 +71,11 @@ const sampleMetadata: AppMetadataWithSegments = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+/** A read's filter as JSON: `@bifrostql/react` sends it in `variables.filter`, never in the document. */
+function filterOf(request: { variables: unknown }): string {
+  return JSON.stringify((request.variables as { filter?: unknown } | null)?.filter ?? null);
+}
+
 function createFetchMock(identity: TestIdentity) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -207,8 +212,8 @@ describe('EmailSegments', () => {
     await waitFor(() => {
       const query = graphqlRequests.find((r) => r.query.includes('members'));
       expect(query).toBeDefined();
-      expect(query!.query).toContain('status');
-      expect(query!.query).toContain('active');
+      expect(query!.query).toContain('$filter');
+      expect(filterOf(query!)).toContain('"status":{"_eq":"active"}');
     });
   });
 
@@ -257,7 +262,7 @@ describe('EmailSegments', () => {
     await waitFor(() => {
       expect(
         graphqlRequests.some(
-          (r) => r.query.includes('members') && r.query.includes('active'),
+          (r) => r.query.includes('members') && filterOf(r).includes('"_eq":"active"'),
         ),
       ).toBe(true);
     });
@@ -272,7 +277,7 @@ describe('EmailSegments', () => {
     await waitFor(() => {
       expect(
         graphqlRequests.some(
-          (r) => r.query.includes('members') && r.query.includes('inactive'),
+          (r) => r.query.includes('members') && filterOf(r).includes('"_eq":"inactive"'),
         ),
       ).toBe(true);
     });

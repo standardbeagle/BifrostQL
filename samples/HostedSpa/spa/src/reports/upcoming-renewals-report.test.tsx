@@ -64,6 +64,11 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+/** A read's filter as JSON: `@bifrostql/react` sends it in `variables.filter`, never in the document. */
+function filterOf(request: { variables: unknown }): string {
+  return JSON.stringify((request.variables as { filter?: unknown } | null)?.filter ?? null);
+}
+
 function createFetchMock(identity: TestIdentity | null) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -179,9 +184,9 @@ describe('UpcomingRenewalsReport', () => {
         r.query.includes('main_member_memberships'),
       );
       expect(query).toBeDefined();
-      expect(query!.query).toContain('end_date');
-      expect(query!.query).toContain('_gte');
-      expect(query!.query).toContain('_lte');
+      expect(query!.query).toContain('$filter');
+      const filter = JSON.parse(filterOf(query!)) as { end_date?: Record<string, unknown> };
+      expect(Object.keys(filter.end_date ?? {}).sort()).toEqual(['_gte', '_lte']);
     });
   });
 

@@ -155,24 +155,34 @@ function jsonResponse(payload: unknown, status = 200): Response {
   } as Response;
 }
 
-/** Applies an inline `{ _eq: "..." }` / `{ _in: [...] }` filter on `field`. */
-function applyFilter(query: string, rows: Row[], field: string): Row[] {
-  const eq = new RegExp(`${field}: \\{ _eq: ("[^"]*"|\\d+) \\}`).exec(query);
-  if (eq) {
-    const value = JSON.parse(eq[1]) as unknown;
-    return rows.filter((r) => String(r[field]) === String(value));
+/** The condition on `field` in a read's `$filter` variable, looked for through `and`. */
+function conditionOn(filter: unknown, field: string): Record<string, unknown> | undefined {
+  if (!filter || typeof filter !== 'object') return undefined;
+  const f = filter as Record<string, unknown>;
+  if (f[field] && typeof f[field] === 'object') return f[field] as Record<string, unknown>;
+  for (const part of (f.and as unknown[] | undefined) ?? []) {
+    const found = conditionOn(part, field);
+    if (found) return found;
   }
-  const inList = new RegExp(`${field}: \\{ _in: (\\[[^\\]]*\\]) \\}`).exec(query);
-  if (inList) {
-    const values = (JSON.parse(inList[1]) as unknown[]).map(String);
+  return undefined;
+}
+
+/** Applies the `{ _eq }` / `{ _in }` condition on `field` that the read sends in `variables.filter`. */
+function applyFilter(variables: unknown, rows: Row[], field: string): Row[] {
+  const condition = conditionOn((variables as { filter?: unknown } | null)?.filter, field);
+  if (condition && '_eq' in condition) {
+    return rows.filter((r) => String(r[field]) === String(condition._eq));
+  }
+  if (condition && Array.isArray(condition._in)) {
+    const values = condition._in.map(String);
     return rows.filter((r) => values.includes(String(r[field])));
   }
   return rows;
 }
 
 /**
- * A fetch mock that behaves like the host: row queries honour their inline
- * filter and `limit` (default 100) and report the unpaged `total`; the
+ * A fetch mock that behaves like the host: row queries honour their `$filter`
+ * variable and `limit` (default 100) and report the unpaged `total`; the
  * record-payment workflow, when it succeeds, inserts the payment, marks the
  * invoice paid and advances the membership — all server-side.
  */
@@ -242,7 +252,7 @@ function createFetchMock(
     const window = (rows: Row[]) => ({ total: rows.length, data: rows.slice(0, limit) });
 
     if (/main_dues_invoices\b/.test(body.query)) {
-      const rows = applyFilter(body.query, applyFilter(body.query, invoices, 'status'), 'id');
+      const rows = applyFilter(body.variables, applyFilter(body.variables, invoices, 'status'), 'id');
       return jsonResponse({ data: { main_dues_invoices: window(rows) } });
     }
     if (/main_dues_payments\b/.test(body.query)) {
@@ -250,7 +260,7 @@ function createFetchMock(
     }
     if (/main_members\b/.test(body.query)) {
       return jsonResponse({
-        data: { main_members: window(applyFilter(body.query, memberRows, 'id')) },
+        data: { main_members: window(applyFilter(body.variables, memberRows, 'id')) },
       });
     }
     if (/main_member_memberships\b/.test(body.query)) {

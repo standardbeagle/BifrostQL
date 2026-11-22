@@ -69,6 +69,11 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+/** A read's filter as JSON: `@bifrostql/react` sends it in `variables.filter`, never in the document. */
+function filterOf(request: { variables: unknown }): string {
+  return JSON.stringify((request.variables as { filter?: unknown } | null)?.filter ?? null);
+}
+
 
 /** Wrap rows in the server's paged envelope (`{ total, data }`). */
 function paged(rows: unknown[], total = rows.length) {
@@ -346,7 +351,7 @@ describe('MemberList', () => {
     // Baseline: the table query carries no status filter yet.
     await waitFor(() => expect(graphqlRequests.length).toBeGreaterThan(0));
     expect(
-      graphqlRequests.some((r) => r.query.includes('status: { _eq: "inactive"')),
+      graphqlRequests.some((r) => filterOf(r).includes('"status":{"_eq":"inactive"}')),
     ).toBe(false);
 
     // Act: select the Inactive Members saved view.
@@ -359,7 +364,7 @@ describe('MemberList', () => {
     await waitFor(() =>
       expect(
         graphqlRequests.some((r) =>
-          r.query.includes('status: { _eq: "inactive"'),
+          filterOf(r).includes('"status":{"_eq":"inactive"}'),
         ),
       ).toBe(true),
     );
@@ -409,7 +414,7 @@ describe('MemberList', () => {
     // so an export and the table on screen disagreed.
     await waitFor(() =>
       expect(
-        graphqlRequests.some((r) => r.query.includes('Ada')),
+        graphqlRequests.some((r) => filterOf(r).includes('"Ada"')),
       ).toBe(true),
     );
   });

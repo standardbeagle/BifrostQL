@@ -88,7 +88,12 @@ namespace BifrostQL.Server
         /// before any transformer sees the context. Runs for authenticated principals
         /// only; the identity handed to the resolver is the canonical
         /// <see cref="PolicyIdentity.FromUserContext"/> projection of the just-assembled
-        /// context, so the resolver sees exactly what the security modules will see.
+        /// context, so the resolver sees the id, roles and permissions the security modules
+        /// will see. The tenant is the gap: this runs before any endpoint's model is
+        /// resolved, so no <c>tenant-context-key</c> is known and <c>TenantId</c> is the
+        /// identity's own tenant (<c>tenant_id</c>). On a host whose
+        /// <c>tenant-context-key</c> names a raw claim (e.g. <c>org_id</c>), the resolver
+        /// gets <c>TenantId = null</c> while the tenant filter scopes by that claim.
         ///
         /// Fail closed (E9): a throwing resolver leaves the request with an EMPTY
         /// permission set — the pre-resolver permissions are wiped — and logs a Warning

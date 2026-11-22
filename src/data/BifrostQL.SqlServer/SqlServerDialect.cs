@@ -18,6 +18,11 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// <summary> The longest identifier SQL Server accepts (sysname). </summary>
     private const int MaxIdentifierLength = 128;
 
+    // The loosest folding any SQL Server collation applies to identifiers.
+    private static readonly StringComparer LooseCollationComparer = StringComparer.Create(System.Globalization.CultureInfo.InvariantCulture,
+        System.Globalization.CompareOptions.IgnoreCase | System.Globalization.CompareOptions.IgnoreNonSpace |
+        System.Globalization.CompareOptions.IgnoreKanaType | System.Globalization.CompareOptions.IgnoreWidth);
+
     /// <inheritdoc />
     /// <remarks>
     /// SQL Server has no read-only transaction, and T-SQL needs no separator between
@@ -174,11 +179,15 @@ public sealed class SqlServerDialect : SqlDialectBase
         if (pivotAliases.Any(label => label.Length == 0 || label.Length > MaxIdentifierLength))
             return null;
         // SQL Server compares identifiers with trailing spaces ignored, under the database's
-        // (commonly case-insensitive) collation, so two labels that differ only by trailing
-        // spaces name one output column twice (error 8156). Discovery's DISTINCT folds such
-        // values, but the null label is applied after it, so a literal "_null_ " beside a NULL
-        // still yields the pair. A whitespace-only label is a valid identifier and stays native.
-        if (pivotAliases.Select(label => label.TrimEnd(' ')).Distinct(StringComparer.OrdinalIgnoreCase).Count() < pivotAliases.Count)
+        // collation, so two labels equal after trailing spaces and that collation's folding
+        // name one output column twice (error 8156). Discovery's DISTINCT runs under the
+        // column's collation, which can be stricter than the database's (an accent-sensitive
+        // column keeps "cafe" and "café" apart in an accent-insensitive database), and the null
+        // label is applied after it, so a literal "_null_ " beside a NULL still yields a pair.
+        // The database collation is unknown here, so labels equal under the loosest folding
+        // (case, accent, kana, width) take CASE WHEN; over-routing only costs the native form.
+        // A whitespace-only label is a valid identifier and stays native.
+        if (pivotAliases.Select(label => label.TrimEnd(' ')).Distinct(LooseCollationComparer).Count() < pivotAliases.Count)
             return null;
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));

@@ -179,6 +179,76 @@ public sealed class SqlServerPivotLabelTests
             .Should().BeNull();
     }
 
+    /// <summary>
+    /// PIVOT output columns are identifiers, compared under the database collation. In an
+    /// accent-insensitive database, <c>cafe</c> and <c>café</c> from an accent-sensitive
+    /// column survive discovery's DISTINCT as two values but name one output column twice
+    /// (error 8156), so the whole pivot failed. Such labels take the CASE WHEN pivot.
+    /// </summary>
+    [SkippableFact]
+    public async Task Pivot_labels_that_collide_only_under_an_accent_insensitive_collation_keep_their_cells()
+    {
+        var master = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        Skip.If(string.IsNullOrEmpty(master), "BIFROST_TEST_SQLSERVER not set");
+
+        var database = $"bq_pivot_ai_{Guid.NewGuid():N}";
+        await using (var conn = new SqlConnection(master))
+        {
+            await conn.OpenAsync();
+            await ExecAsync(conn, $"CREATE DATABASE [{database}] COLLATE Latin1_General_CI_AI");
+        }
+        try
+        {
+            var connString = new SqlConnectionStringBuilder(master) { InitialCatalog = database }.ConnectionString;
+            await using var conn = new SqlConnection(connString);
+            await conn.OpenAsync();
+            await ExecAsync(conn, """
+                CREATE TABLE [dbo].[t] (id int PRIMARY KEY, region nvarchar(20) NOT NULL,
+                    status nvarchar(20) COLLATE Latin1_General_CI_AS NOT NULL);
+                INSERT INTO [dbo].[t] VALUES (1, N'north', N'cafe'), (2, N'north', N'café'), (3, N'north', N'café');
+                """);
+
+            var pivotValues = new List<object?>();
+            await using (var distinct = new SqlCommand("SELECT DISTINCT [status] FROM [dbo].[t] ORDER BY [status]", conn))
+            await using (var reader = await distinct.ExecuteReaderAsync())
+                while (await reader.ReadAsync())
+                    pivotValues.Add(reader.GetString(0));
+            pivotValues.Should().Equal("cafe", "café");
+
+            var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+            var pivot = PivotSqlGenerator.GeneratePivot(SqlServerDialect.Instance, config, "[dbo].[t]", pivotValues);
+
+            await using var cmd = new SqlCommand(pivot.Sql, conn);
+            foreach (var p in pivot.Parameters)
+                cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value);
+            await using var rows = await cmd.ExecuteReaderAsync();
+            (await rows.ReadAsync()).Should().BeTrue();
+            rows[PivotSqlGenerator.ColumnAlias(0)].Should().Be(1, "one row has 'cafe'");
+            rows[PivotSqlGenerator.ColumnAlias(1)].Should().Be(2, "two rows have 'café'");
+        }
+        finally
+        {
+            await Infrastructure.TestDatabaseDrop.SqlServerAsync(master!, database);
+        }
+    }
+
+    /// <summary>
+    /// Labels equal under case, accent, kana or width folding may name one identifier under
+    /// some collation, so each pair takes the CASE WHEN pivot. Over-routing is harmless.
+    /// </summary>
+    [Theory]
+    [InlineData("cafe", "café")]
+    [InlineData("ｶﾀ", "カタ")]
+    [InlineData("かた", "カタ")]
+    [InlineData("A", "Ａ")]
+    public void Labels_equal_under_collation_folding_leave_the_native_pivot(string first, string second)
+    {
+        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+
+        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { first, second })
+            .Should().BeNull();
+    }
+
     private static async Task ExecAsync(SqlConnection conn, string sql)
     {
         await using var cmd = new SqlCommand(sql, conn);

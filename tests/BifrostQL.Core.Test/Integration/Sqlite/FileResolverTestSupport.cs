@@ -47,6 +47,7 @@ internal sealed class FileResolverTestContext : IBifrostFieldContext
     public IReadOnlyList<object> Path => Array.Empty<object>();
     public bool HasSubFields => true;
     public object Document => null!;
+    public object Operation => null!;
     public object Variables => null!;
 
     public bool HasArgument(string name) => _args.ContainsKey(name);

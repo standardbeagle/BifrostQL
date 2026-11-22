@@ -122,6 +122,7 @@ public sealed class GenericTableFilterAndPagingTests : IAsyncLifetime
         public IServiceProvider? RequestServices => null;
         public bool HasSubFields => false;
         public object Document => null!;
+        public object Operation => null!;
         public object Variables => null!;
         public IDictionary<string, object?> InputExtensions { get; init; } = new Dictionary<string, object?>();
         public CancellationToken CancellationToken => CancellationToken.None;

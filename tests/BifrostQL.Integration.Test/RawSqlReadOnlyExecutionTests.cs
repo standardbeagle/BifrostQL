@@ -225,6 +225,7 @@ public abstract class RawSqlReadOnlyExecutionTestsBase<TDatabase> : IClassFixtur
         public IReadOnlyList<object> Path => Array.Empty<object>();
         public bool HasSubFields => false;
         public object Document => null!;
+        public object Operation => null!;
         public object Variables => null!;
         public bool HasArgument(string name) => name == "sql";
         public T? GetArgument<T>(string name) => name == "sql" && _sql is T typed ? typed : default;

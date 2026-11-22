@@ -231,6 +231,7 @@ public sealed class RawSqlQueryResolverTests : IDisposable
         public IReadOnlyList<object> Path => Array.Empty<object>();
         public bool HasSubFields => false;
         public object Document => null!;
+        public object Operation => null!;
         public object Variables => null!;
 
         public bool HasArgument(string name) => name switch

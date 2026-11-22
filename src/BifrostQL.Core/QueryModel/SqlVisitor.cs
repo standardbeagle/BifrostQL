@@ -10,6 +10,32 @@ namespace BifrostQL.Core.QueryModel
 {
     public class SqlVisitor : ASTVisitor<ISqlContext>
     {
+        private readonly GraphQLOperationDefinition? _executingOperation;
+
+        /// <summary>
+        /// A visitor for a single-operation document. A document with more than one
+        /// operation needs the executing one: see <see cref="SqlVisitor(GraphQLOperationDefinition)"/>.
+        /// </summary>
+        public SqlVisitor() { }
+
+        /// <summary>
+        /// A visitor that builds query nodes from <paramref name="executingOperation"/> only.
+        /// Every other operation in the document is skipped: two operations can carry root
+        /// fields with the same response key, and the other operation's node must never
+        /// answer for the executing one.
+        /// </summary>
+        public SqlVisitor(GraphQLOperationDefinition executingOperation)
+        {
+            _executingOperation = executingOperation ?? throw new ArgumentNullException(nameof(executingOperation));
+        }
+
+        protected override ValueTask VisitOperationDefinitionAsync(GraphQLOperationDefinition operationDefinition, ISqlContext context)
+        {
+            if (_executingOperation != null && !ReferenceEquals(operationDefinition, _executingOperation))
+                return ValueTask.CompletedTask;
+            return base.VisitOperationDefinitionAsync(operationDefinition, context);
+        }
+
         // A selection the client excluded with @skip/@include is not part of the request:
         // it adds no SQL column and the column read guards never see it.
         protected override async ValueTask VisitFieldAsync(GraphQLField field, ISqlContext context)
@@ -159,6 +185,9 @@ namespace BifrostQL.Core.QueryModel
 
         protected override async ValueTask VisitDocumentAsync(GraphQLDocument document, ISqlContext context)
         {
+            if (_executingOperation == null && document.Definitions.OfType<GraphQLOperationDefinition>().Skip(1).Any())
+                throw new InvalidOperationException(
+                    "A document with more than one operation must be visited with the executing operation.");
             await base.VisitDocumentAsync(document, context);
             context.SyncFragments();
         }

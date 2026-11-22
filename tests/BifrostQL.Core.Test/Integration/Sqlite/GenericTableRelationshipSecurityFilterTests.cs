@@ -155,6 +155,7 @@ public sealed class GenericTableRelationshipSecurityFilterTests : IAsyncLifetime
         public IServiceProvider? RequestServices { get; init; }
         public bool HasSubFields => false;
         public object Document => null!;
+        public object Operation => null!;
         public object Variables => null!;
         public IDictionary<string, object?> InputExtensions { get; init; } = new Dictionary<string, object?>();
         public CancellationToken CancellationToken => CancellationToken.None;

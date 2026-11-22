@@ -55,6 +55,14 @@ namespace BifrostQL.Core.Resolvers
         object Document { get; }
 
         /// <summary>
+        /// The operation definition being executed (the one <c>operationName</c> selected),
+        /// passed through to SqlVisitor so a multi-operation document builds query nodes
+        /// from the executing operation only.
+        /// Typed as object to avoid coupling to GraphQLParser.AST.GraphQLOperationDefinition.
+        /// </summary>
+        object Operation { get; }
+
+        /// <summary>
         /// Query variables, passed through to SqlContext for variable resolution.
         /// Typed as object to avoid coupling to GraphQL.Variables.
         /// </summary>

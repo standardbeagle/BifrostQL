@@ -76,6 +76,7 @@ namespace BifrostQL.Core.Resolvers
         public IServiceProvider? RequestServices => _inner.RequestServices;
         public bool HasSubFields => _inner.SubFields != null;
         public object Document => _inner.Document;
+        public object Operation => _inner.Operation;
         public object Variables => _inner.Variables;
         public IDictionary<string, object?> InputExtensions =>
             _inner.InputExtensions as IDictionary<string, object?> ?? new Dictionary<string, object?>(_inner.InputExtensions);

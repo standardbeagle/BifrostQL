@@ -152,6 +152,7 @@ public sealed class MetaSchemaResolverManyToManyTests
         public IServiceProvider? RequestServices => null;
         public bool HasSubFields => true;
         public object Document => null!;
+        public object Operation => null!;
         public object Variables => null!;
         public IDictionary<string, object?> InputExtensions => new Dictionary<string, object?>();
         public CancellationToken CancellationToken => CancellationToken.None;

@@ -163,7 +163,11 @@ namespace BifrostQL.Core.Resolvers
                 }
             }
             var objectQueries = await _objectQueriesTask;
-            var table = objectQueries.FirstOrDefault(t => (alias != null && t.Alias == alias) || (alias == null && t.GraphQlName == graphqlName))
+            // Bind by response key (alias, else field name): an unaliased field must not
+            // match an aliased sibling of the same field, which carries other arguments
+            // and another selection set.
+            var responseKey = alias ?? graphqlName;
+            var table = objectQueries.FirstOrDefault(t => (t.Alias ?? t.GraphQlName) == responseKey)
                 ?? throw new BifrostExecutionError(
                     $"No parsed query node matched root field '{alias ?? graphqlName}'.");
 
@@ -1083,7 +1087,7 @@ namespace BifrostQL.Core.Resolvers
 
         private async Task<List<GqlObjectQuery>> GetAllObjectQueries(IBifrostFieldContext context)
         {
-            var visitor = new SqlVisitor();
+            var visitor = new SqlVisitor((GraphQLParser.AST.GraphQLOperationDefinition)context.Operation);
             var sqlContext = new SqlContext() { Variables = (Variables)context.Variables };
             await visitor.VisitAsync((GraphQLParser.AST.GraphQLDocument)context.Document, sqlContext);
 

@@ -328,7 +328,7 @@ For additional row-level filters, map columns to claims with `auto-filter`:
 
 Claims baked into a token live as long as the token does — a JWT issued for weeks still carries the permissions the user had at sign-in. When your capability set lives in the database and a permission change must take effect *when made*, register a grant resolver. It runs **once per request**, for authenticated principals, at the single point every transport assembles the user context, and its result is **unioned** into the `permissions` context key before any policy, tenant, or filter module reads the context.
 
-An app endpoint that calls `GetBifrostUserContextAsync()` and then awaits `IPolicyGateAccessor.GetAsync()` shares one projection: the HTTP identity step is memoized for the request, so the resolver still runs once. The binary WebSocket mount projects once per message, since its connection outlives any one request.
+The HTTP identity step is memoized per DI scope: one per request, per binary WebSocket message, per hub invocation. An app endpoint that calls `GetBifrostUserContextAsync()` and then awaits `IPolicyGateAccessor.GetAsync()` shares one projection, so the resolver still runs once, even when both are awaited concurrently. The binary WebSocket mount projects once per message, in that message's scope, and a hook that awaits `IPolicyGateAccessor` while serving the message shares it. A WebSocket request's own HttpContext is never memoized, since it outlives any one request. A SignalR hub calls `GetBifrostUserContextAsync(scope)` with the invocation's `IServiceProvider`, because the connection's `RequestServices` live as long as the connection.
 
 Two transport-shape exceptions to "once per request":
 

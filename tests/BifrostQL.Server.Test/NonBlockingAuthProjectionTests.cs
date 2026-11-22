@@ -82,7 +82,7 @@ public sealed class NonBlockingAuthProjectionTests
             RequestServices = ServicesWithYieldingResolver().BuildServiceProvider(),
         };
         http.Request.Path = "/payments";
-        var accessor = new PolicyGateAccessor(new FixedHttpContextAccessor(http), models);
+        var accessor = new PolicyGateAccessor(new FixedHttpContextAccessor(http), models, http.RequestServices);
 
         var gate = await SingleThreadedContext.RunAsync(() => accessor.GetAsync().AsTask())
             .WaitAsync(DeadlockBudget);
@@ -106,7 +106,7 @@ public sealed class NonBlockingAuthProjectionTests
             return Task.FromResult(new Inputs(new Dictionary<string, object?> { ["model"] = PaymentsModel() }));
         });
         var http = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };
-        var accessor = new PolicyGateAccessor(new FixedHttpContextAccessor(http), models);
+        var accessor = new PolicyGateAccessor(new FixedHttpContextAccessor(http), models, http.RequestServices);
 
         (await accessor.GetAsync()).Should().BeSameAs(PolicyGate.Refused);
         loads.Should().Be(0, "identity is decided first, and a refused caller never costs a schema load");
@@ -176,7 +176,7 @@ public sealed class NonBlockingAuthProjectionTests
             {
                 Interlocked.Increment(ref calls);
                 return new ValueTask<IReadOnlyCollection<string>>(Grants);
-            }).BuildServiceProvider(),
+            }).AddScoped<IdentityProjectionMemo>().BuildServiceProvider().CreateScope().ServiceProvider,
         };
 
         var first = await context.GetBifrostUserContextAsync();
@@ -205,7 +205,7 @@ public sealed class NonBlockingAuthProjectionTests
             RequestServices = services.BuildServiceProvider(),
         };
         http.Request.Path = "/payments";
-        return new PolicyGateAccessor(new FixedHttpContextAccessor(http), models);
+        return new PolicyGateAccessor(new FixedHttpContextAccessor(http), models, http.RequestServices);
     }
 
     // ---- fixtures ----

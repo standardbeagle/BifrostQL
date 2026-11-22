@@ -47,12 +47,39 @@ namespace BifrostQL.Server
         /// and the sidecar's own <c>IsAuthenticated</c> gate has already let the
         /// principal through. Catch it and answer 403. Asynchronous because the
         /// projection awaits the host's grant resolver (<c>AddBifrostGrantResolver</c>).
+        /// The projection is memoized in the request's DI scope
+        /// (<see cref="HttpContext.RequestServices"/>), so the grant resolver runs once per
+        /// request even when the endpoint also awaits <c>IPolicyGateAccessor</c>; on a WebSocket
+        /// request it is never memoized. A SignalR hub or any endpoint that serves many
+        /// invocations on one long-lived HttpContext calls the overload that takes the
+        /// invocation's scope instead.
         /// </summary>
-        public static async Task<IDictionary<string, object?>> GetBifrostUserContextAsync(this HttpContext context)
+        public static Task<IDictionary<string, object?>> GetBifrostUserContextAsync(this HttpContext context)
         {
             ArgumentNullException.ThrowIfNull(context);
+            return ToUserContextAsync(BifrostIdentityGate.ProjectAsync(context));
+        }
 
-            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
+        /// <summary>
+        /// <see cref="GetBifrostUserContextAsync(HttpContext)"/> projected in
+        /// <paramref name="scope"/>: the grant resolver (and the DbContext it reads) come from that
+        /// scope, and the projection is memoized there. A SignalR hub passes its invocation's
+        /// <see cref="IServiceProvider"/> (inject it into the hub), because the connection's
+        /// HttpContext and its RequestServices live for the whole connection, and a memo there
+        /// would serve a revoked grant until reconnect.
+        /// </summary>
+        public static Task<IDictionary<string, object?>> GetBifrostUserContextAsync(
+            this HttpContext context, IServiceProvider scope)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentNullException.ThrowIfNull(scope);
+            return ToUserContextAsync(BifrostIdentityGate.ProjectAsync(context, scope));
+        }
+
+        private static async Task<IDictionary<string, object?>> ToUserContextAsync(
+            ValueTask<BifrostIdentityProjection> projection)
+        {
+            var (outcome, userContext) = await projection;
             if (outcome == BifrostIdentityOutcome.Unprojectable)
                 throw new BifrostIdentityRejectedException();
             return userContext;

@@ -112,6 +112,7 @@ public class ProtocolAdmissionUnificationTests
             "LocalSessionManager.cs", // purge-timestamp claim (one expired session and MFA challenge purge per hour), not a slot cap
             "GrpcContractProvider.cs", // publishes the one shared contract build (retried after a fault), not a slot cap
             "PolicyGateAccessor.cs", // publishes the request's one shared policy-gate build, not a slot cap
+            "IdentityProjectionMemo.cs", // publishes the DI scope's one shared identity projection, not a slot cap
         };
 
         var offenders = files

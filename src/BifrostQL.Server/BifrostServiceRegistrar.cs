@@ -526,6 +526,9 @@ namespace BifrostQL.Server
             // IPolicyGate DI factory could only block on both, and only routes that ask for a gate
             // may trigger a model load.
             services.AddScoped<IPolicyGateAccessor, PolicyGateAccessor>();
+            // The identity projection memo, one per DI scope (request, binary message, hub
+            // invocation): never on the HttpContext, which can span a whole session.
+            services.AddScoped<IdentityProjectionMemo>();
             // Single identity seam for every transport gate (HTTP, binary WebSocket,
             // protocol frontend, workflow endpoints). TryAdd so a host can substitute
             // its own factory before AddBifrostQL runs.

@@ -1,0 +1,220 @@
+using System.Net.WebSockets;
+using System.Security.Claims;
+using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.Schema;
+using FluentAssertions;
+using GraphQL;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace BifrostQL.Server.Test;
+
+/// <summary>
+/// The HTTP identity projection is memoized per DI scope (invariant 13: per request, never per
+/// session). An HttpContext can outlive a request: a WebSocket session, a SignalR connection, or
+/// the binary transport's per-message scopes all run on ONE HttpContext. Each fact holds one
+/// long-lived HttpContext and drives the real registrar's scoped services, so a memo kept on the
+/// HttpContext (rather than in the scope) serves a grant revoked between two messages.
+/// </summary>
+public sealed class IdentityProjectionScopeTests
+{
+    private static readonly TimeSpan Budget = TimeSpan.FromSeconds(5);
+    private static readonly string[] Grants = { "payments.create" };
+
+    [Fact]
+    public async Task PolicyGate_TwoScopesOnOneLongLivedContext_EachRunTheResolver_AndARevokedGrantTakesEffect()
+    {
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: false);
+
+        await using (var message1 = host.Root.CreateAsyncScope())
+        {
+            var gate = await message1.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
+            gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue("the grant is live");
+        }
+
+        host.Revoked = true;
+
+        await using (var message2 = host.Root.CreateAsyncScope())
+        {
+            var gate = await message2.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
+            gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeFalse(
+                "a grant revoked between two messages takes effect on the next one, never at reconnect");
+        }
+
+        host.ResolverCalls.Should().Be(2, "each scope projects the caller once");
+        http.User.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UserContext_OnAWebSocketContext_ProjectsOnEachCall_AndARevokedGrantTakesEffect()
+    {
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: true);
+
+        var first = await http.GetBifrostUserContextAsync();
+        host.Revoked = true;
+        var second = await http.GetBifrostUserContextAsync();
+
+        PolicyIdentity.ExtractPermissions(first).Should().Contain(Grants);
+        PolicyIdentity.ExtractPermissions(second).Should().NotContain(Grants,
+            "a WebSocket's HttpContext spans the whole session, so its request scope is no per-request memo");
+        host.ResolverCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task UserContext_InTwoHubInvocationScopes_OnOneLongLivedContext_AndARevokedGrantTakesEffect()
+    {
+        // A SignalR hub on a non-WebSocket transport (SSE, long polling): the connection's
+        // HttpContext is no WebSocket request, so only the invocation's scope bounds the memo.
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: false);
+
+        await using var invocation1 = host.Root.CreateAsyncScope();
+        var first = await http.GetBifrostUserContextAsync(invocation1.ServiceProvider);
+        var again = await http.GetBifrostUserContextAsync(invocation1.ServiceProvider);
+        host.Revoked = true;
+        await using var invocation2 = host.Root.CreateAsyncScope();
+        var second = await http.GetBifrostUserContextAsync(invocation2.ServiceProvider);
+
+        PolicyIdentity.ExtractPermissions(first).Should().Contain(Grants);
+        PolicyIdentity.ExtractPermissions(again).Should().Contain(Grants);
+        PolicyIdentity.ExtractPermissions(second).Should().NotContain(Grants,
+            "the next invocation's scope projects afresh");
+        host.ResolverCalls.Should().Be(2, "one projection per invocation scope");
+    }
+
+    [Fact]
+    public async Task BinaryMessageProjection_AndAHookGateInTheSameScope_RunTheResolverOnce()
+    {
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: true);
+
+        await using var message = host.Root.CreateAsyncScope();
+        var (outcome, _) = await BifrostIdentityGate.ProjectAsync(http, message.ServiceProvider);
+        var gate = await message.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
+
+        outcome.Should().Be(BifrostIdentityOutcome.Projected);
+        gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        host.ResolverCalls.Should().Be(1, "the message's projection and a hook's gate share the message scope's memo");
+    }
+
+    [Fact]
+    public async Task ConcurrentUserContextAndGateCallers_InOneRequest_RunTheResolverOnce()
+    {
+        // The first caller is held inside the resolver while the second asks for the gate. The
+        // memo's projection must already be published by then, so the second joins it.
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var host = new Host(onResolve: call =>
+        {
+            if (call == 1)
+            {
+                entered.Set();
+                release.Wait(Budget);
+            }
+        });
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var first = Task.Run(() => http.GetBifrostUserContextAsync());
+        entered.Wait(Budget).Should().BeTrue("the first caller reaches the resolver");
+        var second = request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync().AsTask();
+        release.Set();
+        await Task.WhenAll(first, second).WaitAsync(Budget);
+
+        host.ResolverCalls.Should().Be(1, "concurrent callers in one request share one projection");
+        PolicyIdentity.ExtractPermissions(await first).Should().Contain(Grants);
+        (await second).CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+    }
+
+    // ---- fixtures ----
+
+    private sealed class Host
+    {
+        private readonly HttpContextHolder _accessor = new();
+        private int _resolverCalls;
+
+        public Host(Action<int>? onResolve = null)
+        {
+            var services = new ServiceCollection();
+            BifrostServiceRegistrar.RegisterGraphQlAndAuth(services, false, null, 10, null, null);
+            var models = new PathCache<Inputs>();
+            models.AddLoader("/graphql", () =>
+                Task.FromResult(new Inputs(new Dictionary<string, object?> { ["model"] = PaymentsModel() })));
+            services.AddSingleton(models);
+            services.AddSingleton<IHttpContextAccessor>(_accessor);
+            services.AddBifrostGrantResolver((identity, sp, ct) =>
+            {
+                // Counted unconditionally: `onResolve?.Invoke(Increment(...))` skips the increment
+                // when no callback is set.
+                var call = Interlocked.Increment(ref _resolverCalls);
+                onResolve?.Invoke(call);
+                return new ValueTask<IReadOnlyCollection<string>>(Revoked ? Array.Empty<string>() : Grants);
+            });
+            Root = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        }
+
+        public IServiceProvider Root { get; }
+        public volatile bool Revoked;
+        public int ResolverCalls => Volatile.Read(ref _resolverCalls);
+
+        /// <summary>A connection-lifetime HttpContext whose RequestServices is the connection's scope.</summary>
+        public HttpContext LongLivedContext(bool webSocket)
+        {
+            var http = RequestContext(Root.CreateScope().ServiceProvider);
+            if (webSocket)
+                http.Features.Set<IHttpWebSocketFeature>(new UpgradeRequest());
+            return http;
+        }
+
+        public HttpContext RequestContext(IServiceProvider requestServices)
+        {
+            var http = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, "user-1"), new Claim(ClaimTypes.Role, "clerk") }, "test")),
+                RequestServices = requestServices,
+            };
+            http.Request.Path = "/payments";
+            _accessor.HttpContext = http;
+            return http;
+        }
+    }
+
+    private sealed class UpgradeRequest : IHttpWebSocketFeature
+    {
+        public bool IsWebSocketRequest => true;
+        public Task<WebSocket> AcceptAsync(WebSocketAcceptContext context) => throw new NotSupportedException();
+    }
+
+    private sealed class HttpContextHolder : IHttpContextAccessor
+    {
+        public HttpContext? HttpContext { get; set; }
+    }
+
+    private static IDbModel PaymentsModel()
+    {
+        var table = new DbTable
+        {
+            DbName = "payments",
+            GraphQlName = "payments",
+            NormalizedName = "payments",
+            TableSchema = "main",
+            ColumnLookup = new Dictionary<string, ColumnDto>(),
+            GraphQlLookup = new Dictionary<string, ColumnDto>(),
+            Metadata = new Dictionary<string, object?>
+            {
+                [MetadataKeys.Policy.Actions] = "read, create[payments.create]",
+            },
+        };
+        return new DbModel
+        {
+            Tables = new IDbTable[] { table },
+            Metadata = new Dictionary<string, object?>(),
+        };
+    }
+}

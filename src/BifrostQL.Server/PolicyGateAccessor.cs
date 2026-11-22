@@ -17,17 +17,24 @@ namespace BifrostQL.Server
     /// Concurrent callers share one build, published lock-free by compare-exchange. The build runs
     /// on the request's own <c>RequestAborted</c>; each caller's token abandons only that caller's
     /// wait, so one caller's cancellation never faults the build the others await.
+    /// The caller is projected in the accessor's OWN DI scope, not the
+    /// HttpContext's: a hook resolving the accessor inside a binary per-message scope or a hub
+    /// invocation scope reaches a connection-lifetime HttpContext through
+    /// <see cref="IHttpContextAccessor"/>, and projecting in that context's scope served one
+    /// connection-old identity to every message.
     /// </summary>
     internal sealed class PolicyGateAccessor : IPolicyGateAccessor
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly PathCache<Inputs> _models;
+        private readonly IServiceProvider _scope;
         private Task<IPolicyGate>? _gate;
 
-        public PolicyGateAccessor(IHttpContextAccessor httpContextAccessor, PathCache<Inputs> models)
+        public PolicyGateAccessor(IHttpContextAccessor httpContextAccessor, PathCache<Inputs> models, IServiceProvider scope)
         {
             _httpContextAccessor = httpContextAccessor;
             _models = models;
+            _scope = scope;
         }
 
         public ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default)
@@ -67,7 +74,7 @@ namespace BifrostQL.Server
             // gate that refuses everything, so the endpoint answers ACCESS_DENIED the way
             // the GraphQL mount refuses that same caller. Identity comes first, so a refused
             // caller never triggers a model load.
-            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(http);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(http, _scope);
             if (outcome != BifrostIdentityOutcome.Projected)
                 return PolicyGate.Refused;
             http.RequestAborted.ThrowIfCancellationRequested();

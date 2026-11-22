@@ -120,10 +120,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
     resolveClientSideFilterConfig(clientSideFilterProp);
   const initialPageSize = paginationConfig?.pageSize ?? 25;
   const pageSizeOptions = paginationConfig?.pageSizeOptions;
+  // Keyed on the options' contents, not the array's identity: callers pass a new literal each render.
+  const pageSizeOptionsKey = pageSizeOptions?.join(',');
   const allowedPageSizes = useMemo(
     () => resolveAllowedPageSizes(pageSizeOptions, initialPageSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageSizeOptions?.join(','), initialPageSize],
+    [pageSizeOptionsKey, initialPageSize],
   );
 
   const queryState = useTableQueryState({

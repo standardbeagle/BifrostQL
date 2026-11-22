@@ -86,7 +86,7 @@ namespace BifrostQL.Server.Test.Grpc
         }
 
         [Fact]
-        public void Contract_provider_pins_field_numbers_across_full_and_filtered_projections()
+        public async Task Contract_provider_pins_field_numbers_across_full_and_filtered_projections()
         {
             // The full dispatch contract and an identity-filtered reflection projection must agree on
             // every field number, or a reflection-driven client mis-decodes the dispatch wire.
@@ -95,6 +95,7 @@ namespace BifrostQL.Server.Test.Grpc
                 Col("id", "int", pk: true),
                 Col("name", "varchar"));
             var provider = ProviderFor(Model(users));
+            await provider.EnsureBuiltAsync(default);
 
             var full = provider.FullContract.Messages.Single(m => m.Name == "UsersRow");
             var filtered = provider.Generate(Admin()).Contract.Messages.Single(m => m.Name == "UsersRow");

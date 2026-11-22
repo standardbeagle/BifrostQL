@@ -8,7 +8,7 @@ namespace BifrostQL.Server.Grpc
     /// The gRPC HTTP/2 front door as an <see cref="IProtocolAdapter"/> — OPT-IN (only present when
     /// the host calls <c>AddBifrostGrpc</c>) and validated FAIL-FAST at startup. The per-call work is
     /// done by the dynamically-registered service methods and the reflection service mapped via
-    /// <c>MapBifrostGrpc</c>; this adapter owns the front-door lifecycle and the startup guard.
+    /// <c>MapBifrostGrpcAsync</c>; this adapter owns the front-door lifecycle and the startup guard.
     ///
     /// <para><b>Fail fast.</b> <see cref="StartAsync"/> rejects a misconfigured port/TLS/stream bound
     /// and forces the descriptor set to build (surfacing a PK-less table or any schema fault as a
@@ -33,13 +33,14 @@ namespace BifrostQL.Server.Grpc
             _logger = logger ?? NullLogger<GrpcWireAdapter>.Instance;
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
             ValidateConfiguration();
 
             // Force the descriptor build now so a schema fault (e.g. a table with no primary key)
             // aborts startup with a precise GrpcSchemaException rather than failing the first RPC.
-            _contracts.EnsureBuilt();
+            // MapBifrostGrpcAsync normally built it already; this await is then a no-op.
+            await _contracts.EnsureBuiltAsync(cancellationToken);
 
             _logger.LogWarning(
                 "gRPC front door on port {Port} started WITHOUT bearer identity extraction (slice 4) — an " +
@@ -71,8 +72,6 @@ namespace BifrostQL.Server.Grpc
                 _options.RequireTls ? "TLS" : "cleartext h2c",
                 _options.MaxStreamRows,
                 _options.EnableWrites ? "enabled" : "disabled");
-
-            return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

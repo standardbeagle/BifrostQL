@@ -103,44 +103,39 @@ namespace BifrostQL.Server.Test.Grpc
             var executor = Substitute.For<IQueryIntentExecutor>();
             executor.GetModelAsync(Arg.Any<string?>()).Returns(model);
 
-            var builder = new HostBuilder().ConfigureWebHost(web =>
+            var builder = WebApplication.CreateBuilder();
+            if (hostListenerViaUrls)
             {
-                if (hostListenerViaUrls)
+                builder.WebHost.UseKestrel();
+                builder.WebHost.UseUrls($"http://127.0.0.1:{hostPort}");
+            }
+            else
+            {
+                builder.WebHost.UseKestrel(k =>
+                    // A code-declared host listener speaking h2c, standing in for a public
+                    // HTTPS port that negotiates h2 through ALPN.
+                    k.Listen(IPAddress.Loopback, hostPort, l => l.Protocols = HttpProtocols.Http2));
+                builder.WebHost.UseUrls();
+            }
+            builder.Services.AddSingleton(executor);
+            builder.Services.AddSingleton(Substitute.For<IMutationIntentExecutor>());
+            builder.Services.AddBifrostGrpc(o => o.Port = grpcPort);
+
+            var app = builder.Build();
+            app.UseRouting();
+            // Stands in for UseBifrostQL(): a host middleware serving /graphql.
+            app.Use(async (http, next) =>
+            {
+                if (http.Request.Path == "/graphql")
                 {
-                    web.UseKestrel();
-                    web.UseUrls($"http://127.0.0.1:{hostPort}");
+                    await http.Response.WriteAsync("graphql-served");
+                    return;
                 }
-                else
-                {
-                    web.UseKestrel(k =>
-                        // A code-declared host listener speaking h2c, standing in for a public
-                        // HTTPS port that negotiates h2 through ALPN.
-                        k.Listen(IPAddress.Loopback, hostPort, l => l.Protocols = HttpProtocols.Http2));
-                    web.UseUrls();
-                }
-                web.ConfigureServices(services =>
-                {
-                    services.AddSingleton(executor);
-                    services.AddSingleton(Substitute.For<IMutationIntentExecutor>());
-                    services.AddBifrostGrpc(o => o.Port = grpcPort);
-                });
-                web.Configure(app =>
-                {
-                    app.UseRouting();
-                    // Stands in for UseBifrostQL(): a host middleware serving /graphql.
-                    app.Use(async (http, next) =>
-                    {
-                        if (http.Request.Path == "/graphql")
-                        {
-                            await http.Response.WriteAsync("graphql-served");
-                            return;
-                        }
-                        await next(http);
-                    });
-                    app.UseEndpoints(e => e.MapBifrostGrpc());
-                });
+                await next(http);
             });
-            return await builder.StartAsync();
+            await app.MapBifrostGrpcAsync();
+            await app.StartAsync();
+            return app;
         }
 
         private static HttpClient H2Client() => new(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5) })

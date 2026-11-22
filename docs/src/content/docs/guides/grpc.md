@@ -26,7 +26,7 @@ arbitrary SQL, and no cross-RPC transactions** (see [Non-goals](#non-goals)).
 ## Enabling the endpoint
 
 Register the adapter with `AddBifrostGrpc` on your service collection, then map
-its routes with `MapBifrostGrpc`. The endpoint is opt-in and defaults **off**,
+its routes with `await app.MapBifrostGrpcAsync()`. The endpoint is opt-in and defaults **off**,
 mirroring the OData, pgwire, RESP, and S3 adapters. `AddBifrostGrpc` binds a
 **dedicated HTTP/2 Kestrel listener** on the configured port and registers the
 dynamic dispatch service plus the identity-filtered reflection service; a bind
@@ -56,7 +56,9 @@ var app = builder.Build();
 // middleware must run before the gRPC routes are reached.
 app.UseAuthentication();
 
-app.MapBifrostGrpc();   // maps the dynamic Get/List/Stream service + reflection
+// Loads the model, then maps the dynamic Get/List/Stream service + reflection.
+// Async because the gRPC method set is generated from the model at mapping time.
+await app.MapBifrostGrpcAsync();
 app.Run();
 ```
 

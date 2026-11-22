@@ -170,7 +170,7 @@ namespace BifrostQL.Integration.Test.Grpc
 
                 var app = builder.Build();
                 app.UseRouting();
-                app.MapBifrostGrpc();
+                await app.MapBifrostGrpcAsync();
                 await app.StartAsync();
 
                 var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();

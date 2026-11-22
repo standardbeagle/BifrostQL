@@ -109,20 +109,18 @@ namespace BifrostQL.Server.Test.Grpc
             var executor = Substitute.For<IQueryIntentExecutor>();
             executor.GetModelAsync(Arg.Any<string?>()).Returns(model);
 
-            var builder = new HostBuilder().ConfigureWebHost(web =>
-            {
-                web.UseKestrel();
-                // Kestrel binds only what AddBifrostGrpc configures; no default URL.
-                web.UseUrls();
-                web.ConfigureServices(services =>
-                {
-                    services.AddSingleton(executor);
-                    services.AddBifrostGrpc(configure);
-                });
-                web.Configure(app => app.UseRouting().UseEndpoints(e => e.MapBifrostGrpc()));
-            });
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseKestrel();
+            // Kestrel binds only what AddBifrostGrpc configures; no default URL.
+            builder.WebHost.UseUrls();
+            builder.Services.AddSingleton(executor);
+            builder.Services.AddBifrostGrpc(configure);
 
-            return await builder.StartAsync();
+            var app = builder.Build();
+            app.UseRouting();
+            await app.MapBifrostGrpcAsync();
+            await app.StartAsync();
+            return app;
         }
 
         /// <summary>An HTTP/2 request with prior knowledge, so cleartext h2c is not negotiated away.</summary>

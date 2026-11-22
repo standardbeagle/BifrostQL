@@ -28,7 +28,7 @@ namespace BifrostQL.Server.Grpc
 
         public void OnServiceMethodDiscovery(ServiceMethodProviderContext<BifrostDynamicGrpcService> context)
         {
-            // Building the contract here is also the fail-fast descriptor gate at endpoint build.
+            // MapBifrostGrpcAsync awaited the build (the fail-fast descriptor gate) before mapping.
             var contract = _contracts.FullContract;
             var model = _contracts.Model;
             var serviceName = _contracts.ServiceFullName;

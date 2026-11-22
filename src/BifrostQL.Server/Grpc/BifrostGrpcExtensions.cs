@@ -14,7 +14,7 @@ namespace BifrostQL.Server.Grpc
     /// Registration for the opt-in gRPC HTTP/2 front door. <see cref="AddBifrostGrpc"/> wires the
     /// dynamic dispatch service, the identity-filtered reflection service, and the
     /// <see cref="GrpcWireAdapter"/> lifecycle, and binds a dedicated HTTP/2 Kestrel listener on the
-    /// configured port (a bind failure there aborts startup — fail-fast). <see cref="MapBifrostGrpc"/>
+    /// configured port (a bind failure there aborts startup — fail-fast). <see cref="MapBifrostGrpcAsync"/>
     /// exposes the gRPC routes; the host calls both (mirrors the RESP/pgwire adapter pattern, adapted
     /// for endpoint-routed HTTP/2).
     /// </summary>
@@ -144,13 +144,19 @@ namespace BifrostQL.Server.Grpc
         }
 
         /// <summary>
-        /// Maps the dynamic Get/List/Stream service and the identity-filtered reflection service into
-        /// the endpoint pipeline. Requires <c>UseRouting</c>/endpoint routing (the default in minimal
-        /// hosting).
+        /// Loads the endpoint model, then maps the dynamic Get/List/Stream service and the
+        /// identity-filtered reflection service into the endpoint pipeline. Requires
+        /// <c>UseRouting</c>/endpoint routing (the default in minimal hosting).
+        ///
+        /// <para>Async because gRPC asks for the method set the moment a service is mapped, and the
+        /// method set is generated from the model. Awaiting the model load here keeps startup free
+        /// of a blocking wait on async I/O. A schema fault (e.g. a table with no primary key)
+        /// surfaces from this await as a <see cref="GrpcSchemaException"/>.</para>
         /// </summary>
-        public static void MapBifrostGrpc(this IEndpointRouteBuilder endpoints)
+        public static async Task MapBifrostGrpcAsync(this IEndpointRouteBuilder endpoints, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(endpoints);
+            await endpoints.ServiceProvider.GetRequiredService<GrpcContractProvider>().EnsureBuiltAsync(cancellationToken);
             // Both services answer ONLY on the dedicated gRPC listener: Kestrel shares one pipeline
             // across listeners, so an unguarded route answered on any host listener that spoke
             // HTTP/2, bypassing this port's bind address, TLS requirement and admission cap.

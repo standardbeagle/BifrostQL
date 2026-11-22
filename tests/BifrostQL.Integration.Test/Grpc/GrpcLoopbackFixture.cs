@@ -26,7 +26,7 @@ namespace BifrostQL.Integration.Test.Grpc
     /// database behind the full BifrostQL endpoint stack plus the opt-in gRPC adapter, hosted in-process
     /// on a <see cref="TestServer"/> and driven by a real <see cref="GrpcChannel"/> over the HTTP/2 test
     /// handler. Unlike the server-project unit tests, this fixture lives OUTSIDE the server assembly and
-    /// uses only the public adapter API (<c>AddBifrostGrpc</c>/<c>MapBifrostGrpc</c>) plus the public
+    /// uses only the public adapter API (<c>AddBifrostGrpc</c>/<c>MapBifrostGrpcAsync</c>) plus the public
     /// schema-generation types to build its client-side contract — so it proves an external caller,
     /// holding only what reflection yields, can drive the surface with no compiled stubs. No production
     /// network dependency: everything is in-proc SQLite + the in-memory HTTP/2 handler.
@@ -65,41 +65,35 @@ namespace BifrostQL.Integration.Test.Grpc
             }
 
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
-            var builder = new HostBuilder().ConfigureWebHost(web =>
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddBifrostEndpoints(o =>
             {
-                web.UseTestServer();
-                web.ConfigureServices(services =>
+                o.AddEndpoint(e =>
                 {
-                    services.AddBifrostEndpoints(o =>
-                    {
-                        o.AddEndpoint(e =>
-                        {
-                            e.ConnectionString = _connString;
-                            e.Provider = "sqlite";
-                            e.Path = EndpointPath;
-                            e.Metadata = metadataRules;
-                            e.DisableAuth = true;
-                        });
-                    });
-                    // Test identity projection: a user|tenant|roles header → the same user-context keys
-                    // the pipeline reads. No header → EMPTY context, the real fail-closed path.
-                    services.AddSingleton<IBifrostAuthContextFactory, HeaderIdentityFactory>();
-                    // TestServer has no listener port, and the gRPC routes answer only on the gRPC
-                    // listener's port; stamp it on every request ahead of the production guards.
-                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, TestServerGrpcPortShim>();
-                    services.AddBifrostGrpc(o =>
-                    {
-                        o.Endpoint = EndpointPath;
-                        o.EnableWrites = enableWrites;
-                    });
-                });
-                web.Configure(app =>
-                {
-                    app.UseRouting();
-                    app.UseEndpoints(e => e.MapBifrostGrpc());
+                    e.ConnectionString = _connString;
+                    e.Provider = "sqlite";
+                    e.Path = EndpointPath;
+                    e.Metadata = metadataRules;
+                    e.DisableAuth = true;
                 });
             });
-            _host = await builder.StartAsync();
+            // Test identity projection: a user|tenant|roles header → the same user-context keys
+            // the pipeline reads. No header → EMPTY context, the real fail-closed path.
+            builder.Services.AddSingleton<IBifrostAuthContextFactory, HeaderIdentityFactory>();
+            // TestServer has no listener port, and the gRPC routes answer only on the gRPC
+            // listener's port; stamp it on every request ahead of the production guards.
+            builder.Services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, TestServerGrpcPortShim>();
+            builder.Services.AddBifrostGrpc(o =>
+            {
+                o.Endpoint = EndpointPath;
+                o.EnableWrites = enableWrites;
+            });
+            var app = builder.Build();
+            app.UseRouting();
+            await app.MapBifrostGrpcAsync();
+            await app.StartAsync();
+            _host = app;
 
             var handler = _host.GetTestServer().CreateHandler();
             _channel = GrpcChannel.ForAddress("http://localhost", new GrpcChannelOptions { HttpHandler = handler });

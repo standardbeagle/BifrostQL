@@ -144,29 +144,23 @@ namespace BifrostQL.Server.Test.Grpc
             var baseReads = Host.Services.GetRequiredService<IQueryIntentExecutor>();
             var baseWrites = Host.Services.GetRequiredService<IMutationIntentExecutor>();
 
-            var builder = new HostBuilder().ConfigureWebHost(web =>
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddSingleton(baseReads);
+            builder.Services.AddSingleton(baseWrites);
+            builder.Services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
+            // TestServer has no listener port; stamp the gRPC one (see the shim).
+            builder.Services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
+            builder.Services.AddBifrostGrpc(o =>
             {
-                web.UseTestServer();
-                web.ConfigureServices(services =>
-                {
-                    services.AddSingleton(baseReads);
-                    services.AddSingleton(baseWrites);
-                    services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
-                    // TestServer has no listener port; stamp the gRPC one (see the shim).
-                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
-                    services.AddBifrostGrpc(o =>
-                    {
-                        o.Endpoint = EndpointPath;
-                        o.EnableWrites = true;
-                    });
-                });
-                web.Configure(app =>
-                {
-                    app.UseRouting();
-                    app.UseEndpoints(e => e.MapBifrostGrpc());
-                });
+                o.Endpoint = EndpointPath;
+                o.EnableWrites = true;
             });
-            _grpcHost = await builder.StartAsync();
+            var app = builder.Build();
+            app.UseRouting();
+            await app.MapBifrostGrpcAsync();
+            await app.StartAsync();
+            _grpcHost = app;
 
             var handler = _grpcHost.GetTestServer().CreateHandler();
             _channel = GrpcChannel.ForAddress("http://localhost", new GrpcChannelOptions { HttpHandler = handler });

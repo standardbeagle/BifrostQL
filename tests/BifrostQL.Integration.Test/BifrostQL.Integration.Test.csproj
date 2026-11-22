@@ -45,7 +45,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\BifrostQL.Core\BifrostQL.Core.csproj" />
-		<!-- The assembled gRPC front door under test (AddBifrostGrpc / MapBifrostGrpc), plus the
+		<!-- The assembled gRPC front door under test (AddBifrostGrpc / MapBifrostGrpcAsync), plus the
 		     Grpc.AspNetCore + Grpc.Reflection + Google.Protobuf stack it carries transitively. -->
 		<ProjectReference Include="..\..\src\BifrostQL.Server\BifrostQL.Server.csproj" />
 		<!-- Declarative MCP tool document loader/validator (AddBifrostMcpTools) exercised by

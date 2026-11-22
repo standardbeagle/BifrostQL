@@ -32,7 +32,7 @@ namespace BifrostQL.Server.Prometheus
     /// <see cref="AddBifrostPrometheus"/> registers the scrape gate, scope resolver, series collector,
     /// scrape service, and the engine self-metrics registry + its read/write observers;
     /// <see cref="UseBifrostPrometheus"/> mounts the middleware on its own branch. Both are opt-in and
-    /// inert when not configured (mirroring <c>AddBifrostGrpc</c>/<c>MapBifrostGrpc</c> and
+    /// inert when not configured (mirroring <c>AddBifrostGrpc</c>/<c>MapBifrostGrpcAsync</c> and
     /// <c>UseBifrostOData</c>): a host may call <see cref="UseBifrostPrometheus"/> unconditionally.
     ///
     /// <para>Security posture is unchanged from slices 3-4: business metrics default OFF, the credential

@@ -71,46 +71,40 @@ namespace BifrostQL.Server.Test.Grpc
                 await Exec(sql);
 
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
-            var builder = new HostBuilder().ConfigureWebHost(web =>
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddBifrostEndpoints(o =>
             {
-                web.UseTestServer();
-                web.ConfigureServices(services =>
+                o.AddEndpoint(e =>
                 {
-                    services.AddBifrostEndpoints(o =>
-                    {
-                        o.AddEndpoint(e =>
-                        {
-                            e.ConnectionString = _connString;
-                            e.Provider = "sqlite";
-                            e.Path = EndpointPath;
-                            e.Metadata = _metadataRules;
-                            e.DisableAuth = true;
-                        });
-                        o.AddQueryObservers(new IQueryObserver[] { _sqlCapture });
-                    });
-                    // Test identity projection (stands in for slice-4 bearer). Registered before
-                    // AddBifrostGrpc so it wins the TryAdd of the default factory.
-                    services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
-                    // TestServer has no listener port; stamp the gRPC one (see the shim).
-                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
-                    services.AddBifrostGrpc(o =>
-                    {
-                        o.Endpoint = _grpcOptions.Endpoint;
-                        o.Port = _grpcOptions.Port;
-                        o.MaxStreamRows = _grpcOptions.MaxStreamRows;
-                        o.ListPageSize = _grpcOptions.ListPageSize;
-                        o.RequireTls = _grpcOptions.RequireTls;
-                        o.TlsCertificatePath = _grpcOptions.TlsCertificatePath;
-                        o.EnableWrites = _grpcOptions.EnableWrites;
-                    });
+                    e.ConnectionString = _connString;
+                    e.Provider = "sqlite";
+                    e.Path = EndpointPath;
+                    e.Metadata = _metadataRules;
+                    e.DisableAuth = true;
                 });
-                web.Configure(app =>
-                {
-                    app.UseRouting();
-                    app.UseEndpoints(e => e.MapBifrostGrpc());
-                });
+                o.AddQueryObservers(new IQueryObserver[] { _sqlCapture });
             });
-            _host = await builder.StartAsync();
+            // Test identity projection (stands in for slice-4 bearer). Registered before
+            // AddBifrostGrpc so it wins the TryAdd of the default factory.
+            builder.Services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
+            // TestServer has no listener port; stamp the gRPC one (see the shim).
+            builder.Services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
+            builder.Services.AddBifrostGrpc(o =>
+            {
+                o.Endpoint = _grpcOptions.Endpoint;
+                o.Port = _grpcOptions.Port;
+                o.MaxStreamRows = _grpcOptions.MaxStreamRows;
+                o.ListPageSize = _grpcOptions.ListPageSize;
+                o.RequireTls = _grpcOptions.RequireTls;
+                o.TlsCertificatePath = _grpcOptions.TlsCertificatePath;
+                o.EnableWrites = _grpcOptions.EnableWrites;
+            });
+            var app = builder.Build();
+            app.UseRouting();
+            await app.MapBifrostGrpcAsync();
+            await app.StartAsync();
+            _host = app;
 
             var handler = _host.GetTestServer().CreateHandler();
             _channel = GrpcChannel.ForAddress("http://localhost", new GrpcChannelOptions { HttpHandler = handler });

@@ -25,30 +25,30 @@ namespace BifrostQL.Core.Model.Relationships
         private readonly IReadOnlyList<PrefixGroup> _prefixGroups;
 
         /// <summary>
-        /// Candidate parent tables by NormalizedName, schema-aware. A table's bare name
-        /// is not its identity: <c>hr.employee</c> and <c>payroll.employee</c> share
-        /// one. A column resolves to the same-named table in its own table's schema;
-        /// failing that, to the one schema that defines the name. A name defined in two
-        /// or more other schemas is not inferred — picking one would link across
-        /// schemas by read order.
+        /// Candidate parent tables by match name (NormalizedName, or the prefix-stripped
+        /// singular for a prefix group), schema-aware. A table's bare name is not its
+        /// identity: <c>hr.employee</c> and <c>payroll.employee</c> share one. A column
+        /// resolves to the same-named table in its own table's schema; failing that, to
+        /// the one schema that defines the name. A name defined in two or more other
+        /// schemas is not inferred — picking one would link across schemas by read order.
         /// </summary>
         private sealed class SingleKeyTableIndex
         {
             private readonly Dictionary<(string Schema, string Name), IDbTable> _bySchema = new(new SchemaTableComparer());
             private readonly Dictionary<string, List<IDbTable>> _byName = new(StringComparer.InvariantCultureIgnoreCase);
 
-            public SingleKeyTableIndex(IEnumerable<IDbTable> tables)
+            public SingleKeyTableIndex(IEnumerable<(IDbTable Table, string MatchName)> candidates)
             {
-                foreach (var table in tables)
+                foreach (var (table, matchName) in candidates)
                 {
                     // First-wins within one schema (two tables singularizing to the
                     // same name), as before.
-                    if (!_bySchema.TryAdd((table.TableSchema, table.NormalizedName), table))
+                    if (!_bySchema.TryAdd((table.TableSchema, matchName), table))
                         continue;
-                    if (!_byName.TryGetValue(table.NormalizedName, out var list))
+                    if (!_byName.TryGetValue(matchName, out var list))
                     {
                         list = new List<IDbTable>();
-                        _byName[table.NormalizedName] = list;
+                        _byName[matchName] = list;
                     }
                     list.Add(table);
                 }
@@ -80,7 +80,9 @@ namespace BifrostQL.Core.Model.Relationships
             // DiscoverRelationships and FindIdMatches) are safe — this is the single
             // guard for those three call-sites, matching the repo pattern of guarding
             // at candidate-selection time rather than scattering checks through the code.
-            var singleTables = new SingleKeyTableIndex(model.Tables.Where(t => t.KeyColumns.Count() == 1));
+            var singleTables = new SingleKeyTableIndex(model.Tables
+                .Where(t => t.KeyColumns.Count() == 1)
+                .Select(t => (t, t.NormalizedName)));
 
             // Per-prefix-group lookup
             var prefixLookups = BuildPrefixLookups(model);
@@ -152,25 +154,21 @@ namespace BifrostQL.Core.Model.Relationships
             return linked;
         }
 
-        private Dictionary<string, Dictionary<string, IDbTable>> BuildPrefixLookups(IDbModel model)
+        /// <summary>
+        /// Per-prefix-group candidate parents keyed by the prefix-stripped singular name.
+        /// A group lists bare DbNames, so the same name in two schemas lands in one group;
+        /// the schema-aware index keeps <c>archive.app_order.customer_id</c> on
+        /// <c>archive.app_customer</c> rather than whichever schema was read first.
+        /// </summary>
+        private Dictionary<string, SingleKeyTableIndex> BuildPrefixLookups(IDbModel model)
         {
-            var prefixLookups = new Dictionary<string, Dictionary<string, IDbTable>>(StringComparer.OrdinalIgnoreCase);
-            
+            var prefixLookups = new Dictionary<string, SingleKeyTableIndex>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var group in _prefixGroups)
             {
-                var lookup = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
-                foreach (var table in model.Tables)
-                {
-                    if (!group.TableDbNames.Contains(table.DbName))
-                        continue;
-                    if (table.KeyColumns.Count() != 1)
-                        continue;
-
-                    var stripped = table.DbName.Substring(group.Prefix.Length);
-                    var normalized = DbModel.Pluralizer.Singularize(stripped);
-                    lookup.TryAdd(normalized, table);
-                }
-                prefixLookups[group.Prefix] = lookup;
+                prefixLookups[group.Prefix] = new SingleKeyTableIndex(model.Tables
+                    .Where(t => group.TableDbNames.Contains(t.DbName) && t.KeyColumns.Count() == 1)
+                    .Select(t => (t, DbModel.Pluralizer.Singularize(t.DbName.Substring(group.Prefix.Length)))));
             }
 
             return prefixLookups;
@@ -192,7 +190,7 @@ namespace BifrostQL.Core.Model.Relationships
         private IEnumerable<(ColumnDto column, IDbTable table, IDbTable parent)> FindIdMatches(
             IDbModel model,
             SingleKeyTableIndex singleTables,
-            Dictionary<string, Dictionary<string, IDbTable>> prefixLookups,
+            Dictionary<string, SingleKeyTableIndex> prefixLookups,
             Dictionary<string, string> tableToPrefixGroup,
             HashSet<(string TableSchema, string TableName, string ColumnName)> fkLinkedColumns)
         {
@@ -201,7 +199,7 @@ namespace BifrostQL.Core.Model.Relationships
                 // Try prefix-stripped lookup first
                 if (tableToPrefixGroup.TryGetValue(ownerTable.DbName, out var prefix) &&
                     prefixLookups.TryGetValue(prefix, out var prefixLookup) &&
-                    prefixLookup.TryGetValue(column.NormalizedName, out var prefixMatch))
+                    prefixLookup.Find(ownerTable.TableSchema, column.NormalizedName) is { } prefixMatch)
                 {
                     return prefixMatch;
                 }

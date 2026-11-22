@@ -98,7 +98,9 @@ namespace BifrostQL.Core.QueryModel
             .Concat(ScalarColumns
                 .Where(c => c.IsProviderComputed)
                 .SelectMany(c => ProviderDependencies(c).Select(d => new GqlObjectColumn(d))))
-            .Concat(Joins.Select(j => new GqlObjectColumn(j.FromColumn)))
+            // Every key column of every join: the reader keys a link by all of them
+            // (JoinKeyValues.FromParentRow), selected or not.
+            .Concat(Joins.SelectMany(j => j.FromColumns).Select(c => new GqlObjectColumn(c)))
             .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance);
 
         private IEnumerable<string> ProviderDependencies(GqlObjectColumn column)

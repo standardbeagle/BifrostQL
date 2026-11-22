@@ -107,9 +107,10 @@ public class WorkflowTriggerTests
         runner.Runs.Should().ContainSingle();
     }
 
-    // An ambiguous bare name fails instead of firing for both tables.
+    // An ambiguous bare name matches neither table (the skip is logged; see
+    // WorkflowTriggerAmbiguityTests in Core.Test) instead of firing for both.
     [Fact]
-    public async Task Trigger_AmbiguousBareTableName_FailsInsteadOfMatchingBothTables()
+    public async Task Trigger_AmbiguousBareTableName_MatchesNeitherTable()
     {
         var runner = new CapturingWorkflowRunner();
         var host = new WorkflowTriggerHost(WorkflowMap(Workflow("employee-changed", "on-mutation",
@@ -117,9 +118,9 @@ public class WorkflowTriggerTests
         var hr = Table("employee", "hr");
         var payroll = Table("employee", "payroll");
 
-        var act = async () => await host.OnMutationAsync(Mutation(Model(hr, payroll), payroll));
+        await host.OnMutationAsync(Mutation(Model(hr, payroll), payroll));
+        await host.OnMutationAsync(Mutation(Model(hr, payroll), hr));
 
-        (await act.Should().ThrowAsync<BifrostQL.Core.Resolvers.BifrostExecutionError>()).WithMessage("*ambiguous*");
         runner.Runs.Should().BeEmpty();
     }
 

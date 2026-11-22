@@ -24,8 +24,8 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
         StateTransitionInfo transition,
         IDictionary<string, object?> userContext)
     {
-        foreach (var workflow in Matching("on-state-transition", payload =>
-                 MatchesTable(payload, transition.Model, transition.Table)
+        foreach (var workflow in Matching("on-state-transition", (candidate, payload) =>
+                 MatchesTable(candidate, payload, transition.Model, transition.Table)
                  && Matches(payload, "from", transition.From)
                  && Matches(payload, "to", transition.To)))
         {
@@ -46,8 +46,8 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
         var action = context.MutationType.ToString().ToLowerInvariant();
         var model = context.Model
             ?? throw new InvalidOperationException("A mutation observer context carries no model; workflow trigger tables cannot be resolved.");
-        foreach (var workflow in Matching("on-mutation", payload =>
-                 MatchesTable(payload, model, context.Table)
+        foreach (var workflow in Matching("on-mutation", (candidate, payload) =>
+                 MatchesTable(candidate, payload, model, context.Table)
                  && Matches(payload, "action", action)))
         {
             await RunTriggeredAsync(workflow, new Dictionary<string, object?>
@@ -61,7 +61,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
     }
 
     internal IEnumerable<WorkflowDefinition> ScheduledWorkflows(DateTimeOffset now)
-        => Matching("scheduled", payload =>
+        => Matching("scheduled", (_, payload) =>
         {
             if (payload.TryGetProperty("runOnTick", out var runOnTick)
                 && runOnTick.ValueKind == JsonValueKind.True)
@@ -96,7 +96,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
 
     private IEnumerable<WorkflowDefinition> Matching(
         string triggerType,
-        Func<JsonElement, bool> payloadPredicate)
+        Func<WorkflowDefinition, JsonElement, bool> payloadPredicate)
     {
         foreach (var workflow in _workflows.Values)
         {
@@ -107,7 +107,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
             if (payload is null || payload.Value.ValueKind != JsonValueKind.Object)
                 continue;
 
-            if (payloadPredicate(payload.Value))
+            if (payloadPredicate(workflow, payload.Value))
                 yield return workflow;
         }
     }
@@ -115,11 +115,12 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
     /// <summary>
     /// Whether the trigger's <c>table</c> names <paramref name="table"/>. A qualified
     /// <c>schema.name</c> (split on the first dot) names exactly one table. A bare name is
-    /// accepted only when it is unique in the model: an ambiguous one throws the model's
-    /// ambiguity error rather than firing for every schema that defines it. Identity is the
-    /// resolved <see cref="IDbTable"/>, never a name compare.
+    /// accepted only when it is unique in the model. An ambiguous one matches nothing rather
+    /// than firing for every schema that defines it, and is logged as that workflow's fault:
+    /// throwing here would end the caller's loop and stop every other workflow the write
+    /// matches. Identity is the resolved <see cref="IDbTable"/>, never a name compare.
     /// </summary>
-    private static bool MatchesTable(JsonElement payload, IDbModel model, IDbTable table)
+    private static bool MatchesTable(WorkflowDefinition workflow, JsonElement payload, IDbModel model, IDbTable table)
     {
         if (!payload.TryGetProperty("table", out var configured) || configured.GetString() is not { } name)
             return false;
@@ -129,8 +130,17 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
             return model.TryGetTableFromDbName(name[..dot], name[(dot + 1)..], out var qualified)
                 && ReferenceEquals(qualified, table);
 
-        return string.Equals(name, table.DbName, StringComparison.OrdinalIgnoreCase)
-            && ReferenceEquals(model.GetTableFromDbName(name), table);
+        if (!string.Equals(name, table.DbName, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (model.TryGetTableFromDbName(name, out var bare))
+            return ReferenceEquals(bare, table);
+
+        // The written table carries this name, so the miss is an ambiguous bare name.
+        Resolvers.BifrostErrorSink.Handled(
+            nameof(WorkflowTriggerHost),
+            $"Workflow '{workflow.Name}' was skipped: its trigger table '{name}' is ambiguous, more than one " +
+            "schema defines it. Qualify it as schema.name.");
+        return false;
     }
 
     private static bool Matches(JsonElement payload, string property, string value)

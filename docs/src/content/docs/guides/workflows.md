@@ -74,7 +74,7 @@ Workflows support four trigger types:
 - `on-state-transition`: runs after a matching state-machine transition succeeds.
 - `scheduled`: runs from the in-process scheduler tick.
 
-The `table` of an `on-mutation` or `on-state-transition` trigger names one table. Write it schema-qualified (`"table": "public.members"`) to match exactly that table. A bare name (`"table": "members"`) matches only while it is unique in the model. If two schemas define it, the trigger fails instead of firing for both: the model's ambiguity error is logged by the observer that dispatched the write or transition, and no workflow runs. Nothing checks this at startup, so qualify the name on any database with more than one schema.
+The `table` of an `on-mutation` or `on-state-transition` trigger names one table. Write it schema-qualified (`"table": "public.members"`) to match exactly that table. A bare name (`"table": "members"`) matches only while it is unique in the model. If two schemas define it, that workflow matches neither table instead of firing for both: each write to either table logs a warning naming the workflow and skips it, and every other workflow the write matches still runs. Nothing checks this at startup, so qualify the name on any database with more than one schema.
 
 Trigger inputs:
 

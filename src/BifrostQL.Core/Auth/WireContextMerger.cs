@@ -15,7 +15,8 @@ namespace BifrostQL.Core.Auth;
 /// MODEL-AWARE: a deployment that configures <c>tenant-context-key</c> (e.g. <c>org_id</c>) gets
 /// that key stripped too — the default-key-only strip was bypassable for exactly those
 /// deployments, which is why this merge runs in the engine after model resolution rather than at
-/// the transport, where the model is not yet known.</para>
+/// the transport, where the model is not yet known. The same holds for the model's
+/// <c>user-audit-key</c>: a wire entry under it would name the actor of the write.</para>
 ///
 /// <para><b>Identity keys win.</b> A wire entry whose key the identity projection already
 /// populated is ignored, so a frontend can only ever ADD non-identity keys.</para>
@@ -33,9 +34,13 @@ public static class WireContextMerger
             return;
 
         // ResolveTenantContextKey fails fast on a present-but-invalid configured key —
-        // silently defaulting would build the owned set around the wrong claim.
+        // silently defaulting would build the owned set around the wrong claim. The model's
+        // user-audit-key is owned too: it names the claim every actor column and history row
+        // is stamped from, so a wire entry under it would let the client author the write.
+        var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
         var ownedKeys = new IdentityContextMapper(
-            TenantFilterTransformer.ResolveTenantContextKey(model)).OwnedKeyNames;
+            TenantFilterTransformer.ResolveTenantContextKey(model),
+            userAuditKey: string.IsNullOrWhiteSpace(auditKey) ? null : auditKey).OwnedKeyNames;
 
         // Security-resolved context keys: the row-scope placeholders and auto-filter claim
         // keys the model's security filters read at request time. A wire entry for one would

@@ -75,6 +75,25 @@ public sealed class WireContextMergerTests
     }
 
     [Fact]
+    public void ConfiguredUserAuditKey_IsStrippedToo()
+    {
+        // user-audit-key names the claim the actor columns and history rows are stamped from.
+        // An identity without that claim leaves the slot absent; a wire entry must not fill it.
+        var model = new DbModel
+        {
+            Tables = [],
+            Metadata = new Dictionary<string, object?> { [MetadataKeys.Audit.UserKey] = "employee_no" },
+        };
+        var userContext = new Dictionary<string, object?>();
+        var wire = new Dictionary<string, object?> { ["employee_no"] = "spoofed-actor", ["frontend-extra"] = 1 };
+
+        WireContextMerger.Merge(userContext, wire, model);
+
+        userContext.Should().NotContainKey("employee_no");
+        userContext["frontend-extra"].Should().Be(1);
+    }
+
+    [Fact]
     public void NullOrEmptyWireContext_IsANoOp()
     {
         var userContext = new Dictionary<string, object?> { ["sub"] = "user-1" };

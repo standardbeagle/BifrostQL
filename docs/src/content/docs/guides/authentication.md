@@ -328,6 +328,8 @@ For additional row-level filters, map columns to claims with `auto-filter`:
 
 Claims baked into a token live as long as the token does — a JWT issued for weeks still carries the permissions the user had at sign-in. When your capability set lives in the database and a permission change must take effect *when made*, register a grant resolver. It runs **once per request**, for authenticated principals, at the single point every transport assembles the user context, and its result is **unioned** into the `permissions` context key before any policy, tenant, or filter module reads the context.
 
+An app endpoint that calls `GetBifrostUserContextAsync()` and then awaits `IPolicyGateAccessor.GetAsync()` shares one projection: the HTTP identity step is memoized for the request, so the resolver still runs once. The binary WebSocket mount projects once per message, since its connection outlives any one request.
+
 Two transport-shape exceptions to "once per request":
 
 - **pgwire, RESP, and LDAP project identity once per connection, at login.** The resolver runs at that moment; a permission change takes effect on the client's *next connection*, not mid-session.

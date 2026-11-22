@@ -59,14 +59,41 @@ namespace BifrostQL.Server
         /// caller that ignores the outcome still cannot read an identity out of a refused request.
         /// Asynchronous because the default factory awaits the host's grant resolver here; it
         /// runs only on the requests a mount actually serves, never on health or static routes.
+        ///
+        /// <para>Memoized for the request (invariant 13): an app endpoint that projects the caller
+        /// and then asks <see cref="PolicyGateAccessor"/> for its gate runs the factory, and the
+        /// grant resolver, once. The memo lives in <see cref="HttpContext.Items"/> under a private
+        /// key, so it dies with the request, and it is reused only while <c>context.User</c> and
+        /// the resolved factory are the same instances it was built from. Only a projected identity
+        /// is memoized, never a refusal, and every caller gets its own copy of the context.</para>
         /// </summary>
-        internal static ValueTask<BifrostIdentityProjection> ProjectAsync(HttpContext context)
-            => ProjectAsync(context, context.RequestServices);
+        internal static async ValueTask<BifrostIdentityProjection> ProjectAsync(HttpContext context)
+        {
+            var factory = BifrostAuthContextFactory.Resolve(context.RequestServices);
+            if (context.Items.TryGetValue(MemoKey, out var held) && held is RequestProjectionMemo memo
+                && ReferenceEquals(memo.User, context.User) && ReferenceEquals(memo.Factory, factory))
+                return new(BifrostIdentityOutcome.Projected, UserContexts.Copy(memo.UserContext));
+
+            var projection = await ProjectAsync(context, context.RequestServices);
+            if (projection.Outcome == BifrostIdentityOutcome.Projected)
+                context.Items[MemoKey] = new RequestProjectionMemo(
+                    context.User, factory, UserContexts.Copy(projection.UserContext));
+            return projection;
+        }
+
+        /// <summary>The <see cref="HttpContext.Items"/> key of the per-request memo; private, so no
+        /// other code can read or plant it.</summary>
+        private static readonly object MemoKey = new();
+
+        private sealed record RequestProjectionMemo(
+            System.Security.Claims.ClaimsPrincipal User, IBifrostAuthContextFactory Factory,
+            IDictionary<string, object?> UserContext);
 
         /// <summary>
         /// <see cref="ProjectAsync(HttpContext)"/> with the factory and the default factory's
         /// scoped services (grant resolver) taken from <paramref name="services"/>: the binary
-        /// transport passes each message's own scope.
+        /// transport passes each message's own scope. Never memoized: a WebSocket's HttpContext
+        /// spans the whole session, and each message projects afresh.
         /// </summary>
         internal static async ValueTask<BifrostIdentityProjection> ProjectAsync(
             HttpContext context, IServiceProvider? services)

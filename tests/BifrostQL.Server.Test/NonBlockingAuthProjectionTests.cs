@@ -165,6 +165,35 @@ public sealed class NonBlockingAuthProjectionTests
             .Should().ThrowAsync<OperationCanceledException>("the cancelling caller abandons its own wait");
     }
 
+    [Fact]
+    public async Task HttpGate_Memo_IsReusedWithinARequest_AndDroppedWhenThePrincipalChanges()
+    {
+        var calls = 0;
+        var context = new DefaultHttpContext
+        {
+            User = Principal("user-1"),
+            RequestServices = new ServiceCollection().AddBifrostGrantResolver((identity, sp, ct) =>
+            {
+                Interlocked.Increment(ref calls);
+                return new ValueTask<IReadOnlyCollection<string>>(Grants);
+            }).BuildServiceProvider(),
+        };
+
+        var first = await context.GetBifrostUserContextAsync();
+        first["scribble"] = "mutated by the first caller";
+        var second = await context.GetBifrostUserContextAsync();
+
+        calls.Should().Be(1, "one projection per request");
+        second.Should().NotContainKey("scribble", "each caller gets its own copy of the memoized context");
+        PolicyIdentity.ExtractPermissions(second).Should().Contain(Grants);
+
+        context.User = Principal("user-2");
+        var swapped = await context.GetBifrostUserContextAsync();
+
+        calls.Should().Be(2, "a different principal is projected afresh, never served the old memo");
+        PolicyIdentity.FromUserContext(swapped).Id.Should().Be("user-2");
+    }
+
     private static PolicyGateAccessor AccessorFor(IServiceCollection services)
     {
         var models = new PathCache<Inputs>();

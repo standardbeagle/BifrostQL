@@ -105,6 +105,32 @@ public class MembershipWorkflowEndpointsTests
     }
 
     [Fact]
+    public async Task RecordPayment_RunsTheGrantResolverOncePerRequest()
+    {
+        // The endpoint projects the caller (GetBifrostUserContextAsync) and then asks for the
+        // policy gate, which projects through the same identity gate. Both must share one
+        // projection: the resolver runs once per request, as the authentication guide states.
+        await using var factory = new CountingResolverWorkflowFactory();
+        var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Finance);
+        Interlocked.Exchange(ref factory.ResolverCalls, 0);
+
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/record-payment",
+            new { invoiceId = 1, amountCents = 12000, method = "check", paidOn = "2025-01-05" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the finance login is granted dues.manage");
+        Volatile.Read(ref factory.ResolverCalls).Should().Be(1);
+
+        // A second request projects again: the memo lives for one request only.
+        var second = await client.PostAsJsonAsync(
+            "/workflows/membership/record-payment",
+            new { invoiceId = 1, amountCents = 100, method = "check", paidOn = "2025-01-06" });
+        second.StatusCode.Should().NotBe(HttpStatusCode.InternalServerError);
+        Volatile.Read(ref factory.ResolverCalls).Should().Be(2);
+    }
+
+    [Fact]
     public async Task RenewMembership_AdvancesTerm_OpensInvoice_AndAuditsAction()
     {
         // Arrange: a fresh host so the seeded membership 1 is expired.
@@ -548,6 +574,40 @@ public class MembershipWorkflowEndpointsTests
             base.Dispose(disposing);
             if (disposing && File.Exists(_dbPath))
                 File.Delete(_dbPath);
+        }
+    }
+
+    /// <summary>
+    /// A <see cref="WorkflowFactory"/> whose registered grant resolver (the sample's own) is
+    /// wrapped to count its invocations.
+    /// </summary>
+    public sealed class CountingResolverWorkflowFactory : WorkflowFactory
+    {
+        public int ResolverCalls;
+
+        protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.ConfigureServices(services =>
+            {
+                var registered = services.Last(d => d.ServiceType == typeof(BifrostQL.Core.Auth.IGrantResolver));
+                services.Remove(registered);
+                services.AddScoped<BifrostQL.Core.Auth.IGrantResolver>(sp =>
+                    new CountingGrantResolver(
+                        (BifrostQL.Core.Auth.IGrantResolver)registered.ImplementationFactory!(sp), this));
+            });
+        }
+
+        private sealed class CountingGrantResolver(
+            BifrostQL.Core.Auth.IGrantResolver inner, CountingResolverWorkflowFactory owner)
+            : BifrostQL.Core.Auth.IGrantResolver
+        {
+            public ValueTask<IReadOnlyCollection<string>> ResolveAsync(
+                BifrostQL.Core.Auth.AppIdentity identity, CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref owner.ResolverCalls);
+                return inner.ResolveAsync(identity, cancellationToken);
+            }
         }
     }
 

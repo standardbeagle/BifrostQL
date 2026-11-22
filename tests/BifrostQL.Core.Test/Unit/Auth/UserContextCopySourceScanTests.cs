@@ -15,10 +15,12 @@ namespace BifrostQL.Core.Test.Unit.Auth;
 ///
 /// <para>The scan is anchored on the copy APIs, never on what the copied variable is called: every
 /// <c>Dictionary&lt;string, object?&gt;</c> built from another sequence (explicit
-/// <c>new Dictionary&lt;..&gt;(x)</c>, a target-typed <c>new(x)</c> into such a declaration, and a
-/// key/value <c>ToDictionary</c>) must keep <see cref="StringComparer.OrdinalIgnoreCase"/>. The
-/// ordinal copies that remain are row, metadata and variables copies, listed by file and argument
-/// text in <see cref="NonUserContextCopies"/>; renaming one surfaces it again for review.</para>
+/// <c>new Dictionary&lt;..&gt;(x)</c>, a target-typed <c>new(x)</c> into such a declaration or
+/// into a name the file declares with that type, and a key/value <c>ToDictionary</c>) must keep
+/// <see cref="StringComparer.OrdinalIgnoreCase"/>. The ordinal copies that remain are row,
+/// metadata and variables copies, listed by file and argument text with their count in
+/// <see cref="NonUserContextCopies"/>; renaming one, or adding a second same-text copy to the same
+/// file, surfaces it again for review.</para>
 /// </summary>
 public sealed class UserContextCopySourceScanTests
 {
@@ -29,6 +31,15 @@ public sealed class UserContextCopySourceScanTests
     private static readonly Regex TargetTypedCopy = new(
         @"\b" + ObjectDictionary + @"\s*\??\s+@?\w+\s*=\s*new\s*\(", RegexOptions.Compiled);
 
+    // A name the file declares as an object dictionary (field, property, local or parameter).
+    private static readonly Regex DictionaryDeclaration = new(
+        @"\b" + ObjectDictionary + @"\s*\??\s+@?(\w+)", RegexOptions.Compiled);
+
+    // A target-typed new assigned to a bare name; a copy when the file declares that name as an
+    // object dictionary.
+    private static readonly Regex TargetTypedAssignment = new(
+        @"(?<![\w.])(?:this\s*\.\s*)?@?(\w+)\s*=\s*new\s*\(", RegexOptions.Compiled);
+
     private static readonly Regex ToDictionaryCall = new(@"\.\s*ToDictionary\s*\(", RegexOptions.Compiled);
 
     private static readonly Regex HelperCall = new(@"\bUserContexts\s*\.\s*Copy\s*\(", RegexOptions.Compiled);
@@ -38,37 +49,39 @@ public sealed class UserContextCopySourceScanTests
         @"^(\d+|[\w.]+\.(Count|Length)|\w*[Cc]apacity|StringComparer\.\w+|\w*[Cc]omparer)$", RegexOptions.Compiled);
 
     private static readonly Regex KeySelector = new(@"^(\w+)\s*=>\s*\1\s*\.\s*Key$", RegexOptions.Compiled);
-    private static readonly Regex ValueSelector = new(@"^(\w+)\s*=>\s*\1\s*\.\s*Value$", RegexOptions.Compiled);
+    // The value may be cast: kv => (object?)kv.Value.
+    private static readonly Regex ValueSelector = new(
+        @"^(\w+)\s*=>\s*(\(\s*[\w.?<>, ]+\s*\)\s*)?\1\s*\.\s*Value$", RegexOptions.Compiled);
 
     private const string CaseInsensitive = "StringComparer.OrdinalIgnoreCase";
 
     /// <summary>
-    /// Ordinal copies of data that is not a user context: "path|arguments", arguments with their
-    /// whitespace collapsed.
+    /// Ordinal copies of data that is not a user context: "path|arguments" (arguments with their
+    /// whitespace collapsed) to the number of such copies in that file.
     /// </summary>
-    private static readonly HashSet<string> NonUserContextCopies = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, int> NonUserContextCopies = new(StringComparer.Ordinal)
     {
         // GraphQL input extensions, variables and error extensions.
-        "BifrostQL.Core/Resolvers/IBifrostContext.cs|_inner.InputExtensions",
-        "BifrostQL.Server/GraphQLFrontend.cs|request.Variables",
-        "BifrostQL.Server/GraphQLFrontend.cs|error.Extensions",
+        ["BifrostQL.Core/Resolvers/IBifrostContext.cs|_inner.InputExtensions"] = 1,
+        ["BifrostQL.Server/GraphQLFrontend.cs|request.Variables"] = 1,
+        ["BifrostQL.Server/GraphQLFrontend.cs|error.Extensions"] = 1,
         // Table metadata: the store keeps the source's own comparer.
-        "BifrostQL.Core/Model/MetadataDictionary.cs|plain, plain.Comparer",
-        "BifrostQL.Core/Model/MetadataDictionary.cs|source",
-        "BifrostQL.Core/Resolvers/MetaSchemaResolver.cs|kv => kv.Key, kv => kv.Value",
-        "BifrostQL.Server/AppMetadataVisibility.cs|kv => kv.Key, kv => kv.Value, StringComparer.Ordinal",
+        ["BifrostQL.Core/Model/MetadataDictionary.cs|plain, plain.Comparer"] = 1,
+        ["BifrostQL.Core/Model/MetadataDictionary.cs|source"] = 1,
+        ["BifrostQL.Core/Resolvers/MetaSchemaResolver.cs|kv => kv.Key, kv => kv.Value"] = 2,
+        ["BifrostQL.Server/AppMetadataVisibility.cs|kv => kv.Key, kv => kv.Value, StringComparer.Ordinal"] = 1,
         // The operation-id fingerprint canonicalises write values ordinally on purpose.
-        "BifrostQL.Core/Modules/OperationId/OperationFingerprint.cs|kv => kv.Key, kv => kv.Value, StringComparer.Ordinal",
+        ["BifrostQL.Core/Modules/OperationId/OperationFingerprint.cs|kv => kv.Key, kv => kv.Value, StringComparer.Ordinal"] = 1,
         // Workflow step outputs.
-        "BifrostQL.Core/Workflows/IWorkflowRunner.cs|context.NamedOutputs",
+        ["BifrostQL.Core/Workflows/IWorkflowRunner.cs|context.NamedOutputs"] = 1,
         // Mutation row data and SQL parameter bags.
-        "BifrostQL.Core/Modules/TenantMutationTransformer.cs|data",
-        "BifrostQL.Core/Modules/ConcurrencyMutationTransformer.cs|data",
-        "BifrostQL.Core/Modules/EnumValueMutationTransformer.cs|data",
-        "BifrostQL.Core/Modules/SoftDeleteMutationTransformer.cs|data",
-        "BifrostQL.Core/Modules/TreeSyncEngine.cs|scalarData",
-        "BifrostQL.Core/Modules/Cdc/DeferredOutboxReleaseEngine.cs|values",
-        "BifrostQL.Server/Ldap/LdapSearchExecutor.cs|kv => kv.Key, kv => kv.Value",
+        ["BifrostQL.Core/Modules/TenantMutationTransformer.cs|data"] = 2,
+        ["BifrostQL.Core/Modules/ConcurrencyMutationTransformer.cs|data"] = 2,
+        ["BifrostQL.Core/Modules/EnumValueMutationTransformer.cs|data"] = 1,
+        ["BifrostQL.Core/Modules/SoftDeleteMutationTransformer.cs|data"] = 1,
+        ["BifrostQL.Core/Modules/TreeSyncEngine.cs|scalarData"] = 1,
+        ["BifrostQL.Core/Modules/Cdc/DeferredOutboxReleaseEngine.cs|values"] = 1,
+        ["BifrostQL.Server/Ldap/LdapSearchExecutor.cs|kv => kv.Key, kv => kv.Value"] = 1,
     };
 
     [Fact]
@@ -83,10 +96,11 @@ public sealed class UserContextCopySourceScanTests
             .Select(copy => (Key: $"{file.Path}|{copy.Arguments}", Where: $"{file.Path}:{copy.Line} ({copy.Arguments})")))
             .ToList();
 
-        copies.Where(copy => !NonUserContextCopies.Contains(copy.Key)).Select(copy => copy.Where)
+        copies.Where(copy => !NonUserContextCopies.ContainsKey(copy.Key)).Select(copy => copy.Where)
             .Should().BeEmpty("a user-context copy must go through UserContexts.Copy to keep the case-insensitive comparer");
-        NonUserContextCopies.Except(copies.Select(copy => copy.Key))
-            .Should().BeEmpty("a stale allow-list entry would silently admit the next copy at that site");
+        copies.GroupBy(copy => copy.Key).ToDictionary(group => group.Key, group => group.Count())
+            .Should().Equal(NonUserContextCopies,
+                "a stale entry, or a second same-text copy in a listed file, would otherwise be admitted silently");
     }
 
     [Fact]
@@ -118,6 +132,10 @@ public sealed class UserContextCopySourceScanTests
     [InlineData("var s = $\"{new Dictionary<string, object?>(frozen).Count}\";")]
     [InlineData("var s = $$\"\"\"{ {{new Dictionary<string, object?>(frozen).Count}} }\"\"\";")]
     [InlineData("var c = '\"'; var d = new Dictionary<string, object?>(frozen);")]
+    [InlineData("var c = projected.ToDictionary(kv => kv.Key, kv => (object?)kv.Value);")]
+    [InlineData("var c = projected.ToDictionary(kv => kv.Key, kv => ( object ) kv.Value, StringComparer.Ordinal);")]
+    [InlineData("private Dictionary<string, object?> _c = null!; void M() { _c = new(projected); }")]
+    [InlineData("private Dictionary<string, object?>? _c; void M() { this._c =\n    new(projected); }")]
     public void Pattern_FlagsOrdinalCopies(string offender)
         => OrdinalCopies(StripComments(offender)).Should().NotBeEmpty();
 
@@ -130,6 +148,10 @@ public sealed class UserContextCopySourceScanTests
     [InlineData("Dictionary<string, object?> c = new();")]
     [InlineData("var c = projected.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);")]
     [InlineData("var c = rows.ToDictionary(r => r.Id, r => r.Name);")]
+    [InlineData("var c = projected.ToDictionary(kv => kv.Key, kv => (object?)kv.Value, StringComparer.OrdinalIgnoreCase);")]
+    [InlineData("private Dictionary<string, object?> _c = null!; void M() { _c = new(StringComparer.OrdinalIgnoreCase); }")]
+    [InlineData("private List<string> _c = null!; void M() { _c = new(projected); }")]
+    [InlineData("private Dictionary<string, object?> _c = null!; void M() { other._c = new(projected); }")]
     [InlineData("// var c = new Dictionary<string, object?>(userContext);")]
     [InlineData("/* new Dictionary<string, object?>(userContext) */ var x = 1;")]
     [InlineData("var s = \"new Dictionary<string, object?>(userContext)\";")]
@@ -150,7 +172,12 @@ public sealed class UserContextCopySourceScanTests
     /// </summary>
     private static IEnumerable<(int Line, string Arguments)> OrdinalCopies(string text)
     {
-        foreach (var match in ExplicitCopy.Matches(text).Concat(TargetTypedCopy.Matches(text)))
+        var dictionaryNames = DictionaryDeclaration.Matches(text).Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+        var assignments = TargetTypedAssignment.Matches(text).Where(m => dictionaryNames.Contains(m.Groups[1].Value));
+
+        // A declaration's "x = new(" also matches the bare assignment; each "new(" counts once.
+        foreach (var match in ExplicitCopy.Matches(text).Concat(TargetTypedCopy.Matches(text)).Concat(assignments)
+                     .DistinctBy(m => m.Index + m.Length))
         {
             var arguments = Arguments(text, match.Index + match.Length);
             if (arguments is null)

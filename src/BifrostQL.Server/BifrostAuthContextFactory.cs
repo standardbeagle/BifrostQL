@@ -102,7 +102,10 @@ namespace BifrostQL.Server
             if (resolver is null)
                 return;
 
-            var identity = PolicyIdentity.FromUserContext(userContext);
+            // The factory runs before any model is resolved, so the tenant comes from the key the
+            // identity mapper writes it under (tenant_id), the identity's own tenant. The key-less
+            // overload projects no tenant, which handed every resolver TenantId = null.
+            var identity = PolicyIdentity.FromUserContext(userContext, MetadataKeys.Auth.DefaultTenantContextKey);
             IReadOnlyCollection<string>? grants;
             try
             {

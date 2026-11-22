@@ -126,6 +126,34 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void CreateUserContext_GrantResolver_ReceivesTheIdentityTenant()
+        {
+            // A host's resolver typically loads grants per (user, tenant). The identity it is
+            // handed carries the tenant the identity mapper wrote (tenant_id), not null.
+            BifrostQL.Core.Auth.AppIdentity? seen = null;
+            var context = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-1"),
+                    new Claim(LocalAuthClaims.Tenant, "acme"),
+                }, authenticationType: "local")),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                    {
+                        seen = identity;
+                        return new ValueTask<IReadOnlyCollection<string>>(Array.Empty<string>());
+                    })
+                    .BuildServiceProvider(),
+            };
+
+            Factory.CreateUserContext(context);
+
+            seen.Should().NotBeNull();
+            seen!.TenantId.Should().Be("acme");
+        }
+
+        [Fact]
         public void CreateUserContext_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
         {
             // Arrange: an OIDC identity whose mapper grants permission "x" — the

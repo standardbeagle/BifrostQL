@@ -112,6 +112,73 @@ public sealed class NonBlockingAuthProjectionTests
         loads.Should().Be(0, "identity is decided first, and a refused caller never costs a schema load");
     }
 
+    // ---- policy gate: one shared build per request ----
+
+    [Fact]
+    public async Task PolicyGateAccessor_ConcurrentCallers_ShareOneBuild()
+    {
+        // The first caller is held inside the resolver, in the synchronous part of the build,
+        // while a second caller asks for the gate. The memo must already be published by then,
+        // so the second caller joins that build instead of starting another.
+        var calls = 0;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var services = new ServiceCollection().AddBifrostGrantResolver((identity, sp, ct) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                entered.Set();
+                release.Wait(DeadlockBudget);
+            }
+            return new ValueTask<IReadOnlyCollection<string>>(Grants);
+        });
+        var accessor = AccessorFor(services);
+
+        var first = Task.Run(() => accessor.GetAsync().AsTask());
+        entered.Wait(DeadlockBudget).Should().BeTrue("the first caller reaches the resolver");
+        var second = accessor.GetAsync().AsTask();
+        release.Set();
+        var gates = await Task.WhenAll(first, second).WaitAsync(DeadlockBudget);
+
+        calls.Should().Be(1, "concurrent callers in one request share one build");
+        gates[1].Should().BeSameAs(gates[0]);
+    }
+
+    [Fact]
+    public async Task PolicyGateAccessor_OneCallerCancels_TheOtherStillGetsTheGate()
+    {
+        var grants = new TaskCompletionSource<IReadOnlyCollection<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var services = new ServiceCollection().AddBifrostGrantResolver((identity, sp, ct) =>
+            new ValueTask<IReadOnlyCollection<string>>(grants.Task));
+        var accessor = AccessorFor(services);
+        using var cancelling = new CancellationTokenSource();
+
+        var cancelled = accessor.GetAsync(cancelling.Token).AsTask();
+        var other = accessor.GetAsync().AsTask();
+        cancelling.Cancel();
+        grants.SetResult(Grants);
+
+        var gate = await other.WaitAsync(DeadlockBudget);
+        gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should()
+            .BeTrue("one caller's cancellation must not fault the shared build");
+        await FluentActions.Awaiting(() => cancelled.WaitAsync(DeadlockBudget))
+            .Should().ThrowAsync<OperationCanceledException>("the cancelling caller abandons its own wait");
+    }
+
+    private static PolicyGateAccessor AccessorFor(IServiceCollection services)
+    {
+        var models = new PathCache<Inputs>();
+        models.AddLoader("/graphql", () =>
+            Task.FromResult(new Inputs(new Dictionary<string, object?> { ["model"] = PaymentsModel() })));
+        var http = new DefaultHttpContext
+        {
+            User = Principal("user-1"),
+            RequestServices = services.BuildServiceProvider(),
+        };
+        http.Request.Path = "/payments";
+        return new PolicyGateAccessor(new FixedHttpContextAccessor(http), models);
+    }
+
     // ---- fixtures ----
 
     private static IServiceCollection ServicesWithYieldingResolver()

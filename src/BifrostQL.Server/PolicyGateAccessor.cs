@@ -14,6 +14,9 @@ namespace BifrostQL.Server
     /// load. That matters because <see cref="PathCache{T}"/> drops a faulted load and retries it:
     /// a down database would otherwise make every request on every route retry the load.
     /// A faulted build is not memoized either, so a later call in the same request retries it.
+    /// Concurrent callers share one build, published lock-free by compare-exchange. The build runs
+    /// on the request's own <c>RequestAborted</c>; each caller's token abandons only that caller's
+    /// wait, so one caller's cancellation never faults the build the others await.
     /// </summary>
     internal sealed class PolicyGateAccessor : IPolicyGateAccessor
     {
@@ -28,17 +31,35 @@ namespace BifrostQL.Server
         }
 
         public ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default)
+            => new(CurrentBuild().WaitAsync(cancellationToken));
+
+        /// <summary>
+        /// The request's shared build, starting one when none exists or the last one faulted or was
+        /// canceled. A candidate is created unstarted and published by compare-exchange; only the
+        /// caller whose candidate won starts it.
+        /// </summary>
+        private Task<IPolicyGate> CurrentBuild()
         {
-            var current = _gate;
-            if (current is null || current.IsFaulted || current.IsCanceled)
-                _gate = current = BuildAsync(cancellationToken);
-            return new ValueTask<IPolicyGate>(current);
+            while (true)
+            {
+                var current = Volatile.Read(ref _gate);
+                if (current is { IsFaulted: false, IsCanceled: false })
+                    return current;
+
+                var http = _httpContextAccessor.HttpContext
+                    ?? throw new InvalidOperationException("IPolicyGateAccessor requires an active HttpContext.");
+                var start = new Task<Task<IPolicyGate>>(() => BuildAsync(http));
+                var candidate = start.Unwrap();
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _gate, candidate, current), current))
+                {
+                    start.RunSynchronously();
+                    return candidate;
+                }
+            }
         }
 
-        private async Task<IPolicyGate> BuildAsync(CancellationToken cancellationToken)
+        private async Task<IPolicyGate> BuildAsync(HttpContext http)
         {
-            var http = _httpContextAccessor.HttpContext
-                ?? throw new InvalidOperationException("IPolicyGateAccessor requires an active HttpContext.");
             // One identity decision per assembly (M13): the gate runs the caller through
             // BifrostIdentityGate like every HTTP mount does, never through a second
             // CreateUserContext call that would drift from it. A caller the gate cannot
@@ -49,7 +70,7 @@ namespace BifrostQL.Server
             var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(http);
             if (outcome != BifrostIdentityOutcome.Projected)
                 return PolicyGate.Refused;
-            cancellationToken.ThrowIfCancellationRequested();
+            http.RequestAborted.ThrowIfCancellationRequested();
             var inputs = await ResolveModelInputsAsync(_models, http);
             var model = (inputs["model"] as IDbModel)
                 ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");

@@ -307,7 +307,7 @@ namespace BifrostQL.Core.QueryModel
 
         public static void SyncFieldFragments(IQueryField queryField, IDictionary<string, IQueryField> fragmentList)
         {
-            foreach (var fragmentField in queryField.Fragments.Select(f => fragmentList[f]).SelectMany(f => f.Fields))
+            foreach (var fragmentField in queryField.Fragments.SelectMany(f => FragmentFields(f, fragmentList)))
             {
                 queryField.Fields.Add(CopyField(fragmentField));
             }
@@ -317,15 +317,28 @@ namespace BifrostQL.Core.QueryModel
             }
         }
 
-        public static IQueryField CopyField(IQueryField queryField)
+        /// <summary>
+        /// The fields fragment <paramref name="name"/> contributes where it is spread: its own
+        /// fields, then those of every fragment it spreads directly in its body, transitively.
+        /// </summary>
+        public static IEnumerable<IQueryField> FragmentFields(string name, IDictionary<string, IQueryField> fragmentList)
+        {
+            var fragment = fragmentList[name];
+            return fragment.Fields.Concat(fragment.Fragments.SelectMany(f => FragmentFields(f, fragmentList)));
+        }
+
+        public static IQueryField CopyField(IQueryField queryField) => CopyField(queryField, includeResult: false);
+
+        public static QueryField CopyField(IQueryField queryField, bool includeResult)
         {
             return new QueryField()
             {
                 Name = queryField.Name,
                 Alias = queryField.Alias,
                 Value = queryField.Value,
+                IncludeResult = includeResult,
                 Arguments = queryField.Arguments,
-                Fields = queryField.Fields.Select(CopyField).ToList(),
+                Fields = queryField.Fields.Select(f => CopyField(f)).ToList(),
                 Fragments = queryField.Fragments,
             };
         }

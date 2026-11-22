@@ -45,12 +45,17 @@ On `main` after v0.4.30; not yet on NuGet.
 
 - **The HTTP identity projection is memoized per DI scope (request, binary message, hub invocation), not per `HttpContext`,** so a revoked grant takes effect on the next message instead of at reconnect, and concurrent callers in one request share one grant-resolver call. SignalR hubs use the new `GetBifrostUserContextAsync(scope)` overload.
 - **Callers of a memoized identity projection no longer share mutable collection values** (roles, permissions, host-returned lists).
+- **A memo or `IPolicyGateAccessor` resolved from the root service provider no longer serves one request's identity or gate to later callers;** a root-resolved accessor now throws.
+- **`GetBifrostUserContextAsync()` no longer memoizes on SignalR SSE or long-polling connections,** so a revoked grant takes effect before reconnect.
+- **A grant resolver that throws any exception after the request is cancelled (for example `SqlException`) refuses the caller** instead of degrading to empty permissions and memoizing that.
 
 ### Breaking — async auth and identity projection
 
 - **No thread blocks on the grant resolver or the policy gate's model load.** `IPolicyGate` is no longer injectable: inject `IPolicyGateAccessor` and `await GetAsync(ct)`; the model loads only for requests that use the gate, so health checks and static routes never trigger a schema load. `HttpContext.GetBifrostUserContext()` is now `GetBifrostUserContextAsync()`. While an `IGrantResolver` is registered, the synchronous `IBifrostAuthContextFactory.CreateUserContext` refuses an authenticated principal instead of blocking; await `CreateUserContextAsync` instead, as every shipped transport does.
 - **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
 - **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
+- **`UserContexts.Snapshot` copies every collection value, and a user-context dictionary that is not `IDictionary<string, object?>` (for example `Dictionary<string, string>`) is refused.** `List<int>` tenant values now scope correctly instead of being refused.
+- **An explicit `--config` path that names no file is refused** (`Config file not found: <path>`) by `serve`, `doctor`, `watch`, `schema`, `export`, `test` and `config-generate`; it used to be ignored silently.
 
 ### Fixed — async auth and identity projection
 
@@ -64,6 +69,10 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
 - **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
 - **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
+- **A degraded projection (grant resolver threw) is no longer memoized,** and one DI scope never runs two identity projections at once.
+- **`bifrost doctor` refuses every config file `serve` and `config-validate` refuse,** checks `connectionStrings` even when `--connection-string` is given, and reports a file with no `connectionStrings.bifrost` with serve's message. It used to report "All checks passed" for a file serve then refused.
+- **`bifrost watch`, `schema`, `export`, `test` and `config-generate` read `--config`.** They accepted the flag and ignored it; they now take `connectionStrings.bifrost` from the file when `--connection-string` is absent and refuse a file serve refuses.
+- **`bifrost schema`, `export` and `config-generate` build the model with the config file's metadata rules** through serve's own model build, so `schema --config` prints the schema `serve` would serve. A table hidden with `visibility: hidden` was still printed.
 
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 

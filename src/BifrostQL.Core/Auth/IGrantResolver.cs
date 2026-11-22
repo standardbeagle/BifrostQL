@@ -48,8 +48,10 @@ namespace BifrostQL.Core.Auth;
 /// The identity's <c>TenantId</c> is the identity mapper's tenant (<c>tenant_id</c>), not the
 /// value under a model's <c>tenant-context-key</c>: the resolver runs before any model is
 /// resolved. With <c>tenant-context-key: org_id</c> fed by a raw <c>org_id</c> claim, the
-/// resolver gets <c>TenantId = null</c>; read the claim from the principal if grants are
-/// per tenant.
+/// resolver gets <c>TenantId = null</c>. If grants are per tenant, read the claim from
+/// <see cref="AppIdentity.Claims"/>: it holds the principal's claims, one <c>string[]</c> per
+/// claim type, keyed case-insensitively (<c>identity.Claims["org_id"]</c>). The resolver is
+/// handed no principal, and pgwire, RESP and LDAP have no <c>IHttpContextAccessor</c>.
 ///
 /// <c>permissions</c> is an owned key (<see cref="IdentityContextMapper.OwnedKeyNames"/>),
 /// so a wire-supplied value can never add to it; the resolver is the only way grants

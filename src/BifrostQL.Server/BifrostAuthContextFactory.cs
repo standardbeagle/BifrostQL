@@ -96,7 +96,8 @@ namespace BifrostQL.Server
         /// resolved, so no <c>tenant-context-key</c> is known and <c>TenantId</c> is the
         /// identity's own tenant (<c>tenant_id</c>). On a host whose
         /// <c>tenant-context-key</c> names a raw claim (e.g. <c>org_id</c>), the resolver
-        /// gets <c>TenantId = null</c> while the tenant filter scopes by that claim.
+        /// gets <c>TenantId = null</c> while the tenant filter scopes by that claim; it reads
+        /// the claim from <see cref="AppIdentity.Claims"/>, which holds the principal's claims.
         ///
         /// Fail closed (E9): a throwing resolver leaves the request with an EMPTY
         /// permission set — the pre-resolver permissions are wiped — and logs a Warning
@@ -113,7 +114,11 @@ namespace BifrostQL.Server
             // The factory runs before any model is resolved, so the tenant comes from the key the
             // identity mapper writes it under (tenant_id), the identity's own tenant. The key-less
             // overload projects no tenant, which handed every resolver TenantId = null.
-            var identity = PolicyIdentity.FromUserContext(userContext, MetadataKeys.Auth.DefaultTenantContextKey);
+            // The resolver is handed no principal (and pgwire/RESP/LDAP have no
+            // IHttpContextAccessor), so the identity carries the principal's raw claims, one
+            // string[] per claim type, keyed case-insensitively like the user context.
+            var identity = PolicyIdentity.FromUserContext(
+                userContext, MetadataKeys.Auth.DefaultTenantContextKey, RawClaims(context.User));
             IReadOnlyCollection<string>? grants;
             try
             {
@@ -139,6 +144,12 @@ namespace BifrostQL.Server
 
             IdentityContextMapper.UnionPermissions(userContext, grants);
         }
+
+        private static IReadOnlyDictionary<string, object?> RawClaims(System.Security.Claims.ClaimsPrincipal principal)
+            => principal.Claims
+                .GroupBy(claim => claim.Type, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => (object?)group.Select(claim => claim.Value).ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
 
     }
 }

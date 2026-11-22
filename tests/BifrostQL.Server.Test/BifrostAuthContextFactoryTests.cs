@@ -154,6 +154,38 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void CreateUserContext_GrantResolver_SeesTheRawClaimsOfThePrincipal()
+        {
+            // With tenant-context-key: org_id fed by a raw org_id claim, the resolver gets
+            // TenantId = null. The documented answer is to read the claim; the resolver is handed
+            // no principal (and on pgwire/RESP/LDAP no IHttpContextAccessor), so the identity
+            // carries the principal's claims, one string[] per claim type.
+            BifrostQL.Core.Auth.AppIdentity? seen = null;
+            var context = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "user-1"),
+                    new Claim("org_id", "acme"),
+                }, authenticationType: "local")),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                    {
+                        seen = identity;
+                        return new ValueTask<IReadOnlyCollection<string>>(Array.Empty<string>());
+                    })
+                    .BuildServiceProvider(),
+            };
+
+            Factory.CreateUserContext(context);
+
+            seen.Should().NotBeNull();
+            seen!.TenantId.Should().BeNull("control: the raw claim is not the identity's own tenant");
+            seen.Claims.TryGetValue("Org_Id", out var org).Should().BeTrue("claim types compare case-insensitively");
+            org.Should().BeEquivalentTo(new[] { "acme" });
+        }
+
+        [Fact]
         public void CreateUserContext_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
         {
             // Arrange: an OIDC identity whose mapper grants permission "x" — the

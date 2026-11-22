@@ -39,7 +39,19 @@ public static class PolicyIdentity
             ? MetadataKeys.Auth.DefaultTenantContextKey
             : tenantContextKey);
 
-    private static AppIdentity Build(IDictionary<string, object?> userContext, string? tenantContextKey)
+    /// <summary>
+    /// <see cref="FromUserContext(IDictionary{string, object?}, string?)"/> carrying the
+    /// principal's raw <paramref name="claims"/>: the grant resolver gets no principal, so this
+    /// is how it reads a claim the identity projection does not map (a raw <c>org_id</c>).
+    /// </summary>
+    internal static AppIdentity FromUserContext(
+        IDictionary<string, object?> userContext, string? tenantContextKey, IReadOnlyDictionary<string, object?> claims)
+        => Build(userContext, string.IsNullOrWhiteSpace(tenantContextKey)
+            ? MetadataKeys.Auth.DefaultTenantContextKey
+            : tenantContextKey, claims);
+
+    private static AppIdentity Build(
+        IDictionary<string, object?> userContext, string? tenantContextKey, IReadOnlyDictionary<string, object?>? claims = null)
     {
         if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
@@ -55,7 +67,7 @@ public static class PolicyIdentity
             : Modules.TenantFilterTransformer.ReadTenantValue(userContext, tenantContextKey);
 
         return new AppIdentity(userId, "query-context", tenantId: tenantId,
-            roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext))
+            roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext), claims: claims)
         {
             IsEngine = IsEngineWrite(userContext),
         };

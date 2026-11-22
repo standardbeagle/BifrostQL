@@ -66,7 +66,7 @@ namespace BifrostQL.Core.Modules.Cdc
                 throw new BifrostExecutionError(
                     $"Configured outbox table '{outboxName}' was not found in the model.");
 
-            var payload = BuildPayload(context.Table, context.MutationType, config.PayloadMode, context.Data, context.Result);
+            var payload = BuildPayload(context.Model.TypeMapper, context.Table, context.MutationType, config.PayloadMode, context.Data, context.Result);
 
             // Fail closed rather than emit an event that cannot identify its row. Every
             // payload mode must carry the full primary key (client-supplied on
@@ -129,7 +129,7 @@ namespace BifrostQL.Core.Modules.Cdc
         /// </list>
         /// </summary>
         private static IReadOnlyDictionary<string, object?> BuildPayload(
-            IDbTable table, MutationType mutationType, CdcPayloadMode mode,
+            ITypeMapper typeMapper, IDbTable table, MutationType mutationType, CdcPayloadMode mode,
             IDictionary<string, object?> data, object? result)
         {
             var keyColumns = table.KeyColumns.ToList();
@@ -145,6 +145,12 @@ namespace BifrostQL.Core.Modules.Cdc
                 if (!enriched.TryGetValue(keyName, out var existing) || existing is null)
                     enriched[keyName] = result;
             }
+
+            // The key in its column's canonical form, so an insert's typed key and an update's
+            // _primaryKey text ("05", "5.0") give one payload key and one CloudEvents subject.
+            foreach (var column in keyColumns)
+                if (enriched.TryGetValue(column.ColumnName, out var keyValue))
+                    enriched[column.ColumnName] = KeyValueCanonicalizer.Canonicalize(typeMapper, column, keyValue);
 
             if (mode == CdcPayloadMode.Keys)
                 return enriched

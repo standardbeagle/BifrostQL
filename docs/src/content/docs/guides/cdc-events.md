@@ -104,7 +104,7 @@ other fields are derived from the outbox columns:
 | `id` | outbox `id` | Also the **idempotency key** consumers dedupe on. |
 | `source` | `aggregate` | Qualified source table. |
 | `type` | `aggregate` + `op` | `bifrostql.<schema>.<table>.<op>`, e.g. `bifrostql.dbo.orders.insert`. |
-| `subject` | row primary key | Composite keys joined with `:`. |
+| `subject` | row primary key | Composite keys joined with `:`. Each key value is in its column's canonical form (the same form the history trail's `entity_id` uses), so an insert and an update addressed by `_primaryKey: ["05"]` share subject `5`. |
 | `time` | `created_at` | RFC3339 UTC (trailing `Z`). |
 | `datacontenttype` | — | Always `"application/json"`. |
 | `tenant` | `tenant` | **Optional** CloudEvents extension; present only when the row has a tenant. |

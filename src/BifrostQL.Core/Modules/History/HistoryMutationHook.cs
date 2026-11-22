@@ -448,32 +448,20 @@ namespace BifrostQL.Core.Modules.History
         }
 
         /// <summary>
-        /// The key as the trail records it: each value converted to its column's CLR type, so
-        /// the serialized <c>entity_id</c> names the row the same way whichever surface wrote
-        /// it. The positional <c>_primaryKey</c> argument arrives as strings, and without this
-        /// one row's trail held both <c>{"id":5}</c> and <c>{"id":"5"}</c>; an erasure keyed by
-        /// the typed row then missed the string-keyed rows and left their PII images behind.
-        /// Only the recorded copy is converted: the row reads keep the values the write bound.
+        /// The key as the trail records it: each value in its column's canonical form
+        /// (<see cref="KeyValueCanonicalizer"/>), so the serialized <c>entity_id</c> names the row
+        /// the same way whichever surface wrote it. The positional <c>_primaryKey</c> argument
+        /// arrives as strings, and without this one row's trail held both <c>{"id":5}</c> and
+        /// <c>{"id":"5"}</c>; an erasure keyed by the typed row then missed the string-keyed rows
+        /// and left their PII images behind. Only the recorded copy is converted: the row reads
+        /// keep the values the write bound.
         /// </summary>
         private static Dictionary<string, object?> RecordedKey(
             ITypeMapper typeMapper, IDbTable table, Dictionary<string, object?> keyData)
         {
             var recorded = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             foreach (var column in table.KeyColumns)
-            {
-                var value = keyData[column.ColumnName];
-                try
-                {
-                    recorded[column.ColumnName] = ContextValueCoercer.ConvertToClrType(typeMapper, value!, column);
-                }
-                catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
-                {
-                    throw new BifrostExecutionError(
-                        $"The change-history writer could not convert primary-key column '{column.ColumnName}' of " +
-                        $"'{Qualify(table)}' to its column type. Refusing to record a change that cannot name its row.");
-                }
-            }
-
+                recorded[column.ColumnName] = KeyValueCanonicalizer.Canonicalize(typeMapper, column, keyData[column.ColumnName]);
             return recorded;
         }
 

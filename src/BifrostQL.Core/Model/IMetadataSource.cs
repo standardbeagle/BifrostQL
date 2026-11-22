@@ -314,7 +314,6 @@ namespace BifrostQL.Core.Model
         internal static readonly HashSet<string> KnownDatabaseKeys = new(StringComparer.OrdinalIgnoreCase)
         {
             MetadataKeys.Audit.Table,
-            MetadataKeys.Audit.LegacyUserKey,
             MetadataKeys.Audit.UserKey,
             MetadataKeys.Relationships.AutoJoin,
             MetadataKeys.Model.DePluralize,

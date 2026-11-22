@@ -347,7 +347,7 @@ namespace BifrostQL.Core.Model
             var column = table.GetMetadataValue(MetadataKeys.SoftDelete.DeletedBy);
             if (string.IsNullOrWhiteSpace(column) || Modules.AuditMutationTransformer.HasActorSource(model))
                 return;
-            errors.Add(Problem(table, MetadataKeys.SoftDelete.DeletedBy, column, MissingActorSource(model)));
+            errors.Add(Problem(table, MetadataKeys.SoftDelete.DeletedBy, column, MissingActorSource));
         }
 
         private static void ValidateActorPopulator(IDbModel model, IDbTable table, ColumnDto column, List<string> errors)
@@ -356,17 +356,12 @@ namespace BifrostQL.Core.Model
                 return;
             errors.Add(
                 $"  {table.TableSchema}.{table.DbName}.{column.ColumnName} [{MetadataKeys.AutoPopulate.Marker}]: " +
-                $"'{column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker)}' - {MissingActorSource(model)}");
+                $"'{column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker)}' - {MissingActorSource}");
         }
 
-        private static string MissingActorSource(IDbModel model)
-        {
-            var reason = $"the model declares no '{MetadataKeys.Audit.UserKey}', so the actor column would never be " +
-                         $"stamped. Name the claim that identifies the writer, e.g. ':root {{ {MetadataKeys.Audit.UserKey}: user_id }}'";
-            return string.IsNullOrWhiteSpace(model.GetMetadataValue(MetadataKeys.Audit.LegacyUserKey))
-                ? reason
-                : reason + $"; '{MetadataKeys.Audit.LegacyUserKey}' is not read, rename it to '{MetadataKeys.Audit.UserKey}'";
-        }
+        private const string MissingActorSource =
+            $"the model declares no '{MetadataKeys.Audit.UserKey}', so the actor column would never be " +
+            $"stamped. Name the claim that identifies the writer, e.g. ':root {{ {MetadataKeys.Audit.UserKey}: user_id }}'";
 
         private static void ValidateNullableColumnReference(IDbTable table, string metadataKey, List<string> errors)
         {
@@ -499,6 +494,14 @@ namespace BifrostQL.Core.Model
         /// keys are contained by the case-insensitive allow-list here and reported separately
         /// by <see cref="ValidateMetadataKeyCasing"/>, so they are not double-reported.
         /// </summary>
+        // Retired names with a fixed replacement: refused with the rename rather than the typo text.
+        // 'audit-user-key' was accepted but never read, so a model carrying it recorded a null
+        // actor on every actor stamp, history row and state transition.
+        private static readonly Dictionary<string, string> RenamedMetadataKeys = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [MetadataKeys.Audit.LegacyUserKey] = MetadataKeys.Audit.UserKey,
+        };
+
         private static void ValidateUnknownMetadataKeys(
             IDictionary<string, object?> metadata,
             HashSet<string> knownKeys,
@@ -513,6 +516,12 @@ namespace BifrostQL.Core.Model
 
                 if (MetadataValidator.IsConsumerExtensionKey(key))
                     continue; // Intentional consumer extension key — never interpreted.
+
+                if (RenamedMetadataKeys.TryGetValue(key, out var renamedTo))
+                {
+                    errors.Add($"  {reference} [{key}]: '{key}' was renamed to '{renamedTo}'.");
+                    continue;
+                }
 
                 errors.Add(
                     $"  {reference} [{key}]: unrecognized {scope} metadata key. Every built-in key is a " +

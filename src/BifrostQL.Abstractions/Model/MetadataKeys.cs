@@ -326,7 +326,9 @@ namespace BifrostQL.Core.Model
             /// <summary>Model-level metadata key naming the audit table.</summary>
             public const string Table = "audit-table";
 
-            /// <summary>Legacy model-level metadata key naming the audit user claim.</summary>
+            /// <summary>
+            /// Retired name of <see cref="UserKey"/>. Never read; model load refuses it and names the rename.
+            /// </summary>
             public const string LegacyUserKey = "audit-user-key";
 
             /// <summary>

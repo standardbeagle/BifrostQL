@@ -221,15 +221,30 @@ public class ModelConfigValidatorSecurityTests
     }
 
     [Fact]
-    public void Validate_ActorColumnsWithOnlyTheLegacyAuditUserKey_ThrowsNamingTheRename()
+    public void Validate_LegacyAuditUserKeyWithNoActorColumn_ThrowsNamingTheRename()
     {
-        // audit-user-key is accepted as a known key but never read, so it stamps nothing.
-        var act = () => ModelConfigValidator.Validate(ActorColumnModel(MetadataKeys.Audit.LegacyUserKey, "username",
-            t => SoftDeleteBy(t.WithColumnMetadata("actor", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy))));
+        // History, the state machine and approval also read user-audit-key, so a model carrying only the
+        // retired audit-user-key would load and record a null actor forever, even with no actor column.
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(MetadataKeys.Audit.LegacyUserKey, "username", _ => { }));
 
         act.Should().Throw<InvalidOperationException>()
-            .Which.Message.Should().Contain("rename")
-            .And.Contain(MetadataKeys.Audit.LegacyUserKey);
+            .Which.Message.Should().Contain("'audit-user-key' was renamed to 'user-audit-key'");
+    }
+
+    [Fact]
+    public void Validate_LegacyAuditUserKeyBesideUserAuditKey_ThrowsNamingTheRename()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
+            .WithModelMetadata(MetadataKeys.Audit.LegacyUserKey, "username")
+            .WithTable("Orders", t => t.WithSchema("dbo").WithPrimaryKey("Id"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("'audit-user-key' was renamed to 'user-audit-key'")
+            .And.NotContain("unrecognized database metadata key");
     }
 
     [Fact]

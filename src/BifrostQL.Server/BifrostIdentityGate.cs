@@ -1,5 +1,6 @@
 using BifrostQL.Core.Auth;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -63,14 +64,28 @@ namespace BifrostQL.Server
         /// <para>Memoized in the request's DI scope (<see cref="HttpContext.RequestServices"/>), see
         /// <see cref="ProjectAsync(HttpContext, IServiceProvider?)"/>: an app endpoint that projects
         /// the caller and then asks <see cref="PolicyGateAccessor"/> for its gate runs the factory,
-        /// and the grant resolver, once. Never memoized on a WebSocket request: that HttpContext and
-        /// its RequestServices span the whole session, and identity is memoized per request, never
-        /// per session (invariant 13).</para>
+        /// and the grant resolver, once. Never memoized on a long-lived request
+        /// (<see cref="OutlivesOneRequest"/>): that HttpContext and its RequestServices span the
+        /// whole session, and identity is memoized per request, never per session
+        /// (invariant 13).</para>
         /// </summary>
         internal static ValueTask<BifrostIdentityProjection> ProjectAsync(HttpContext context)
-            => context.WebSockets.IsWebSocketRequest
+            => OutlivesOneRequest(context)
                 ? ProjectFreshAsync(context, context.RequestServices)
                 : ProjectAsync(context, context.RequestServices);
+
+        /// <summary>
+        /// True when <paramref name="context"/> serves many invocations: a WebSocket request, or an
+        /// endpoint that opted out of request timeouts. ASP.NET's <c>MapConnections</c> (behind
+        /// <c>MapHub</c> and <c>MapConnectionHandler</c>) puts <see cref="DisableRequestTimeoutAttribute"/>
+        /// on the SignalR transport route, so this covers SSE and long polling, whose HttpContext is
+        /// no WebSocket request (long polling's connection-lifetime clone carries the same endpoint).
+        /// A host endpoint that disables its own request timeout is long-lived by its own
+        /// declaration, and loses only the memo.
+        /// </summary>
+        private static bool OutlivesOneRequest(HttpContext context)
+            => context.WebSockets.IsWebSocketRequest
+               || context.GetEndpoint()?.Metadata.GetMetadata<DisableRequestTimeoutAttribute>() is not null;
 
         /// <summary>
         /// <see cref="ProjectAsync(HttpContext)"/> with the factory and the default factory's

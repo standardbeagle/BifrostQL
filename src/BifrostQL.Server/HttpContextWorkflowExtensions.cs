@@ -49,8 +49,9 @@ namespace BifrostQL.Server
         /// projection awaits the host's grant resolver (<c>AddBifrostGrantResolver</c>).
         /// The projection is memoized in the request's DI scope
         /// (<see cref="HttpContext.RequestServices"/>), so the grant resolver runs once per
-        /// request even when the endpoint also awaits <c>IPolicyGateAccessor</c>; on a WebSocket
-        /// request it is never memoized. A SignalR hub or any endpoint that serves many
+        /// request even when the endpoint also awaits <c>IPolicyGateAccessor</c>. It is never
+        /// memoized on a WebSocket request or on an endpoint that disables request timeouts, which
+        /// includes every SignalR transport route (SSE, long polling). A SignalR hub or any endpoint that serves many
         /// invocations on one long-lived HttpContext calls the overload that takes the
         /// invocation's scope instead.
         /// </summary>

@@ -6,8 +6,12 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using FluentAssertions;
 using GraphQL;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -63,6 +67,29 @@ public sealed class IdentityProjectionScopeTests
         PolicyIdentity.ExtractPermissions(first).Should().Contain(Grants);
         PolicyIdentity.ExtractPermissions(second).Should().NotContain(Grants,
             "a WebSocket's HttpContext spans the whole session, so its request scope is no per-request memo");
+        host.ResolverCalls.Should().Be(2);
+    }
+
+    [Theory]
+    [InlineData("/hub")]
+    [InlineData("/connection")]
+    public async Task UserContext_OnASignalRSseOrLongPollingContext_ProjectsOnEachCall_AndARevokedGrantTakesEffect(
+        string transportPath)
+    {
+        // A hub (or a raw connection handler) on SSE or long polling: the connection's HttpContext
+        // is no WebSocket request, and the long-polling clone carries the transport endpoint too.
+        // The default overload memoized in its connection-lifetime RequestServices.
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: false);
+        http.SetEndpoint(await SignalRTransportEndpointAsync(transportPath));
+
+        var first = await http.GetBifrostUserContextAsync();
+        host.Revoked = true;
+        var second = await http.GetBifrostUserContextAsync();
+
+        PolicyIdentity.ExtractPermissions(first).Should().Contain(Grants);
+        PolicyIdentity.ExtractPermissions(second).Should().NotContain(Grants,
+            "a SignalR transport's HttpContext spans the connection, so its request scope is no per-request memo");
         host.ResolverCalls.Should().Be(2);
     }
 
@@ -266,6 +293,28 @@ public sealed class IdentityProjectionScopeTests
     }
 
     // ---- fixtures ----
+
+    /// <summary>The endpoint the production <c>MapHub</c> / <c>MapConnectionHandler</c> builds for
+    /// the transport route (not the negotiate route), with its real metadata.</summary>
+    private static async Task<Endpoint> SignalRTransportEndpointAsync(string path)
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.Services.AddSignalR();
+        await using var app = builder.Build();
+        app.MapHub<ProbeHub>("/hub");
+        app.MapConnectionHandler<ProbeConnectionHandler>("/connection");
+        return ((IEndpointRouteBuilder)app).DataSources
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Single(endpoint => endpoint.RoutePattern.RawText == path);
+    }
+
+    private sealed class ProbeHub : Hub;
+
+    private sealed class ProbeConnectionHandler : ConnectionHandler
+    {
+        public override Task OnConnectedAsync(ConnectionContext connection) => Task.CompletedTask;
+    }
 
     private sealed class ListValuedFactory : IBifrostAuthContextFactory
     {

@@ -39,7 +39,31 @@ apply each breaking or behaviour-change step on the way.
 
 ## Unreleased
 
-On `main` after v0.4.30; nothing yet.
+On `main` after v0.4.30; not yet on NuGet.
+
+### Security — async auth and identity projection
+
+- **The HTTP identity projection is memoized per DI scope (request, binary message, hub invocation), not per `HttpContext`,** so a revoked grant takes effect on the next message instead of at reconnect, and concurrent callers in one request share one grant-resolver call. SignalR hubs use the new `GetBifrostUserContextAsync(scope)` overload.
+- **Callers of a memoized identity projection no longer share mutable collection values** (roles, permissions, host-returned lists).
+
+### Breaking — async auth and identity projection
+
+- **No thread blocks on the grant resolver or the policy gate's model load.** `IPolicyGate` is no longer injectable: inject `IPolicyGateAccessor` and `await GetAsync(ct)`; the model loads only for requests that use the gate, so health checks and static routes never trigger a schema load. `HttpContext.GetBifrostUserContext()` is now `GetBifrostUserContextAsync()`. While an `IGrantResolver` is registered, the synchronous `IBifrostAuthContextFactory.CreateUserContext` refuses an authenticated principal instead of blocking; await `CreateUserContextAsync` instead, as every shipped transport does.
+- **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
+- **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
+
+### Fixed — async auth and identity projection
+
+- **`bifrost config-validate` refuses every config file `serve` refuses** (for example `"Path": 5`, a non-boolean `DisableAuth`, a non-string connection string); both read through one function.
+- **A host auth factory returning keys that differ only in case no longer fails the whole Prometheus scrape;** the affected row-scoped metrics are excluded and the detail is logged.
+- **A host `IBifrostAuthContextFactory` decorator or a third-party protocol adapter can run the grant resolver:** await the new `IBifrostAuthContextFactory.CreateUserContextAsync`, which every shipped gate awaits.
+- **A host auth factory that throws for the Prometheus service identity excludes only the row-scoped metrics** instead of faulting the whole scrape.
+- **gRPC retries the contract build after a failed model load** instead of rethrowing the first fault for the life of the process.
+- **Concurrent `IPolicyGateAccessor.GetAsync` calls in one request share one build,** and one caller's cancellation no longer faults the others.
+- **`bifrost serve --connection-string … --config f.json` refuses the same wrong-shaped config files `config-validate` refuses.**
+- **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
+- **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
+- **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
 
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 
@@ -67,8 +91,6 @@ Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types
 - **`transition-not-by` no longer lets an author self-approve when the actor is a large number written in exponent form** (`1E+17` against `100000000000000000`).
 - **A host `IBifrostAuthContextFactory` context is normalised to case-insensitive keys at every identity seam, so reads and writes agree; keys that differ only in case are refused.** Reads scoped by `Org_Id` while writes answered "Tenant context required", and on MCP twin keys crashed session setup instead of refusing.
 - **`transition-not-by` compares exponent-form actors as doubles,** so a non-round large double (`1.2345678901234568E+17`) no longer lets its author self-approve.
-- **The HTTP identity projection is memoized per DI scope (request, binary message, hub invocation), not per `HttpContext`,** so a revoked grant takes effect on the next message instead of at reconnect, and concurrent callers in one request share one grant-resolver call. SignalR hubs use the new `GetBifrostUserContextAsync(scope)` overload.
-- **Callers of a memoized identity projection no longer share mutable collection values** (roles, permissions, host-returned lists).
 
 ### Breaking — fifth review pass
 
@@ -89,9 +111,6 @@ Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types
 - **A raw `tenant_id` token claim no longer supplies the tenant when the identity has none.** It filled the key the OIDC mapper had chosen not to project. Project the tenant through an `IOidcClaimMapper`, or name the claim with `tenant-context-key`.
 - **`bifrost config-validate` reports a malformed connection string with constant text instead of naming the rejected keyword.**
 - **`MetadataLoader(IConfiguration, string)` and `FileMetadataSource(IConfigurationSection, string)` are removed.** Use `new MetadataLoader(MetadataLoader.ReadMetadataRules(section))` or `new FileMetadataSource(MetadataLoader.ReadMetadataRules(section))`.
-- **No thread blocks on the grant resolver or the policy gate's model load.** `IPolicyGate` is no longer injectable: inject `IPolicyGateAccessor` and `await GetAsync(ct)`; the model loads only for requests that use the gate, so health checks and static routes never trigger a schema load. `HttpContext.GetBifrostUserContext()` is now `GetBifrostUserContextAsync()`. While an `IGrantResolver` is registered, the synchronous `IBifrostAuthContextFactory.CreateUserContext` refuses an authenticated principal instead of blocking; await `CreateUserContextAsync` instead, as every shipped transport does.
-- **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
-- **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
 
 ### Fixed — fifth review pass
 
@@ -141,16 +160,6 @@ Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types
 - **`bifrost serve`, `doctor` and `config-validate` refuse a non-string connection string, `BifrostQL:Path` or `:Playground` in a config file, including colon-keyed properties such as `"ConnectionStrings:bifrost": 42`.** `"Path": 5` served the endpoint at `5`.
 - **A host `IBifrostAuthContextFactory` that returns null gets the constant MCP authentication refusal,** and the affected Prometheus metric is excluded instead of the scrape faulting.
 - **Docs: `AppIdentity.Claims` handed to `IGrantResolver` is the raw principal,** which can differ from the value the tenant filter scopes by; the guide names that value.
-- **`bifrost config-validate` refuses every config file `serve` refuses** (for example `"Path": 5`, a non-boolean `DisableAuth`, a non-string connection string); both read through one function.
-- **A host auth factory returning keys that differ only in case no longer fails the whole Prometheus scrape;** the affected row-scoped metrics are excluded and the detail is logged.
-- **A host `IBifrostAuthContextFactory` decorator or a third-party protocol adapter can run the grant resolver:** await the new `IBifrostAuthContextFactory.CreateUserContextAsync`, which every shipped gate awaits.
-- **A host auth factory that throws for the Prometheus service identity excludes only the row-scoped metrics** instead of faulting the whole scrape.
-- **gRPC retries the contract build after a failed model load** instead of rethrowing the first fault for the life of the process.
-- **Concurrent `IPolicyGateAccessor.GetAsync` calls in one request share one build,** and one caller's cancellation no longer faults the others.
-- **`bifrost serve --connection-string … --config f.json` refuses the same wrong-shaped config files `config-validate` refuses.**
-- **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
-- **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
-- **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
 
 ## 0.4.29 — 2026-11-22 (operation ids, set-based writes)
 

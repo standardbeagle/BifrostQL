@@ -133,6 +133,9 @@ namespace BifrostQL.Core.QueryModel
             {
                 QueryField.SyncFieldFragments(field, fragmentLookup);
             }
+            var merged = QueryField.MergeSameResponseKey(Fields);
+            Fields.Clear();
+            Fields.AddRange(merged);
         }
     }
 }

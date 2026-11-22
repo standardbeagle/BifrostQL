@@ -327,6 +327,77 @@ namespace BifrostQL.Core.QueryModel
             return fragment.Fields.Concat(fragment.Fragments.SelectMany(f => FragmentFields(f, fragmentList)));
         }
 
+        /// <summary>
+        /// GraphQL merges the fields of one selection set that share a response key (alias,
+        /// else name) into one field whose selection is the union, recursively; validation
+        /// has already refused same-key fields whose arguments differ. Without this merge a
+        /// key reached twice (written twice, or once inline and once through a fragment) built
+        /// two query nodes, the resolver bound the first, and a column selected only by a later
+        /// occurrence was never read. Run after fragments are spliced in. Same-key fields with
+        /// different arguments throw: merging them would drop one field's filter or window, and
+        /// only a document that skipped validation can carry them.
+        /// </summary>
+        public static List<IQueryField> MergeSameResponseKey(IEnumerable<IQueryField> fields)
+        {
+            var merged = new List<QueryField>();
+            var byResponseKey = new Dictionary<string, QueryField>(StringComparer.Ordinal);
+            foreach (var field in fields)
+            {
+                var responseKey = field.Alias ?? field.Name;
+                if (byResponseKey.TryGetValue(responseKey, out var first))
+                {
+                    if (!SameArguments(first.Arguments, field.Arguments))
+                        throw new BifrostExecutionError("Two fields with one response key carry different arguments.");
+                    first.Fields.AddRange(field.Fields);
+                    continue;
+                }
+                var copy = new QueryField
+                {
+                    Name = field.Name,
+                    Alias = field.Alias,
+                    Value = field.Value,
+                    IncludeResult = field is QueryField { IncludeResult: true },
+                    Arguments = field.Arguments,
+                    Fields = field.Fields.ToList(),
+                    Fragments = field.Fragments,
+                };
+                byResponseKey.Add(responseKey, copy);
+                merged.Add(copy);
+            }
+            foreach (var field in merged)
+            {
+                var children = MergeSameResponseKey(field.Fields);
+                field.Fields.Clear();
+                field.Fields.AddRange(children);
+            }
+            return merged.Cast<IQueryField>().ToList();
+        }
+
+        private static bool SameArguments(List<QueryArgument> left, List<QueryArgument> right)
+        {
+            if (left.Count != right.Count)
+                return false;
+            var rightByName = right.ToDictionary(a => a.Name, a => a.Value, StringComparer.Ordinal);
+            return left.All(a => rightByName.TryGetValue(a.Name, out var value) && SameArgumentValue(a.Value, value));
+        }
+
+        private static bool SameArgumentValue(object? left, object? right) => (left, right) switch
+        {
+            (IDictionary<string, object?> l, IDictionary<string, object?> r) =>
+                l.Count == r.Count && l.All(e => r.TryGetValue(e.Key, out var v) && SameArgumentValue(e.Value, v)),
+            (string, _) or (_, string) => Equals(left, right),
+            (System.Collections.IEnumerable l, System.Collections.IEnumerable r) =>
+                l.Cast<object?>().SequenceEqual(r.Cast<object?>(), ArgumentValueComparer.Instance),
+            _ => Equals(left, right),
+        };
+
+        private sealed class ArgumentValueComparer : IEqualityComparer<object?>
+        {
+            public static readonly ArgumentValueComparer Instance = new();
+            public new bool Equals(object? x, object? y) => SameArgumentValue(x, y);
+            public int GetHashCode(object? obj) => 0;
+        }
+
         public static IQueryField CopyField(IQueryField queryField) => CopyField(queryField, includeResult: false);
 
         public static QueryField CopyField(IQueryField queryField, bool includeResult)

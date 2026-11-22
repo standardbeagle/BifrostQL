@@ -358,7 +358,7 @@ namespace BifrostQL.Core.QueryModel
 
             var model = new DbModel { Tables = GetFakeTables() };
             var ast = Parser.Parse(
-                "query { work__shops { data { id } } work__shops(filter: null) { data { id } } work__shops(filter: { id: { _eq: 1} }) { data { id } }}");
+                "query { work__shops { data { id } } a: work__shops(filter: null) { data { id } } b: work__shops(filter: { id: { _eq: 1} }) { data { id } }}");
             await visitor.VisitAsync(ast, ctx);
             var sqls = GetSqls(ctx, model);
             sqls.Should().HaveCount(3);
@@ -369,14 +369,32 @@ namespace BifrostQL.Core.QueryModel
             });
             sqls[1].Should().Equal(new Dictionary<string, string>
             {
-                { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
-                { "work__shops=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END" },
+                { "a", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                { "a=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END" },
             });
             sqls[2].Should().Equal(new Dictionary<string, string>
             {
-                { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
-                { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = @p0" },
+                { "b", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY" },
+                { "b=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = @p0" },
             });
+        }
+
+        // Validation refuses same-key fields with different arguments; a document that
+        // skipped it must not have one field's filter silently merged away.
+        [Fact]
+        public async Task SameResponseKeyWithDifferentArguments_Throws()
+        {
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse(
+                "query { work__shops { data { id } } work__shops(filter: { id: { _eq: 1} }) { data { id } }}");
+
+            var act = () => visitor.VisitAsync(ast, ctx).AsTask();
+
+            await act.Should().ThrowAsync<BifrostExecutionError>()
+                .WithMessage("Two fields with one response key carry different arguments.");
         }
 
         [Fact]

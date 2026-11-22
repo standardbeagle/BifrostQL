@@ -32,7 +32,9 @@ Held rows are still live: deferred effects add no read filter. If a row is edite
 inside an open undo window, the later change captures a newer concurrency token. Reversals
 therefore have LIFO semantics for overlapping rows: undo the newest change first; attempting
 an older overlapping undo after a newer reversal is an explicit conflict rather than a silent
-overwrite. Timed expiry never releases an `until-approved` hold; only an authorized approval
+overwrite. Within one change set the inverses also replay newest first, so a child row
+written after its parent (a tree sync, a batch) is removed before the parent it references.
+Timed expiry never releases an `until-approved` hold; only an authorized approval
 does, while a rejection suppresses its parked events as part of the compensating undo.
 
 By contrast, maker-checker keeps a proposed write outside the authoritative tables until

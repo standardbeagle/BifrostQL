@@ -218,6 +218,10 @@ public sealed class DeferredUndoEngine
         return new ChangeSet(reader.GetString(0), DeferredTimestamp.ReadUtc(reader.GetValue(1)));
     }
 
+    // Newest first: inverses replay in reverse write order, so a child row written after
+    // its parent (TreeSync, a batch) is removed before the parent it references. Oldest
+    // first deletes the parent while the child still points at it, and that FK error is
+    // not a CONFLICT, so the set would stay `undoing` and fail the same way on every resume.
     private async Task<IReadOnlyList<Delta>> LoadDeltasAsync(long changeSetId, CancellationToken cancellationToken)
     {
         var table = FindTable(MetadataKeys.Deferred.ChangeSetDelta.Table);
@@ -225,7 +229,7 @@ public sealed class DeferredUndoEngine
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Table)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Pk)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Op)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage)} FROM {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId)} = @id ORDER BY {_connections.Dialect.EscapeIdentifier("id")}";
+        command.CommandText = $"SELECT {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Table)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Pk)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.Op)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.InverseOp)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.BeforeImage)}, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.AfterImage)} FROM {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSetDelta.Column.ChangeSetId)} = @id ORDER BY {_connections.Dialect.EscapeIdentifier("id")} DESC";
         Add(command, "@id", changeSetId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

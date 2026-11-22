@@ -279,6 +279,29 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UndoTreeSync_DeletesTheChildBeforeItsParent()
+    {
+        // A TreeSync insert records the parent delta first and the FK-bound child second.
+        // Replaying oldest-first deletes the parent while the child still references it:
+        // the FK refuses, the error is not a CONFLICT, and the set is wedged in `undoing`.
+        await Exec("CREATE TABLE blogs (id INTEGER PRIMARY KEY, name TEXT NULL, version INTEGER NULL DEFAULT 1)");
+        await Exec("CREATE TABLE posts (id INTEGER PRIMARY KEY, blog_id INTEGER NOT NULL REFERENCES blogs(id), title TEXT NULL, version INTEGER NULL DEFAULT 1)");
+        var model = await LoadModelAsync("main.blogs { deferrable: enabled; undo-window: 1h; concurrency-token: version; history: enabled }", "main.posts { deferrable: enabled; undo-window: 1h; concurrency-token: version; history: enabled }");
+        (await ExecuteMutationAsync("mutation { blogs(sync: { name: \"B\", posts: [ { title: \"first\" } ] }) }", model)).Errors.Should().BeNullOrEmpty();
+        var deltas = await DeltasAsync();
+        deltas.Select(d => d.Table).Should().Equal(new[] { "main.blogs", "main.posts" }, "the fixture needs the parent recorded before its child");
+        var changeSetId = deltas[0].ChangeSetId;
+
+        var result = await new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model))
+            .UndoAsync(changeSetId, new Dictionary<string, object?>());
+
+        result.Should().Be(new DeferredUndoResult(changeSetId, 2, 0, false));
+        (await CountAsync("posts", "1=1")).Should().Be(0);
+        (await CountAsync("blogs", "1=1")).Should().Be(0);
+        (await ScalarAsync($"SELECT state FROM change_sets WHERE id = {changeSetId}")).Should().Be("undone");
+    }
+
+    [Fact]
     public async Task ServerOperation_WritingTwoDeferrableTables_RecordsOneChangeSet()
     {
         // One operation is one transaction, so its reverse deltas belong to ONE change set:
@@ -448,7 +471,9 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             .Which.ErrorCode.Should().Be(BifrostExecutionError.ConflictCode);
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=94")).Should().Be("undoing",
             "the new owner finalizes, not the runner that lost the claim");
-        (await CountAsync("widgets", "id=2")).Should().Be(1, "the runner stopped before the next inverse");
+        // Inverses replay newest first: the delete of row 2 ran, the older restore of row 1 did not.
+        (await CountAsync("widgets", "id=2")).Should().Be(0, "the newest inverse ran before the claim was lost");
+        (await ScalarAsync("SELECT name FROM widgets WHERE id=1")).Should().Be("edited", "the runner stopped before the next inverse");
     }
 
     private sealed class GatedMutationExecutor(IMutationIntentExecutor inner) : IMutationIntentExecutor

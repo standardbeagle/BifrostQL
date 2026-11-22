@@ -75,6 +75,44 @@ public sealed class WireContextMergerTests
     }
 
     [Fact]
+    public void DefaultTenantKey_StaysOwned_WhenACustomTenantContextKeyIsConfigured()
+    {
+        // tenant-context-key renames what the tenant filter reads, not what the identity mapper
+        // writes: tenant_id is still the identity's tenant (read by the audit observer and the
+        // policy identity), so a tenant-less caller must not fill it from the wire either.
+        var userContext = new Dictionary<string, object?>();
+        var wire = new Dictionary<string, object?> { ["tenant_id"] = "999", ["frontend-extra"] = 1 };
+
+        WireContextMerger.Merge(userContext, wire, Model(tenantContextKey: "org_id"));
+
+        userContext.Should().NotContainKey("tenant_id");
+        userContext["frontend-extra"].Should().Be(1);
+    }
+
+    [Fact]
+    public void WireKey_ThatDiffersOnlyInCaseFromAContextKey_DoesNotMerge()
+    {
+        // Downstream copies (audit observer, workflow trigger and executor) rebuild the context
+        // case-insensitively; two keys equal under that comparer make the copy throw.
+        var userContext = new Dictionary<string, object?> { ["user"] = "principal", ["sub"] = "u-1" };
+        var wire = new Dictionary<string, object?>
+        {
+            ["User"] = "spoof",
+            ["SUB"] = "spoof",
+            ["extra"] = 1,
+            ["EXTRA"] = 2,
+        };
+
+        WireContextMerger.Merge(userContext, wire, Model());
+
+        userContext.Should().NotContainKey("User");
+        userContext.Should().NotContainKey("SUB");
+        userContext.Keys.Count(k => string.Equals(k, "extra", StringComparison.OrdinalIgnoreCase)).Should().Be(1);
+        var copy = () => new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase);
+        copy.Should().NotThrow();
+    }
+
+    [Fact]
     public void ConfiguredUserAuditKey_IsStrippedToo()
     {
         // user-audit-key names the claim the actor columns and history rows are stamped from.

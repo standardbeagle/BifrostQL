@@ -19,7 +19,8 @@ namespace BifrostQL.Core.Auth;
 /// <c>user-audit-key</c>: a wire entry under it would name the actor of the write.</para>
 ///
 /// <para><b>Identity keys win.</b> A wire entry whose key the identity projection already
-/// populated is ignored, so a frontend can only ever ADD non-identity keys.</para>
+/// populated is ignored, so a frontend can only ever ADD non-identity keys. Keys compare
+/// case-insensitively, as every owned-key check and every downstream context copy does.</para>
 /// </summary>
 public static class WireContextMerger
 {
@@ -38,9 +39,22 @@ public static class WireContextMerger
         // user-audit-key is owned too: it names the claim every actor column and history row
         // is stamped from, so a wire entry under it would let the client author the write.
         var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
-        var ownedKeys = new IdentityContextMapper(
+        var ownedKeys = new HashSet<string>(new IdentityContextMapper(
             TenantFilterTransformer.ResolveTenantContextKey(model),
-            userAuditKey: string.IsNullOrWhiteSpace(auditKey) ? null : auditKey).OwnedKeyNames;
+            userAuditKey: string.IsNullOrWhiteSpace(auditKey) ? null : auditKey).OwnedKeyNames,
+            StringComparer.OrdinalIgnoreCase)
+        {
+            // A configured tenant-context-key renames what the tenant filter reads, not what the
+            // identity mapper writes: tenant_id stays the identity's tenant, read by the audit
+            // observer and the policy identity, so it is owned whatever the model configures.
+            MetadataKeys.Auth.DefaultTenantContextKey,
+        };
+
+        // Keys already present, compared case-insensitively: the audit observer and the workflow
+        // trigger/executor rebuild the context with an OrdinalIgnoreCase comparer, so a wire
+        // "User" beside the identity's "user" (or two wire keys differing only in case) made that
+        // copy throw, and the committed transition went unaudited.
+        var presentKeys = new HashSet<string>(userContext.Keys, StringComparer.OrdinalIgnoreCase);
 
         // Security-resolved context keys: the row-scope placeholders and auto-filter claim
         // keys the model's security filters read at request time. A wire entry for one would
@@ -51,7 +65,7 @@ public static class WireContextMerger
 
         foreach (var (key, value) in wireContext)
         {
-            if (userContext.ContainsKey(key))
+            if (presentKeys.Contains(key))
                 continue;
             // Engine-internal keys never merge: the workflow-trigger suppression flag and the
             // engine-metrics scrape flag are privileged by the engine's unforgeable markers, and a wire entry under
@@ -64,9 +78,10 @@ public static class WireContextMerger
             if (string.Equals(key, Modules.OperationId.OperationIdConfig.UserContextKey, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (ownedKeys.Contains(key) || securityKeys.Contains(key) ||
-                string.Equals(key, "user", StringComparison.Ordinal))
+                string.Equals(key, "user", StringComparison.OrdinalIgnoreCase))
                 continue;
             userContext[key] = value;
+            presentKeys.Add(key);
         }
     }
 }

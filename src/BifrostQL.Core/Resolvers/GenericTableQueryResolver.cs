@@ -32,9 +32,15 @@ namespace BifrostQL.Core.Resolvers
             var tableName = context.GetArgument<string>("name")
                 ?? throw new BifrostExecutionError("The 'name' argument is required.");
 
-            var limit = context.HasArgument("limit")
+            // The window obeys BOTH ceilings: the model's max-query-rows (through
+            // ResolveRowWindow, like every client-reachable row read) and this surface's
+            // own generic-table-max-rows. An unspecified limit asks for the surface
+            // maximum; `limit: 0` is an empty page and a negative limit takes the
+            // ceiling, exactly as ResolveRowWindow treats them on every other surface.
+            var requestedLimit = context.HasArgument("limit")
                 ? context.GetArgument<int>("limit")
                 : _config.MaxRows;
+            var limit = Math.Min(GqlObjectQuery.ResolveRowWindow(_model, requestedLimit), _config.MaxRows);
             var offset = context.HasArgument("offset")
                 ? context.GetArgument<int>("offset")
                 : 0;
@@ -42,8 +48,6 @@ namespace BifrostQL.Core.Resolvers
                 ? context.GetArgument<Dictionary<string, object?>>("filter")
                 : null;
 
-            if (limit <= 0 || limit > _config.MaxRows)
-                limit = _config.MaxRows;
             if (offset < 0)
                 offset = 0;
 
@@ -295,7 +299,14 @@ namespace BifrostQL.Core.Resolvers
                     totalCount = Convert.ToInt32(countResult);
                 }
 
+                // An empty window reads no rows. It must not reach the dialect either:
+                // SQL Server rejects FETCH NEXT 0 ROWS (error 10744).
                 List<Dictionary<string, object?>> rows;
+                if (limit == 0)
+                {
+                    rows = new List<Dictionary<string, object?>>();
+                }
+                else
                 {
                     await using var dataCmd = conn.CreateCommand();
                     dataCmd.CommandText = dataSql;

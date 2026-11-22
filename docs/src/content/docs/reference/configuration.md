@@ -161,7 +161,7 @@ consistently.
 | `raw-sql-max-rows` | number | model | Max rows returned by raw SQL; a query matching more fails instead of being cut |
 | `generic-table` | `enabled`/`disabled` | model | Expose `_table(name:, limit:, offset:, filter:)` |
 | `generic-table-role` | role name | model | Role required for `_table` (default: `bifrost-admin`) |
-| `generic-table-max-rows` | number | model | Max rows returned by `_table` |
+| `generic-table-max-rows` | number | model | Max rows returned by `_table`; `max-query-rows` also binds it, and `limit: 0` returns an empty page |
 | `generic-table-allowed` | comma list | model | Allow-list for generic table names |
 | `generic-table-denied` | comma list | model | Deny-list for generic table names |
 | `schema-prefix` | `enabled`/`disabled` | model | Prefix GraphQL table names with schema names |

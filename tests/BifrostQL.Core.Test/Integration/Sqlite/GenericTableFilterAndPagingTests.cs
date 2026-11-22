@@ -39,10 +39,13 @@ public sealed class GenericTableFilterAndPagingTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
-    private static async Task<GenericTableResult> QueryAsync(Dictionary<string, object?> arguments)
+    private static Task<GenericTableResult> QueryAsync(Dictionary<string, object?> arguments)
+        => QueryAsync(arguments, ":root { generic-table: enabled }");
+
+    private static async Task<GenericTableResult> QueryAsync(Dictionary<string, object?> arguments, string rootRule)
     {
         var factory = new SqliteDbConnFactory(ConnString);
-        var model = await new DbModelLoader(factory, new MetadataLoader(new[] { ":root { generic-table: enabled }" })).LoadAsync();
+        var model = await new DbModelLoader(factory, new MetadataLoader(new[] { rootRule })).LoadAsync();
         var resolver = new GenericTableQueryResolver(model, GenericTableConfig.FromModel(model));
         arguments["name"] = "notes";
         var context = new FieldContext
@@ -110,6 +113,47 @@ public sealed class GenericTableFilterAndPagingTests : IAsyncLifetime
 
         Codes(first).Should().Equal("a", "b");
         Codes(second).Should().Equal("c");
+    }
+
+    // `_table` is a client-reachable row read, so the model's max-query-rows ceiling
+    // binds it alongside its own generic-table-max-rows, and limit 0 is an empty page
+    // as on every other surface (GqlObjectQuery.ResolveRowWindow).
+    private const string CeilingTwoRule = ":root { generic-table: enabled; max-query-rows: 2 }";
+
+    [Fact]
+    public async Task Limit_Unspecified_IsBoundByMaxQueryRows()
+    {
+        var result = await QueryAsync(new(), CeilingTwoRule);
+
+        Codes(result).Should().Equal("a", "b");
+    }
+
+    [Fact]
+    public async Task Limit_AboveMaxQueryRows_IsClampedToIt()
+    {
+        var over = await QueryAsync(new() { ["limit"] = 3 }, CeilingTwoRule);
+        var sentinel = await QueryAsync(new() { ["limit"] = -1 }, CeilingTwoRule);
+
+        Codes(over).Should().Equal("a", "b");
+        Codes(sentinel).Should().Equal("a", "b");
+    }
+
+    [Fact]
+    public async Task Limit_GenericTableMaxRowsBelowTheCeiling_StillBinds()
+    {
+        var result = await QueryAsync(new() { ["limit"] = 3 },
+            ":root { generic-table: enabled; generic-table-max-rows: 1; max-query-rows: 2 }");
+
+        Codes(result).Should().Equal("a");
+    }
+
+    [Fact]
+    public async Task Limit_Zero_IsAnEmptyPage()
+    {
+        var result = await QueryAsync(new() { ["limit"] = 0 });
+
+        result.Rows.Should().BeEmpty();
+        result.TotalCount.Should().Be(3, "the total still counts every row in scope");
     }
 
     private sealed class FieldContext : IBifrostFieldContext

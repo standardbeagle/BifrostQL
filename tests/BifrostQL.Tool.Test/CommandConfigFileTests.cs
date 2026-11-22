@@ -129,6 +129,33 @@ public sealed class CommandConfigFileTests : IDisposable
         }
     }
 
+    // doctor passed an explicit --config naming no file without a word. It must report the
+    // refusal every other command gives, in the same text, with and without the flag.
+    [Fact]
+    public async Task Doctor_MissingExplicitConfigFile_ReportsTheOtherCommandsRefusal()
+    {
+        var configPath = Path.Combine(_dir, "absent.json");
+        var (_, schemaText) = await RunAsync("schema", "--config", configPath);
+        var otherCommandsRefusal = JsonDocument.Parse(schemaText).RootElement.GetProperty("error").GetString();
+        otherCommandsRefusal.Should().Contain("Config file not found");
+
+        foreach (var withFlag in new[] { false, true })
+        {
+            var args = new List<string> { "doctor", "--config", configPath, "--json" };
+            if (withFlag)
+                args.AddRange(new[] { "--connection-string", UnparseableSqlServer });
+            var writer = new StringWriter();
+
+            var exit = await new DoctorCommand().ExecuteAsync(ToolConfig.Parse(args.ToArray()), new OutputFormatter(writer, jsonMode: true));
+
+            exit.Should().Be(1);
+            JsonDocument.Parse(writer.ToString()).RootElement.GetProperty("issues").EnumerateArray()
+                .Where(i => i.GetProperty("title").GetString() == "Config File Not Found")
+                .Select(i => i.GetProperty("message").GetString())
+                .Should().Equal(new[] { otherCommandsRefusal }, $"--connection-string given: {withFlag}");
+        }
+    }
+
     [Fact]
     public async Task ConnectionStringFlag_OverridesTheFilesConnectionString()
     {

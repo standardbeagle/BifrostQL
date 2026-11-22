@@ -99,7 +99,8 @@ internal static class CommandConnection
         return File.Exists(path) ? path : null;
     }
 
-    private static string ConfigFileNotFound(string path) => $"Config file not found: {path}";
+    /// <summary>The refusal for a config file path that names no file; doctor reports it too.</summary>
+    internal static string ConfigFileNotFound(string path) => $"Config file not found: {path}";
 
     private static void WriteRefusal(OutputFormatter output, string error)
     {

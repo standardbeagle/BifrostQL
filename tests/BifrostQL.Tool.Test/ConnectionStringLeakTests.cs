@@ -60,10 +60,17 @@ public sealed class ConnectionStringLeakTests : IDisposable
     [InlineData(false)]
     public async Task Doctor_SplitPassword_ReportsMalformedWithoutTheFragment(bool json)
     {
+        // A well-shaped file with no connection string keeps any bifrostql.json in the working
+        // directory out of the run, and leaves the flag as the only connection string.
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, """{ "BifrostQL": { "Path": "/gql" } }""");
+
         var (_, text) = await RunAsync(new DoctorCommand(), json,
-            "doctor", "--config", Path.Combine(_dir, "absent.json"), "--connection-string", SqlServerSplitPassword);
+            "doctor", "--config", configPath, "--connection-string", SqlServerSplitPassword);
 
         text.Should().Contain("Connection string is malformed").And.NotContain(Fragment);
+        text.Should().NotContain("Config file not found").And.NotContain("Invalid Config File",
+            "the config file is not a factor here");
     }
 
     [Theory]

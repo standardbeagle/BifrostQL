@@ -43,6 +43,19 @@ public sealed class DoctorCommand : ICommand
         // A missing connection string is not a shape fault: the flag may supply it, as for serve.
         var configPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
         var configFileExists = File.Exists(configPath);
+        // An explicit --config naming no file is refused, as by every other command. Doctor goes
+        // on with its other checks.
+        if (config.ConfigPath is not null && !configFileExists)
+        {
+            var refusal = CommandConnection.ConfigFileNotFound(config.ConfigPath);
+            checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, refusal));
+            issues.Add(new DoctorIssue(
+                DoctorSeverity.Error,
+                "Config File Not Found",
+                refusal,
+                new[] { "Check the --config path", "Or run 'bifrost init' to create bifrostql.json" }
+            ));
+        }
         string? fileConnectionString = null;
         BifrostConfigSection? fileSection = null;
         if (configFileExists)

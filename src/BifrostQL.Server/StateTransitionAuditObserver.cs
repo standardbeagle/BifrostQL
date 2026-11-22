@@ -34,11 +34,11 @@ public sealed class StateTransitionAuditObserver : IStateTransitionObserver
         };
 
         // The tenant the tenant filter scopes by: the model's tenant-context-key, not the
-        // mapper's default key. A raw principal claim under that key arrives as a one-element
-        // array, which the tenant filter reads as its single value; so does the audit row.
-        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(transition.Model);
-        if (userContext.TryGetValue(tenantKey, out var tenantId))
-            audit["tenant_id"] = ToAuditNumericValue(tenantId is Array { Length: 1 } single ? single.GetValue(0) : tenantId);
+        // mapper's default key, read by the one tenant reader (a raw principal claim's
+        // one-element array is its single value).
+        var tenantId = TenantFilterTransformer.ReadTenantValue(transition.Model, userContext);
+        if (tenantId is not null)
+            audit["tenant_id"] = ToAuditNumericValue(tenantId);
 
         await _executor.InsertAsync("audit_log", audit, BuildAuditContext(userContext));
     }

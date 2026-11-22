@@ -186,9 +186,7 @@ public sealed class DeferredUndoEngine
     /// transformers scope writes by and the change-set hook stamps <c>tenant</c> from.
     /// </summary>
     private string? CallerTenant(IDictionary<string, object?> userContext)
-        => userContext.TryGetValue(TenantFilterTransformer.ResolveTenantContextKey(_model), out var value)
-            ? value?.ToString()
-            : null;
+        => TenantFilterTransformer.ReadTenantValue(_model, userContext);
 
     /// <summary>
     /// The change set's tenant must equal the caller's (both null on a host without tenants).

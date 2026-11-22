@@ -311,7 +311,7 @@ namespace BifrostQL.Core.Modules.OperationId
         /// </summary>
         internal static OperationOwner OwnerOf(IDbModel model, IDictionary<string, object?> userContext)
         {
-            var tenant = ScalarClaim(userContext, TenantFilterTransformer.ResolveTenantContextKey(model), "tenant");
+            var tenant = TenantFilterTransformer.ReadTenantValue(model, userContext) ?? string.Empty;
             var caller = ScalarClaim(userContext, MetadataKeys.Auth.DefaultUserIdContextKey, "user id");
             if (string.IsNullOrWhiteSpace(caller))
                 throw new BifrostExecutionError("An operation id needs a caller with a user id.")

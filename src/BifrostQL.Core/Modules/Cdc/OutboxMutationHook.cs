@@ -87,7 +87,8 @@ namespace BifrostQL.Core.Modules.Cdc
                 ["aggregate"] = $"{context.Table.TableSchema}.{context.Table.DbName}",
                 ["op"] = context.MutationType.ToString().ToLowerInvariant(),
                 ["payload"] = JsonSerializer.Serialize(payload),
-                ["tenant"] = ResolveTenant(context.Model, context.UserContext),
+                // The tenant the write was scoped by, read the way every tenant store reads it.
+                ["tenant"] = TenantFilterTransformer.ReadTenantValue(context.Model, context.UserContext),
                 ["created_at"] = DateTime.UtcNow,
                 ["attempts"] = 0,
                 ["dead"] = false,
@@ -159,13 +160,6 @@ namespace BifrostQL.Core.Modules.Cdc
 
             // full and changed both serialize the written columns plus the key.
             return enriched;
-        }
-
-        private static string? ResolveTenant(IDbModel model, IDictionary<string, object?> userContext)
-        {
-            // The tenant the write was scoped by: the one resolver the tenant filter uses.
-            var key = TenantFilterTransformer.ResolveTenantContextKey(model);
-            return userContext.TryGetValue(key, out var value) ? value?.ToString() : null;
         }
     }
 }

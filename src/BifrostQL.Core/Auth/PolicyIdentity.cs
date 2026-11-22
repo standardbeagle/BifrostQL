@@ -50,9 +50,9 @@ public static class PolicyIdentity
         if (string.IsNullOrWhiteSpace(userId))
             userId = "anonymous";
 
-        var tenantId = tenantContextKey is not null && userContext.TryGetValue(tenantContextKey, out var tenantValue)
-            ? tenantValue?.ToString()
-            : null;
+        var tenantId = tenantContextKey is null
+            ? null
+            : Modules.TenantFilterTransformer.ReadTenantValue(userContext, tenantContextKey);
 
         return new AppIdentity(userId, "query-context", tenantId: tenantId,
             roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext))

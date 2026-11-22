@@ -147,8 +147,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             return active;
         }
 
-        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(context.Model!);
-        context.UserContext.TryGetValue(tenantKey, out var tenant);
+        var tenant = TenantFilterTransformer.ReadTenantValue(context.Model!, context.UserContext);
         var tableName = $"{context.Table.TableSchema}.{context.Table.DbName}";
         var changeSet = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
@@ -157,7 +156,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             // The policy subject, the same projection DeferredReviewQueue reads the reviewer
             // through, so the self-approve check compares one identity source.
             [MetadataKeys.Deferred.ChangeSet.Column.Requester] = PolicyIdentity.FromUserContext(context.UserContext).Id,
-            [MetadataKeys.Deferred.ChangeSet.Column.Tenant] = tenant?.ToString(),
+            [MetadataKeys.Deferred.ChangeSet.Column.Tenant] = tenant,
             [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(new[] { tableName }),
             [MetadataKeys.Deferred.ChangeSet.Column.CreatedAt] = DateTime.UtcNow,
         };

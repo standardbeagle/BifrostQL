@@ -172,7 +172,7 @@ namespace BifrostQL.Core.Modules.Approval
         internal static TableFilter ReadScopeFilter(IDbModel model, IDbTable store, IDictionary<string, object?> userContext)
         {
             var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(model);
-            var tenant = userContext.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
+            var tenant = TenantFilterTransformer.ReadTenantValue(userContext, tenantKey);
             var tenantScope = tenant is null
                 ? TableFilterFactory.IsNull(store, ColTenant)
                 : TableFilterFactory.Equals(store, ColTenant, tenant);

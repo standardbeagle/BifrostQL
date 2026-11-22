@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.OperationId;
 using BifrostQL.Core.Resolvers;
 using FluentAssertions;
@@ -73,9 +74,9 @@ public sealed class OperationIdOwnerTests
     }
 
     [Theory]
-    [InlineData("tenant_id", "tenant")]
-    [InlineData("user_id", "user id")]
-    public void MultiValuedClaim_IsRefused(string key, string claimName)
+    [InlineData("tenant_id", TenantFilterTransformer.NonScalarTenantMessage)]
+    [InlineData("user_id", "The caller's user id is not a single value, so the operation id cannot be recorded.")]
+    public void MultiValuedClaim_IsRefused(string key, string message)
     {
         var userContext = new Dictionary<string, object?>
         {
@@ -88,6 +89,24 @@ public sealed class OperationIdOwnerTests
 
         act.Should().Throw<BifrostExecutionError>()
             .Where(e => e.ErrorCode == BifrostExecutionError.AccessDeniedCode)
-            .WithMessage($"The caller's {claimName} is not a single value, so the operation id cannot be recorded.");
+            .WithMessage(message);
+    }
+
+    [Fact]
+    public void SingleValuedRawTenantClaim_OwnsUnderItsValue()
+    {
+        // A raw principal claim arrives as a one-element string[]; the tenant filter reads it as
+        // its single value, and so does the owner, so the id is recorded under that tenant.
+        var owner = OperationIdExecution.OwnerOf(Model(), new Dictionary<string, object?>
+        {
+            ["tenant_id"] = new[] { "t-1" },
+            ["user_id"] = "u-1",
+        });
+
+        owner.Should().Be(OperationIdExecution.OwnerOf(Model(), new Dictionary<string, object?>
+        {
+            ["tenant_id"] = "t-1",
+            ["user_id"] = "u-1",
+        }));
     }
 }

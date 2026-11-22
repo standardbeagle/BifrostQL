@@ -77,4 +77,71 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
             $"Metadata '{TenantContextKeyMetadata}' must be a non-empty string naming the tenant context key; " +
             "remove it to use the default, or set a valid key.");
     }
+
+    /// <summary>
+    /// The refusal for a tenant claim that holds several values (or none) where one tenant is
+    /// required. Constant text: it never echoes the claim's contents.
+    /// </summary>
+    public const string NonScalarTenantMessage = "Tenant context value is not a single value.";
+
+    /// <summary>
+    /// The caller's tenant under the model's <see cref="ResolveTenantContextKey"/>, as the one
+    /// string every tenant-stamping store (change sets, pending changes, outbox, audit) records
+    /// and compares. See <see cref="ReadTenantValue(IDictionary{string, object?}, string)"/>.
+    /// </summary>
+    public static string? ReadTenantValue(IDbModel model, IDictionary<string, object?> userContext)
+        => ReadTenantValue(userContext, ResolveTenantContextKey(model));
+
+    /// <summary>
+    /// The tenant under <paramref name="tenantContextKey"/> as a scalar string, or null when the
+    /// context has none. A raw principal claim reaches the user context as a one-element
+    /// <c>string[]</c> under its claim type; that is read as its single value, the way the
+    /// tenant filter's coercion reads it. A sequence of any other length is refused with
+    /// <see cref="NonScalarTenantMessage"/>: <c>ToString()</c> on it gave
+    /// <c>"System.String[]"</c> for every caller, which merged every tenant into one.
+    /// Numbers format with the invariant culture.
+    /// </summary>
+    public static string? ReadTenantValue(IDictionary<string, object?> userContext, string tenantContextKey)
+    {
+        if (userContext is null) throw new ArgumentNullException(nameof(userContext));
+        return userContext.TryGetValue(tenantContextKey, out var value) ? TenantScalar(value) : null;
+    }
+
+    private static string? TenantScalar(object? value)
+    {
+        switch (value)
+        {
+            case null:
+                return null;
+            case string text:
+                return text;
+            case System.Text.Json.JsonElement element:
+                return element.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.Null => null,
+                    System.Text.Json.JsonValueKind.String => element.GetString(),
+                    System.Text.Json.JsonValueKind.Number => element.GetRawText(),
+                    System.Text.Json.JsonValueKind.Array when element.GetArrayLength() == 1 => TenantScalar(element[0]),
+                    _ => throw NonScalarTenant(),
+                };
+            case System.Collections.IEnumerable sequence:
+            {
+                var items = sequence.Cast<object?>().Take(2).ToList();
+                if (items.Count != 1 || items[0] is System.Collections.IEnumerable and not string)
+                    throw NonScalarTenant();
+                return TenantScalar(items[0]);
+            }
+            case IFormattable formattable:
+                return formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture);
+            case IConvertible convertible:
+                return convertible.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            default:
+                // An opaque object (a principal, a profile) has no tenant text: its ToString() is
+                // its type name, one value shared by every caller.
+                throw NonScalarTenant();
+        }
+    }
+
+    private static BifrostExecutionError NonScalarTenant()
+        => new(NonScalarTenantMessage) { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 }

@@ -237,7 +237,7 @@ namespace BifrostQL.Core.Modules.Approval
                 // audit actor (user-audit-key) can name a different claim and is replayed from
                 // requester_context instead.
                 [PendingChangeStore.ColRequester] = PolicyIdentity.FromUserContext(context.UserContext).Id,
-                [PendingChangeStore.ColTenant] = ResolveTenant(context)?.ToString(),
+                [PendingChangeStore.ColTenant] = TenantFilterTransformer.ReadTenantValue(context.Model!, context.UserContext),
                 // A PROJECTION of the caller's context, never the context itself: a live context
                 // carries the raw ClaimsPrincipal (an object cycle) and other opaque entries.
                 // See RequesterContextProjection for what replay consumes and why.
@@ -245,15 +245,6 @@ namespace BifrostQL.Core.Modules.Approval
                     JsonSerializer.Serialize(RequesterContextProjection.Project(context.Model!, context.UserContext)),
                 [PendingChangeStore.ColState] = PendingChangeStore.StatePending,
             };
-
-        // The requester's tenant, read under the model's configured tenant-context key (the
-        // same key the tenant transformer scopes writes by). Null when the table/host is not
-        // tenant-partitioned — a nullable column on the store.
-        private static object? ResolveTenant(MutationObserverContext context)
-        {
-            var key = TenantFilterTransformer.ResolveTenantContextKey(context.Model!);
-            return context.UserContext.TryGetValue(key, out var value) ? value : null;
-        }
 
         private static string Qualify(IDbTable table) => $"{table.TableSchema}.{table.DbName}";
     }

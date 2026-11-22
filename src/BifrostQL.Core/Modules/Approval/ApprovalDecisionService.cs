@@ -200,9 +200,9 @@ public sealed class ApprovalDecisionService
             || string.Equals(row.Tenant, TenantOf(deciderContext, tenantKey), StringComparison.Ordinal);
     }
 
-    // The same string form the intercept hook stores in the tenant column (value.ToString()).
+    // The same string form the intercept hook stores in the tenant column.
     private static string? TenantOf(IDictionary<string, object?> context, string tenantKey)
-        => context.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
+        => TenantFilterTransformer.ReadTenantValue(context, tenantKey);
 
     // The store takes no write from any mutation path (PendingChangeStore.IsApprovalQueue),
     // so a rejection or expiry records its own transition, guarded on the row still being pending.

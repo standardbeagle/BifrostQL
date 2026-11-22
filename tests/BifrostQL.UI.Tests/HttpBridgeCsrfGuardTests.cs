@@ -68,4 +68,69 @@ public sealed class HttpBridgeCsrfGuardTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    // H6: both the Content-Type check and the body parse were gated on ContentLength > 0, so a
+    // chunked POST (no Content-Length) skipped both and ran the handler on default(JsonElement).
+    [Fact]
+    public async Task ChunkedPost_TextPlain_IsRejected_UnsupportedMediaType()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/_bridge/exec-sql")
+        {
+            Content = new ChunkedContent("{\"sql\":\"select 1\"}", "text/plain"),
+        };
+        request.Headers.Add("X-Bifrost-Bridge", "1");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Null(request.Content!.Headers.ContentLength); // the probe goes out without a Content-Length
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChunkedPost_Json_IsParsed()
+    {
+        // A malformed body is refused by the parse, so a 400 proves the chunked body was read.
+        var request = new HttpRequestMessage(HttpMethod.Post, "/_bridge/exec-sql")
+        {
+            Content = new ChunkedContent("{not json", "application/json"),
+        };
+        request.Headers.Add("X-Bifrost-Bridge", "1");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("Body must be JSON.", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Post_WithoutContentType_IsRejected_UnsupportedMediaType()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/_bridge/exec-sql");
+        request.Headers.Add("X-Bifrost-Bridge", "1");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+    }
+
+    /// <summary>A body with no computable length, so HttpClient sends it chunked.</summary>
+    private sealed class ChunkedContent : HttpContent
+    {
+        private readonly byte[] _bytes;
+
+        public ChunkedContent(string body, string mediaType)
+        {
+            _bytes = Encoding.UTF8.GetBytes(body);
+            Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => stream.WriteAsync(_bytes, 0, _bytes.Length);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
 }

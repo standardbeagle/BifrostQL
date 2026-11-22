@@ -46,14 +46,15 @@ namespace BifrostQL.UI.Web
                     return Results.Json(
                         new { message = $"Missing {BridgeHeaderName} header." },
                         statusCode: StatusCodes.Status403Forbidden);
-                if (request.ContentLength is > 0 &&
-                    !string.Equals(request.ContentType?.Split(';')[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+                // Every POST, whatever its framing: gating this on ContentLength > 0 let a
+                // chunked body (no Content-Length) skip both the check and the parse.
+                if (!string.Equals(request.ContentType?.Split(';')[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
                     return Results.Json(
                         new { message = "Content-Type must be application/json." },
                         statusCode: StatusCodes.Status415UnsupportedMediaType);
 
                 JsonElement payload = default;
-                if (request.ContentLength is > 0)
+                if (request.ContentLength is not 0)
                 {
                     try
                     {

@@ -107,6 +107,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Docs: `IGrantResolver` receives only the identity tenant (`tenant_id`), not the `tenant-context-key` value;** grants resolve before any endpoint's model is known.
 - **The CLI (`serve`, `doctor`, `config-validate`) reads config keys case-insensitively, as the server does,** and refuses leaf keys that differ only in case. `"connectionstrings"` was reported missing and `"bifrostql"` was half-read.
 - **`IGrantResolver` receives the principal's raw claims in `AppIdentity.Claims`,** so a per-tenant resolver can read a raw `org_id` claim on every transport.
+- **`bifrost serve`, `doctor` and `config-validate` refuse a non-string connection string, `BifrostQL:Path` or `:Playground` in a config file, including colon-keyed properties such as `"ConnectionStrings:bifrost": 42`.** `"Path": 5` served the endpoint at `5`.
+- **A host `IBifrostAuthContextFactory` that returns null gets the constant MCP authentication refusal,** and the affected Prometheus metric is excluded instead of the scrape faulting.
+- **Docs: `AppIdentity.Claims` handed to `IGrantResolver` is the raw principal,** which can differ from the value the tenant filter scopes by; the guide names that value.
 
 ### Security — silent fallbacks
 

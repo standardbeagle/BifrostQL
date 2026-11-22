@@ -15,6 +15,32 @@ public sealed class DoctorCommand : ICommand
     {
         var issues = new List<DoctorIssue>();
         var checks = new List<DoctorCheck>();
+        var configFileRefused = false;
+
+        // Both config-file reads (the connection string here, the metadata rules in check 4)
+        // report a malformed or wrong-shaped file through this one handler, once.
+        void ReportConfigFileRefusal(Exception ex)
+        {
+            configFileRefused = true;
+            if (ex is System.Text.Json.JsonException)
+            {
+                checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, $"Invalid JSON: {ex.Message}"));
+                issues.Add(new DoctorIssue(
+                    DoctorSeverity.Error,
+                    "Invalid Config File",
+                    "The bifrostql.json file contains invalid JSON.",
+                    new[] { "Check for syntax errors in the JSON file", "Validate the JSON using a JSON linter" }
+                ));
+                return;
+            }
+            checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, ex.Message));
+            issues.Add(new DoctorIssue(
+                DoctorSeverity.Error,
+                "Invalid Config File",
+                ex.Message,
+                new[] { "Run 'bifrost init' to see the expected bifrostql.json layout" }
+            ));
+        }
 
         // Check 1: Connection string provided
         var connectionString = config.ConnectionString;
@@ -26,7 +52,14 @@ public sealed class DoctorCommand : ICommand
             {
                 checks.Add(new DoctorCheck("Config File", DoctorStatus.Info, $"Found config file: {configPath}"));
                 var json = await File.ReadAllTextAsync(configPath);
-                connectionString = ConfigFileReader.ReadConnectionString(json);
+                try
+                {
+                    connectionString = ConfigFileReader.ReadConnectionString(json);
+                }
+                catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
+                {
+                    ReportConfigFileRefusal(ex);
+                }
                 if (!string.IsNullOrWhiteSpace(connectionString))
                 {
                     checks.Add(new DoctorCheck("Connection String", DoctorStatus.Pass, "Loaded from config file"));
@@ -199,7 +232,7 @@ public sealed class DoctorCommand : ICommand
 
         // Check 4: Config file validation
         var bifrostConfigPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
-        if (File.Exists(bifrostConfigPath))
+        if (!configFileRefused && File.Exists(bifrostConfigPath))
         {
             try
             {
@@ -213,25 +246,9 @@ public sealed class DoctorCommand : ICommand
                     checks.Add(new DoctorCheck("Metadata Rules", DoctorStatus.Info, $"{rules.Count} rules found"));
                 }
             }
-            catch (System.Text.Json.JsonException ex)
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
             {
-                checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, $"Invalid JSON: {ex.Message}"));
-                issues.Add(new DoctorIssue(
-                    DoctorSeverity.Error,
-                    "Invalid Config File",
-                    "The bifrostql.json file contains invalid JSON.",
-                    new[] { "Check for syntax errors in the JSON file", "Validate the JSON using a JSON linter" }
-                ));
-            }
-            catch (ConfigFileShapeException ex)
-            {
-                checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, ex.Message));
-                issues.Add(new DoctorIssue(
-                    DoctorSeverity.Error,
-                    "Invalid Config File",
-                    ex.Message,
-                    new[] { "Run 'bifrost init' to see the expected bifrostql.json layout" }
-                ));
+                ReportConfigFileRefusal(ex);
             }
         }
 

@@ -116,6 +116,25 @@ public sealed class ServeCommand : ICommand
 
     private static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
     {
+        try
+        {
+            return await ResolveConnectionStringFromSources(config, output);
+        }
+        // JsonException: malformed config file. ConfigFileShapeException: well-formed JSON of
+        // the wrong shape. Neither message quotes the file's content.
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
+        {
+            var error = ex is ConfigFileShapeException ? ex.Message : $"Config file is not valid JSON: {ex.Message}";
+            if (output.IsJsonMode)
+                output.WriteJson(new { success = false, error });
+            else
+                output.WriteError(error);
+            return null;
+        }
+    }
+
+    private static async Task<ResolvedConnection?> ResolveConnectionStringFromSources(ToolConfig config, OutputFormatter output)
+    {
         // Priority 1: Explicit --connection-string flag
         if (!string.IsNullOrWhiteSpace(config.ConnectionString))
         {

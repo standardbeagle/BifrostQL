@@ -225,10 +225,16 @@ internal static class ConfigFileReader
             return null;
         }
 
-        if (connSection.TryGetProperty(key, out var value))
-            return value.GetString();
+        if (connSection.ValueKind != System.Text.Json.JsonValueKind.Object)
+            throw new ConfigFileShapeException($"Config file connectionStrings section must be a JSON object, found {connSection.ValueKind}.");
 
-        return null;
+        if (!connSection.TryGetProperty(key, out var value) || value.ValueKind == System.Text.Json.JsonValueKind.Null)
+            return null;
+
+        if (value.ValueKind != System.Text.Json.JsonValueKind.String)
+            throw new ConfigFileShapeException($"Config file connectionStrings.{key} must be a string, found {value.ValueKind}.");
+
+        return value.GetString();
     }
 
     public static BifrostConfigSection ReadBifrostSection(string json)

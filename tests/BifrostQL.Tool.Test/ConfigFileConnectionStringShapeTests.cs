@@ -82,6 +82,32 @@ public sealed class ConfigFileConnectionStringShapeTests : IDisposable
         root.GetProperty("error").GetString().Should().ContainEquivalentOf(expected);
     }
 
+    // A well-shaped file with no connection string, and no --connection-string: serve refuses it,
+    // doctor reported nothing. Both seams run in one fact and doctor must carry serve's message.
+    [Fact]
+    public async Task FileWithoutConnectionString_NoFlag_DoctorReportsServesRefusal()
+    {
+        var configPath = await WriteConfigAsync("""{ "BifrostQL": { "Path": "/gql" } }""");
+
+        var (serveExit, serveText) = await RunAsync(new ServeCommand(), "serve", "--config", configPath);
+        serveExit.Should().Be(1);
+        var serveRefusal = JsonDocument.Parse(serveText).RootElement.GetProperty("error").GetString();
+        serveRefusal.Should().Contain("connectionStrings.bifrost");
+
+        var (exit, text) = await RunAsync(new DoctorCommand(), "doctor", "--config", configPath);
+
+        exit.Should().Be(1);
+        var root = JsonDocument.Parse(text).RootElement;
+        root.GetProperty("success").GetBoolean().Should().BeFalse();
+        root.GetProperty("issues").EnumerateArray()
+            .Where(i => i.GetProperty("title").GetString() == "Missing Connection String")
+            .Select(i => i.GetProperty("message").GetString())
+            .Should().Equal(serveRefusal);
+        root.GetProperty("issues").EnumerateArray()
+            .Select(i => i.GetProperty("title").GetString())
+            .Should().NotContain("Invalid Config File", "the file is well-shaped");
+    }
+
     private async Task<string> WriteConfigAsync(string configJson)
     {
         var configPath = Path.Combine(_dir, "bifrostql.json");

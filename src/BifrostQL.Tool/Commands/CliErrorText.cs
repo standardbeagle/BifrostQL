@@ -17,6 +17,13 @@ internal static class CliErrorText
         "Command failed. The exception message is withheld because it can quote connection-string text.";
 
     /// <summary>
+    /// A well-shaped config file with no connection string, and none given by flag. One text,
+    /// so every command that reads the file refuses it in the same words.
+    /// </summary>
+    public static string NoConnectionStringInConfigFile(string path)
+        => $"No connectionStrings.bifrost found in {path}";
+
+    /// <summary>
     /// True when <paramref name="exception"/>, or any exception it wraps, is of a family whose
     /// message can quote connection-string text: <see cref="ArgumentException"/> (every
     /// provider's connection-string parse error) or <see cref="DbException"/> (driver errors).

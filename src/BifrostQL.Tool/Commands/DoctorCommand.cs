@@ -72,6 +72,19 @@ public sealed class DoctorCommand : ICommand
                 {
                     checks.Add(new DoctorCheck("Connection String", DoctorStatus.Pass, "Loaded from config file"));
                 }
+                // A refused file is already reported; a well-shaped one without a connection
+                // string is the refusal serve gives it.
+                else if (fileSection is not null)
+                {
+                    var refusal = CliErrorText.NoConnectionStringInConfigFile(configPath);
+                    checks.Add(new DoctorCheck("Connection String", DoctorStatus.Fail, refusal));
+                    issues.Add(new DoctorIssue(
+                        DoctorSeverity.Error,
+                        "Missing Connection String",
+                        refusal,
+                        new[] { "Add connectionStrings.bifrost to the config file", "Or use --connection-string to provide a connection string" }
+                    ));
+                }
             }
             else
             {

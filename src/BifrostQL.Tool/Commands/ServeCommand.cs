@@ -202,12 +202,13 @@ public sealed class ServeCommand : ICommand
         var (connStr, section) = ConfigFileReader.ReadServeConfig(json);
         if (string.IsNullOrWhiteSpace(connStr))
         {
+            var refusal = CliErrorText.NoConnectionStringInConfigFile(path);
             if (output.IsJsonMode)
             {
-                output.WriteJson(new { success = false, error = $"No connectionStrings.bifrost found in {path}" });
+                output.WriteJson(new { success = false, error = refusal });
                 return null;
             }
-            output.WriteError($"No connectionStrings.bifrost found in {path}");
+            output.WriteError(refusal);
             return null;
         }
 

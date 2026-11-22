@@ -333,7 +333,7 @@ namespace BifrostQL.Core.Resolvers
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             if (affectedRows > 0)
                 await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                    ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext, affectedRows));
+                    ctx.Services, ctx.Model, table, MutationType.Insert, data, result, ctx.UserContext, affectedRows));
             return (result, affectedRows);
         }
 
@@ -476,7 +476,7 @@ namespace BifrostQL.Core.Resolvers
             if (result > 0)
                 await AfterCommitAsync(ctx, async () =>
                 {
-                    await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext, affectedRows: result);
+                    await MutationNotifier.NotifyMutationAsync(ctx.Services, ctx.Model, table, MutationType.Update, updatedData, result, ctx.UserContext, affectedRows: result);
                     await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
                 });
             // The update mutation field is typed `Int`, so its scalar return cannot
@@ -546,7 +546,7 @@ namespace BifrostQL.Core.Resolvers
                 throw ApprovalInterceptMutationHook.PendingApprovalError(outcome.PendingApproval);
             if (outcome.Affected > 0)
                 await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                    ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext, affectedRows: outcome.Affected));
+                    ctx.Services, ctx.Model, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext, affectedRows: outcome.Affected));
             return outcome.Affected;
         }
 

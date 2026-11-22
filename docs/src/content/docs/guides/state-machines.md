@@ -94,7 +94,7 @@ A client shouldn't have to hard-code which buttons to show — "Activate", "Canc
 
 ## Audit Trail
 
-Accepted state transitions emit a `StateTransitionInfo` event after the database update succeeds. The default server observer writes an `audit_log` row through `IBifrostWorkflowExecutor`, so the audit insert still traverses BifrostQL's normal GraphQL mutation pipeline.
+Accepted state transitions emit a `StateTransitionInfo` event after the database update succeeds. The default server observer writes an `audit_log` row through `IBifrostWorkflowExecutor`, so the audit insert still traverses BifrostQL's normal GraphQL mutation pipeline. The row's `entity_type` is the schema-qualified table (`main.members`), and `entity_id` is the row's full primary key as a JSON object (`{"member_id":2}`), the same shape the change-history trail records, so a composite-key row is named by every key column.
 
 The default audit action format is:
 

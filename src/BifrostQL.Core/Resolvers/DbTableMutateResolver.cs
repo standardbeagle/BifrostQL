@@ -380,10 +380,10 @@ namespace BifrostQL.Core.Resolvers
                 _ => MutationType.Insert,
             };
             if (writeScope is null)
-                await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext);
+                await MutationNotifier.NotifyMutationAsync(context.RequestServices, model, table, rootMutationType, tree, rootId, context.UserContext);
             else
                 writeScope.AfterCommit(async () => await MutationNotifier.NotifyMutationAsync(
-                    context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext));
+                    context.RequestServices, model, table, rootMutationType, tree, rootId, context.UserContext));
             return rootId;
         }
 
@@ -432,7 +432,7 @@ namespace BifrostQL.Core.Resolvers
             // On a pure insert the executor returns the generated PK; on an update
             // the root already has one, so fall back to the submitted key value.
             rootId ??= RootKeyValue(table, tree);
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, MutationType.Insert, tree, rootId, context.UserContext);
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, model, table, MutationType.Insert, tree, rootId, context.UserContext);
             return rootId;
         }
 

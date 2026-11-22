@@ -24,7 +24,9 @@ public sealed class StateTransitionAuditObserver : IStateTransitionObserver
         {
             ["action"] = $"{transition.Entity}.{transition.From}->{transition.To}",
             ["entity_type"] = transition.Entity,
-            ["entity_id"] = transition.EntityId?.ToString(),
+            // The full key as JSON, the same shape the history trail records as entity_id,
+            // so a composite-key row is named by every key column.
+            ["entity_id"] = System.Text.Json.JsonSerializer.Serialize(transition.EntityKey),
             ["actor_user_id"] = ToAuditNumericValue(transition.Actor),
             ["summary"] = transition.EventName ?? "StateTransitioned",
             ["created_at"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),

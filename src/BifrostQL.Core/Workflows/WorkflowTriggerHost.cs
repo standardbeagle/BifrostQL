@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 
 namespace BifrostQL.Core.Workflows;
@@ -24,14 +25,14 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
         IDictionary<string, object?> userContext)
     {
         foreach (var workflow in Matching("on-state-transition", payload =>
-                 Matches(payload, "table", transition.Entity)
+                 MatchesTable(payload, transition.Model, transition.Table)
                  && Matches(payload, "from", transition.From)
                  && Matches(payload, "to", transition.To)))
         {
             await RunTriggeredAsync(workflow, new Dictionary<string, object?>
             {
                 ["entity"] = transition.Entity,
-                ["entityId"] = transition.EntityId,
+                ["entityKey"] = new Dictionary<string, object?>(transition.EntityKey, StringComparer.OrdinalIgnoreCase),
                 ["from"] = transition.From,
                 ["to"] = transition.To,
                 ["actor"] = transition.Actor,
@@ -43,13 +44,15 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
     public async ValueTask OnMutationAsync(MutationObserverContext context)
     {
         var action = context.MutationType.ToString().ToLowerInvariant();
+        var model = context.Model
+            ?? throw new InvalidOperationException("A mutation observer context carries no model; workflow trigger tables cannot be resolved.");
         foreach (var workflow in Matching("on-mutation", payload =>
-                 Matches(payload, "table", context.Table.DbName)
+                 MatchesTable(payload, model, context.Table)
                  && Matches(payload, "action", action)))
         {
             await RunTriggeredAsync(workflow, new Dictionary<string, object?>
             {
-                ["table"] = context.Table.DbName,
+                ["table"] = $"{context.Table.TableSchema}.{context.Table.DbName}",
                 ["action"] = action,
                 ["result"] = context.Result,
                 ["data"] = new Dictionary<string, object?>(context.Data, StringComparer.OrdinalIgnoreCase),
@@ -107,6 +110,27 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
             if (payloadPredicate(payload.Value))
                 yield return workflow;
         }
+    }
+
+    /// <summary>
+    /// Whether the trigger's <c>table</c> names <paramref name="table"/>. A qualified
+    /// <c>schema.name</c> (split on the first dot) names exactly one table. A bare name is
+    /// accepted only when it is unique in the model: an ambiguous one throws the model's
+    /// ambiguity error rather than firing for every schema that defines it. Identity is the
+    /// resolved <see cref="IDbTable"/>, never a name compare.
+    /// </summary>
+    private static bool MatchesTable(JsonElement payload, IDbModel model, IDbTable table)
+    {
+        if (!payload.TryGetProperty("table", out var configured) || configured.GetString() is not { } name)
+            return false;
+
+        var dot = name.IndexOf('.');
+        if (dot > 0)
+            return model.TryGetTableFromDbName(name[..dot], name[(dot + 1)..], out var qualified)
+                && ReferenceEquals(qualified, table);
+
+        return string.Equals(name, table.DbName, StringComparison.OrdinalIgnoreCase)
+            && ReferenceEquals(model.GetTableFromDbName(name), table);
     }
 
     private static bool Matches(JsonElement payload, string property, string value)

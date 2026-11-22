@@ -238,8 +238,11 @@ public class ApprovalConfigTests
                 [PendingChangeStore.ColState] = PendingChangeStore.StatePending,
             },
         };
+        // The update shape the pipeline admits always carries the full key; the transition
+        // reports the row by it.
         var data = new Dictionary<string, object?>
         {
+            [PendingChangeStore.ColId] = 1,
             [PendingChangeStore.ColState] = PendingChangeStore.StateApproved,
         };
 

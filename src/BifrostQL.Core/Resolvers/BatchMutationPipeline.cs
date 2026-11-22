@@ -151,9 +151,9 @@ namespace BifrostQL.Core.Resolvers
             // notifications never describe rolled-back work. Failures inside
             // observers are swallowed by MutationObservers/StateTransitionObservers.
             if (ctx.WriteScope is { } committing)
-                committing.AfterCommit(async () => await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext));
+                committing.AfterCommit(async () => await NotifyObserversAsync(ctx.Services, ctx.Model, table, outcomes, ctx.UserContext));
             else
-                await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);
+                await NotifyObserversAsync(ctx.Services, ctx.Model, table, outcomes, ctx.UserContext);
 
             var totalAffected = 0;
             foreach (var outcome in outcomes) totalAffected += outcome.Affected;
@@ -270,12 +270,13 @@ namespace BifrostQL.Core.Resolvers
                     o.MutationType == MutationType.Insert ? 1 : affectedBySeq.GetValueOrDefault(o.Seq),
                     o.MutationType, o.Data, Transition: null))
                 .ToList();
-            await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);
+            await NotifyObserversAsync(ctx.Services, ctx.Model, table, outcomes, ctx.UserContext);
             return result.TotalAffected;
         }
 
         private static async ValueTask NotifyObserversAsync(
             IServiceProvider? services,
+            IDbModel model,
             IDbTable table,
             IReadOnlyList<BatchActionOutcome> outcomes,
             IDictionary<string, object?> userContext)
@@ -296,6 +297,7 @@ namespace BifrostQL.Core.Resolvers
                 {
                     await mutationObservers.NotifyAsync(new MutationObserverContext
                     {
+                        Model = model,
                         Table = table,
                         MutationType = outcome.MutationType,
                         Data = outcome.Data,

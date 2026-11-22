@@ -1,15 +1,27 @@
+using BifrostQL.Core.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BifrostQL.Core.Auth;
 
+/// <summary>
+/// A committed state-machine transition. <see cref="Table"/> is the resolved table (one name can
+/// exist in two schemas) and <see cref="EntityKey"/> its full primary key, column name to value,
+/// so a composite-key row is identified. <see cref="Model"/> is the model the write ran against,
+/// for observers that resolve configured table names.
+/// </summary>
 public sealed record StateTransitionInfo(
-    string Entity,
-    object? EntityId,
+    IDbModel Model,
+    IDbTable Table,
+    IReadOnlyDictionary<string, object?> EntityKey,
     string From,
     string To,
     string? Actor,
-    string? EventName);
+    string? EventName)
+{
+    /// <summary>The schema-qualified table name, <c>schema.name</c>.</summary>
+    public string Entity => $"{Table.TableSchema}.{Table.DbName}";
+}
 
 public interface IStateTransitionObserver
 {

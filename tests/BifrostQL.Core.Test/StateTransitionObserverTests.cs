@@ -1,5 +1,7 @@
 using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
 using FluentAssertions;
+using NSubstitute;
 using Xunit;
 
 namespace BifrostQL.Core.Test;
@@ -9,13 +11,7 @@ public class StateTransitionObserverTests
     [Fact]
     public async Task NotifyAsync_PublishesTransitionToEveryObserver()
     {
-        var transition = new StateTransitionInfo(
-            "members",
-            42,
-            "pending",
-            "active",
-            "user-1",
-            "StateTransitioned");
+        var transition = Transition();
         var observer = new CapturingObserver();
         var observers = new StateTransitionObservers(new IStateTransitionObserver[] { observer });
         var userContext = new Dictionary<string, object?> { ["user_id"] = "user-1" };
@@ -29,7 +25,7 @@ public class StateTransitionObserverTests
     [Fact]
     public async Task NotifyAsync_ThrowingObserverDoesNotAbortRemainingObservers()
     {
-        var transition = new StateTransitionInfo("members", 42, "pending", "active", "user-1", "StateTransitioned");
+        var transition = Transition();
         var failing = new ThrowingObserver();
         var trailing = new CapturingObserver();
         var observers = new StateTransitionObservers(new IStateTransitionObserver[] { failing, trailing });
@@ -39,6 +35,15 @@ public class StateTransitionObserverTests
         await act.Should().NotThrowAsync();
         trailing.Transitions.Should().ContainSingle().Which.Should().Be(transition);
     }
+
+    private static StateTransitionInfo Transition() => new(
+        Substitute.For<IDbModel>(),
+        Substitute.For<IDbTable>(),
+        new Dictionary<string, object?> { ["member_id"] = 42 },
+        "pending",
+        "active",
+        "user-1",
+        "StateTransitioned");
 
     private sealed class CapturingObserver : IStateTransitionObserver
     {

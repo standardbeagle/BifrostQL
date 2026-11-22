@@ -80,8 +80,8 @@ public class StateMachineMutationTransformerTests
         result.Data.Should().BeSameAs(data);
         result.StateTransition.Should().BeEquivalentTo(new
         {
-            Entity = "members",
-            EntityId = (object?)null,
+            Entity = "main.members",
+            EntityKey = new Dictionary<string, object?>(),
             From = "pending",
             To = "active",
             Actor = "user-1",

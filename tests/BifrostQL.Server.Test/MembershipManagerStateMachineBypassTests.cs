@@ -145,9 +145,9 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
         (await MemberStatusAsync(2)).Should().Be("active");
 
         var audit = await FirstAuditAsync();
-        audit.Action.Should().Be("members.inactive->active");
-        audit.EntityType.Should().Be("members");
-        audit.EntityId.Should().Be("2");
+        audit.Action.Should().Be("main.members.inactive->active");
+        audit.EntityType.Should().Be("main.members");
+        audit.EntityId.Should().Be("{\"member_id\":2}");
         audit.ActorUserId.Should().Be(1);
         audit.Summary.Should().Be("member.reactivated");
     }
@@ -182,7 +182,8 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
 
         captured.Runs.Should().ContainSingle("the matching workflow fires once per matching transition");
         captured.Runs[0].Workflow.Name.Should().Be("member.reactivated.notify");
-        captured.Runs[0].Inputs["entity"].Should().Be("members");
+        captured.Runs[0].Inputs["entity"].Should().Be("main.members");
+        captured.Runs[0].Inputs["entityKey"].Should().BeEquivalentTo(new Dictionary<string, object?> { ["member_id"] = 2 });
         captured.Runs[0].Inputs["from"].Should().Be("inactive");
         captured.Runs[0].Inputs["to"].Should().Be("active");
     }

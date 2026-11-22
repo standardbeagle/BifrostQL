@@ -144,7 +144,7 @@ namespace BifrostQL.Core.Resolvers
             // here, there is no single key). A filter that matched nothing notifies nobody.
             if (affected > 0)
                 await MutationNotifier.NotifyMutationAsync(
-                    ctx.Services, table, MutationType.Update, dbData, affected, ctx.UserContext, affectedRows: affected);
+                    ctx.Services, ctx.Model, table, MutationType.Update, dbData, affected, ctx.UserContext, affectedRows: affected);
             return affected;
         }
 

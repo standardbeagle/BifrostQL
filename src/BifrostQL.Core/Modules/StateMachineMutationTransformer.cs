@@ -94,6 +94,12 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             && !await IsDistinctActorAsync(table, data, context, authorColumn))
             return Denied(mutationType, data);
 
+        // A transition names its row by the full key. One missing component means the row
+        // cannot be identified to the observers, so the transition is refused, not reported
+        // against a partial key.
+        if (TryResolveEntityKey(table, data) is not { } entityKey)
+            return Denied(mutationType, data);
+
         return new MutationTransformResult
         {
             MutationType = mutationType,
@@ -101,8 +107,9 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             AdditionalFilter = TableFilterFactory.Equals(table, definition.StateColumn, currentStateValue),
             ConflictOnNoRows = true,
             StateTransition = new StateTransitionInfo(
-                table.DbName,
-                ResolveEntityId(table, data),
+                context.Model,
+                table,
+                entityKey,
                 currentState.Trim(),
                 newState.Trim(),
                 identity.Id,
@@ -189,15 +196,16 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             Errors = new[] { InvalidTransitionMessage },
         };
 
-    private static object? ResolveEntityId(IDbTable table, Dictionary<string, object?> data)
+    private static Dictionary<string, object?>? TryResolveEntityKey(IDbTable table, Dictionary<string, object?> data)
     {
-        var key = table.KeyColumns?.FirstOrDefault();
-        if (key is null)
-            return null;
+        var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.KeyColumns)
+        {
+            if (!data.TryGetValue(column.ColumnName, out var value) || value is null)
+                return null;
+            key[column.ColumnName] = value;
+        }
 
-        if (data.TryGetValue(key.ColumnName, out var dbValue))
-            return dbValue;
-
-        return null;
+        return key;
     }
 }

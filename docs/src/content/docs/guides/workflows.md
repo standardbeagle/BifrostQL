@@ -74,6 +74,20 @@ Workflows support four trigger types:
 - `on-state-transition`: runs after a matching state-machine transition succeeds.
 - `scheduled`: runs from the in-process scheduler tick.
 
+The `table` of an `on-mutation` or `on-state-transition` trigger names one table. Write it schema-qualified (`"table": "public.members"`) to match exactly that table. A bare name (`"table": "members"`) matches only while it is unique in the model. If two schemas define it, the trigger fails instead of firing for both: the model's ambiguity error is logged by the observer that dispatched the write or transition, and no workflow runs. Nothing checks this at startup, so qualify the name on any database with more than one schema.
+
+Trigger inputs:
+
+| Trigger | Input | Value |
+|---|---|---|
+| `on-mutation` | `table` | Schema-qualified table, e.g. `public.members` |
+| `on-mutation` | `action`, `result`, `data` | `insert`, `update` or `delete`; the mutation result; the written data |
+| `on-state-transition` | `entity` | Schema-qualified table, e.g. `public.members` |
+| `on-state-transition` | `entityKey` | The row's full primary key, column name to value (`{ "member_id": 7 }`; every column of a composite key) |
+| `on-state-transition` | `from`, `to`, `actor`, `eventName` | The transition |
+
+Read a key component in a step template as `{{ inputs.entityKey.member_id }}`.
+
 `IWorkflowRunner.RunAsync` and every `IWorkflowDataExecutor` method take an optional `CancellationToken`. Pass the request's `HttpContext.RequestAborted` from a manual HTTP shim so a client disconnect stops the run and cancels its queries and mutations; a canceled run throws `OperationCanceledException` rather than reporting a failed step. Custom `IWorkflowDataExecutor` implementations must accept the new parameter.
 
 The executor resolves tables against the same endpoint the GraphQL pipeline picks for the current request. On a host with more than one endpoint, a request whose path matches none of them is refused instead of falling back to the first endpoint.

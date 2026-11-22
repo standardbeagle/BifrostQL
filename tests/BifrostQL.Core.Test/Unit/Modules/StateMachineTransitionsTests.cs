@@ -188,8 +188,68 @@ public sealed class StateMachineTransitionsTests
 
         result.Errors.Should().BeEmpty();
         result.StateTransition.Should().NotBeNull();
-        result.StateTransition!.EntityId.Should().Be(42);
+        result.StateTransition!.EntityKey.Should().BeEquivalentTo(new Dictionary<string, object?> { ["member-id"] = 42 });
+        result.StateTransition.Table.Should().BeSameAs(table);
         result.Data.Should().ContainKey(table.KeyColumns.Single().ColumnName);
         result.Data.Should().ContainKey("member-id").WhoseValue.Should().Be(42);
+    }
+
+    // A composite-key row is named by every key column, and the entity is the schema-qualified
+    // table: the transition used to carry only the first key column and the bare DbName.
+    [Fact]
+    public async Task StateTransition_CarriesTheFullCompositeKey_AndTheQualifiedTable()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("enrolment", t => t
+                .WithSchema("hr")
+                .WithColumn("course_id", "int", isPrimaryKey: true)
+                .WithColumn("student_id", "int", isPrimaryKey: true)
+                .WithColumn("status", "varchar")
+                .WithMetadata(MetadataKeys.StateMachine.StateColumn, "status")
+                .WithMetadata(MetadataKeys.StateMachine.InitialState, "pending")
+                .WithMetadata(MetadataKeys.StateMachine.States, "pending, active")
+                .WithMetadata(MetadataKeys.StateMachine.Transitions, "pending->active"))
+            .Build();
+        var table = model.GetTableFromDbName("enrolment");
+        var context = new MutationTransformContext
+        {
+            Model = model,
+            CurrentRow = new Dictionary<string, object?> { ["status"] = "pending" },
+            UserContext = new Dictionary<string, object?>(),
+        };
+
+        var result = await new StateMachineMutationTransformer().TransformAsync(table, MutationType.Update,
+            new Dictionary<string, object?> { ["course_id"] = 7, ["student_id"] = 11, ["status"] = "active" }, context);
+
+        result.Errors.Should().BeEmpty();
+        result.StateTransition!.EntityKey.Should().BeEquivalentTo(new Dictionary<string, object?> { ["course_id"] = 7, ["student_id"] = 11 });
+        result.StateTransition.Entity.Should().Be("hr.enrolment");
+    }
+
+    [Fact]
+    public async Task StateTransition_WithAMissingKeyComponent_IsRefused()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("enrolment", t => t
+                .WithColumn("course_id", "int", isPrimaryKey: true)
+                .WithColumn("student_id", "int", isPrimaryKey: true)
+                .WithColumn("status", "varchar")
+                .WithMetadata(MetadataKeys.StateMachine.StateColumn, "status")
+                .WithMetadata(MetadataKeys.StateMachine.InitialState, "pending")
+                .WithMetadata(MetadataKeys.StateMachine.States, "pending, active")
+                .WithMetadata(MetadataKeys.StateMachine.Transitions, "pending->active"))
+            .Build();
+        var context = new MutationTransformContext
+        {
+            Model = model,
+            CurrentRow = new Dictionary<string, object?> { ["status"] = "pending" },
+            UserContext = new Dictionary<string, object?>(),
+        };
+
+        var result = await new StateMachineMutationTransformer().TransformAsync(model.GetTableFromDbName("enrolment"), MutationType.Update,
+            new Dictionary<string, object?> { ["course_id"] = 7, ["status"] = "active" }, context);
+
+        result.Errors.Should().ContainSingle().Which.Should().Be("State transition is not permitted.");
+        result.StateTransition.Should().BeNull();
     }
 }

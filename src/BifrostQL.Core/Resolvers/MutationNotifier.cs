@@ -124,6 +124,7 @@ namespace BifrostQL.Core.Resolvers
 
         public static async ValueTask NotifyMutationAsync(
             IServiceProvider? services,
+            IDbModel model,
             IDbTable table,
             MutationType mutationType,
             IDictionary<string, object?> data,
@@ -139,6 +140,9 @@ namespace BifrostQL.Core.Resolvers
             {
                 await observers.NotifyAsync(new MutationObserverContext
                 {
+                    // The model the write ran against: observers that resolve configured
+                    // table names (workflow triggers) resolve them here, per endpoint.
+                    Model = model,
                     Table = table,
                     MutationType = mutationType,
                     Data = data,

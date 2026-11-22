@@ -163,7 +163,7 @@ The module system can transform mutations before they hit the database.
 **Soft delete** converts DELETE operations into UPDATE operations that set a timestamp column:
 
 ```
-":root { user-audit-key: sub }"
+":root { user-audit-key: user_id }"
 "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; }"
 ```
 
@@ -172,13 +172,13 @@ With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted
 **Audit columns** auto-populate fields like `created_by` and `updated_on` from the authenticated user context:
 
 ```
-":root { user-audit-key: sub }"
+":root { user-audit-key: user_id }"
 "dbo.*.createdOn { populate: created-on; }"
 "dbo.*.updatedOn { populate: updated-on; }"
 "dbo.*.createdBy { populate: created-by; }"
 ```
 
-These columns are populated automatically during insert and update, and are optional in the GraphQL input types. The `*-by` columns are stamped from the claim `user-audit-key` names; a model with a `*-by` column and no `user-audit-key` fails to load. A client-supplied value is overwritten, and an update drops a client-supplied `created-*` value.
+These columns are populated automatically during insert and update, and are optional in the GraphQL input types. The `*-by` columns are stamped from the claim `user-audit-key` names; a model with a `*-by` column and no `user-audit-key` fails to load. Use `user_id` (or `id`), the caller's subject as the identity mapper writes it: a raw token claim such as `sub` is an array in the user context, and a write whose actor claim is not a single value is refused. A client-supplied value is overwritten, and an update drops a client-supplied `created-*` value.
 
 ## Operation ids
 

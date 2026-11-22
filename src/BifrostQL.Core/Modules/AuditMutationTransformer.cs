@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -112,16 +113,32 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         if (!hasAuditKey || auditKey == null)
             return null;
 
-        if (userContext.TryGetValue(auditKey, out var value))
-            return value;
+        if (!userContext.TryGetValue(auditKey, out var value))
+            return null;
 
-        return null;
+        // A raw principal claim reaches the user context as string[] under its claim type; the
+        // identity mapper writes the actor keys (id, user_id) as scalars. A sequence is not one
+        // author: stamping it bound an array parameter and recorded "System.String[]" as the
+        // state-machine actor, which compares unequal to every real author.
+        if (value is System.Collections.IEnumerable and not string)
+            throw new BifrostExecutionError(NonScalarActorMessage);
+
+        return value;
     }
+
+    /// <summary>
+    /// The refusal for a <c>user-audit-key</c> claim that holds a sequence rather than one value.
+    /// Constant text: it names the configuration fix, never the claim's contents.
+    /// </summary>
+    public const string NonScalarActorMessage =
+        "The claim named by user-audit-key is not a single value. " +
+        "Name a claim the identity mapper writes, such as user_id.";
 
     /// <summary>
     /// The actor behind a mutation: the user-context claim named by the model-level
     /// <c>user-audit-key</c>, or null when no key is configured or the claim is absent
-    /// (a system or unauthenticated write). This is the single definition of "who did
+    /// (a system or unauthenticated write). A claim holding a sequence is refused
+    /// (<see cref="NonScalarActorMessage"/>). This is the single definition of "who did
     /// this" — the created-by/updated-by/deleted-by columns stamped here and the
     /// <c>actor</c> column of a change-history row resolve the same way, so a row and
     /// its trail can never disagree about their author.

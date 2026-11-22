@@ -120,7 +120,7 @@ All the constraints from the brief become declarative rules in `appsettings.json
       "dbo.customers { label: name; }",
       "dbo.products  { label: name; }",
 
-      ":root { raw-sql: disabled; generic-table: disabled; default-limit: 50; user-audit-key: sub; }"
+      ":root { raw-sql: disabled; generic-table: disabled; default-limit: 50; user-audit-key: user_id; }"
     ]
   }
 }

@@ -31,7 +31,7 @@ Every authentication path (local login, OIDC, JWT) converges on the same provide
 | User ID | `user_id` | The explicit user identifier | Custom modules / app code |
 | Roles | `roles` | The caller's roles | `AutoFilterTransformer` (bypass-role check) |
 | Permissions | `permissions` | The caller's permissions (plural) | Custom modules / app code |
-| Audit user key | `user-audit-key` (model metadata; required by any created-by / updated-by / deleted-by / `soft-delete-by` column) | Which claim populates created-by / updated-by / deleted-by | `BasicAuditModule` |
+| Audit user key | `user-audit-key` (model metadata; required by any created-by / updated-by / deleted-by / `soft-delete-by` column) | Which claim populates created-by / updated-by / deleted-by (use `user_id`) | `AuditMutationTransformer` |
 
 `tenant_id` is the singular primary tenant; `tenant_ids` is the full membership set. The audit user key is configurable model-level metadata, not a fixed claim name — it names which claim the audit module reads.
 
@@ -112,7 +112,7 @@ Tenant-owned inserts and updates are enforced by two mechanisms working together
 On insert there is no existing row to filter, so the tenant column must be set explicitly. Two patterns apply:
 
 1. **Client-supplied `tenant_id`.** The GraphQL insert input includes the `tenant_id` column; the client passes the caller's tenant. This is the simplest pattern and is what the org-model seed data uses. Pair it with application-side validation that the supplied `tenant_id` matches the caller's claim, or restrict who can call the mutation.
-2. **Audit-populated ownership columns.** The audit module (`BasicAuditModule`) auto-populates `created-by` / `updated-by` columns from the `user-audit-key` claim and timestamps from `created-on` / `updated-on`. Configure it with column metadata:
+2. **Audit-populated ownership columns.** The audit module (`AuditMutationTransformer`) auto-populates `created-by` / `updated-by` columns from the `user-audit-key` claim and timestamps from `created-on` / `updated-on`. Configure it with column metadata:
 
    ```
    ":root { user-audit-key: user_id }"

@@ -26,15 +26,20 @@ No matter how a user signs in, the authentication layer produces an `AppIdentity
 
 `OrgIds`, `Roles`, and `Claims` are never null — they default to empty collections, so consumers never need to null-check them.
 
-`IdentityContextMapper` projects an `AppIdentity` into the `UserContext` dictionary that modules read. It writes three mapped keys:
+`IdentityContextMapper` projects an `AppIdentity` into the `UserContext` dictionary that modules read. It writes these keys, always under these names:
 
-| Mapped key | Default | Source field | Read by |
-|------------|---------|--------------|---------|
-| Tenant key | `tenant_id` | `AppIdentity.TenantId` | `TenantFilterTransformer` |
-| Roles key | `roles` | `AppIdentity.Roles` | `AutoFilterTransformer` (bypass-role checks) |
-| Audit user key | `id` | `AppIdentity.Id` | `BasicAuditModule` |
+| Key | Source field | Shape |
+|-----|--------------|-------|
+| `tenant_id` | `AppIdentity.TenantId` | string; omitted when the identity has no tenant |
+| `tenant_ids` | `AppIdentity.OrgIds` | list of strings |
+| `user_id` | `AppIdentity.Id` | string |
+| `id` | `AppIdentity.Id` | string |
+| `roles` | `AppIdentity.Roles` | list of strings |
+| `permissions` | `AppIdentity.Permissions` | list of strings |
 
-Provider claims are copied into the dictionary first, so the mapped identity keys above always take precedence over a same-named provider claim.
+Provider claims (`AppIdentity.Claims`) are copied into the dictionary first, so the mapped identity keys above always take precedence over a same-named provider claim.
+
+For an HTTP caller the user context also carries every claim of the authenticated principal that no key above already holds, under its claim type, as a **string array**. `tenant-context-key` and `user-audit-key` name a key in this dictionary; they do not rename the mapper's keys (see [Changing claim keys](#changing-claim-keys)).
 
 ## Local-user login
 
@@ -223,7 +228,7 @@ A self-hosted deployment — for example a club running the Membership Manager a
 
 1. **Start with local auth.** `AddBifrostLocalAuth` against the app-user table is enough to sign users in. Tenant isolation, audit columns, and policy checks all work off the `AppIdentity` local login produces.
 2. **Add OIDC when you want it.** Register the claim mappers with `AddBifrostOidcClaimMappers` and add the matching `AddOpenIdConnect` client configuration. Gate it behind a config section so the wiring stays inert until a real issuer and client secret are supplied — see the [HostedSpa sample](https://github.com/standardbeagle/BifrostQL/tree/main/samples/HostedSpa), which ships the OIDC block commented out and runs on local auth only by default.
-3. **Authorization semantics are unchanged.** Both paths converge on the same `AppIdentity`, and `IdentityContextMapper` projects either one into the **identical** `UserContext` keys — the tenant key, the roles key, and the audit user key. The policy engine, `TenantFilterTransformer`, and role-bypass checks read those keys and never see which provider authenticated the request.
+3. **Authorization semantics are unchanged.** Both paths converge on the same `AppIdentity`, and `IdentityContextMapper` projects either one into the **identical** `UserContext` keys — `tenant_id`, `roles`, `id` and `user_id`. The policy engine, `TenantFilterTransformer`, and role-bypass checks read those keys and never see which provider authenticated the request.
 
 The claim-shape guarantee is enforced by tests, not just documented: `OidcLocalAuthParityTests` verifies that a Microsoft 365 OIDC principal and a `LocalUserStore` login for the same logical user produce the same tenant and roles `UserContext` values — including after the OIDC identity is re-issued in the shared local-auth cookie shape. So adding OIDC cannot silently change who can see or do what; if a mapper ever diverged from local auth's claim shape, that test would fail.
 
@@ -300,7 +305,7 @@ BifrostQL builds a `BifrostContext` from the authenticated user. This context is
 | Claim | Used by | Default key |
 |-------|---------|-------------|
 | Tenant ID | `TenantFilterTransformer` | `tenant_id` |
-| User audit key | `BasicAuditModule` | configured by `user-audit-key` |
+| User audit key | `AuditMutationTransformer` | configured by `user-audit-key` (use `user_id`) |
 | Arbitrary row filters | `AutoFilterTransformer` | configured by `auto-filter` |
 
 ### Changing claim keys
@@ -308,10 +313,10 @@ BifrostQL builds a `BifrostContext` from the authenticated user. This context is
 The tenant and audit claim keys can be overridden via model metadata. These keys are honored regardless of which authentication path produced the identity — local, OIDC, and JWT all flow through the same `IdentityContextMapper`:
 
 ```
-":root { tenant-context-key: org_id; user-audit-key: sub; }"
+":root { tenant-context-key: org_id; user-audit-key: user_id; }"
 ```
 
-This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`, and tells audit population to use the `sub` claim as the user key.
+This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`, and stamps actor columns with `user_id`, the caller's subject as the mapper writes it. Don't name a raw token claim such as `sub` here: under the default JWT inbound claim map `sub` is renamed and absent, and where it is present it is a string array. A write whose `user-audit-key` value is not a single value is refused.
 
 For additional row-level filters, map columns to claims with `auto-filter`:
 

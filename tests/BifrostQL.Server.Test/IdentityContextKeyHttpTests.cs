@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Sqlite;
 using FluentAssertions;
@@ -121,6 +122,43 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
 
         Errors(reply).Should().BeEmpty();
         (await ScalarAsync("SELECT created_by FROM notes WHERE body = 'wire-12'")).Should().Be("u-1");
+    }
+
+    // ---- I4: the actor is a single value, never a raw multi-value claim ----
+
+    [Fact]
+    public async Task RawClaimActorKey_IsRefused_NotRecordedAsAnArray()
+    {
+        // Raw principal claims land in the user context as string[] under their claim type.
+        // `sub` is not a key the identity mapper writes, so `user-audit-key: sub` reads that
+        // array. It used to reach the created_by parameter (and the state-machine actor as
+        // "System.String[]"); the write is refused instead.
+        await StartAsync(
+            ":root { user-audit-key: sub }",
+            "main.notes.created_by { populate: created-by }");
+
+        using var reply = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "raw-sub" }) }""",
+            Principal(new Claim("sub", "dana")));
+
+        Errors(reply).Should().ContainSingle().Which.Should().Be(AuditMutationTransformer.NonScalarActorMessage);
+        (await ScalarAsync("SELECT count(*) FROM notes WHERE body = 'raw-sub'")).Should().Be(0L);
+    }
+
+    [Fact]
+    public async Task MapperActorKey_StampsTheSubject()
+    {
+        // Control: the same principal under the key the mapper writes is stamped as a scalar.
+        await StartAsync(
+            ":root { user-audit-key: user_id }",
+            "main.notes.created_by { populate: created-by }");
+
+        using var reply = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "mapped-sub" }) }""",
+            Principal(new Claim("sub", "dana")));
+
+        Errors(reply).Should().BeEmpty();
+        (await ScalarAsync("SELECT created_by FROM notes WHERE body = 'mapped-sub'")).Should().Be("dana");
     }
 
     // ---- host ----

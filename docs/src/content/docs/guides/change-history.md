@@ -119,10 +119,13 @@ the same claim that stamps `updated_by`, so a row and its trail can never disagr
 their author:
 
 ```text
-:root { history-table: dbo.__history; user-audit-key: sub }
+:root { history-table: dbo.__history; user-audit-key: user_id }
 ```
 
-Without it, `actor` is null. It is never taken from client input.
+Without it, `actor` is null. It is never taken from client input. `user_id` (or `id`) is the
+caller's subject as the identity mapper writes it. A raw token claim such as `sub` reaches the
+user context as an array, or not at all when the host's inbound claim map renames it, so a
+write whose `user-audit-key` claim holds more than one value is refused.
 
 ## 6. Reading the trail
 

@@ -9,8 +9,9 @@ namespace BifrostQL.Core.Auth;
 /// The produced dictionary carries the canonical claim set:
 ///   <list type="bullet">
 ///     <item><description>
-///       Tenant key (default <c>tenant_id</c>) — read by <c>TenantFilterTransformer</c>,
-///       configurable via the <c>tenant-context-key</c> model metadata. Omitted
+///       Tenant key (default <c>tenant_id</c>) — read by <c>TenantFilterTransformer</c>
+///       when the model sets no <c>tenant-context-key</c>. The HTTP projection
+///       (<c>BifrostContext</c>) uses the default names; a model key does not rename them. Omitted
 ///       when <see cref="AppIdentity.TenantId"/> is null.
 ///     </description></item>
 ///     <item><description>
@@ -32,8 +33,8 @@ namespace BifrostQL.Core.Auth;
 ///       <c>IReadOnlyList&lt;string&gt;</c> (empty when the user has none).
 ///     </description></item>
 ///     <item><description>
-///       Audit user key (default <c>id</c>) — read by <c>AuditMutationTransformer</c>,
-///       configurable via the <c>user-audit-key</c> model metadata.
+///       Audit user key (default <c>id</c>) — read by <c>AuditMutationTransformer</c>
+///       when the model's <c>user-audit-key</c> names it (or <c>user_id</c>).
 ///     </description></item>
 ///   </list>
 ///

@@ -87,6 +87,8 @@ By default, BifrostQL looks for `tenant_id` in the user context. Change the clai
 ":root { tenant-context-key: org_id; }"
 ```
 
+The identity mapper still writes the identity's tenant as `tenant_id`, so `org_id` must come from a single-valued claim of that type on the principal. A caller without one is refused. See [Changing claim keys](/BifrostQL/guides/authentication/#changing-claim-keys).
+
 ## Automatic claim filters
 
 Use `auto-filter` when the filter is not strictly a tenant ID, or when one table needs several claim-to-column mappings.

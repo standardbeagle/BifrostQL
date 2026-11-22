@@ -310,13 +310,13 @@ BifrostQL builds a `BifrostContext` from the authenticated user. This context is
 
 ### Changing claim keys
 
-The tenant and audit claim keys can be overridden via model metadata. These keys are honored regardless of which authentication path produced the identity — local, OIDC, and JWT all flow through the same `IdentityContextMapper`:
+The tenant and audit claim keys can be overridden via model metadata. Each one names the user-context key the module reads. It does not rename the keys `IdentityContextMapper` writes: the identity's tenant is always written as `tenant_id`, and its subject as `id` and `user_id`.
 
 ```
 ":root { tenant-context-key: org_id; user-audit-key: user_id; }"
 ```
 
-This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`, and stamps actor columns with `user_id`, the caller's subject as the mapper writes it. Don't name a raw token claim such as `sub` here: under the default JWT inbound claim map `sub` is renamed and absent, and where it is present it is a string array. A write whose `user-audit-key` value is not a single value is refused.
+This tells the tenant filter transformer to read `org_id` from the user context instead of `tenant_id`. Nothing maps the identity's tenant to `org_id`, so `org_id` must arrive as a claim of that type on the authenticated principal (for example a custom JWT claim). A single-valued claim is read as its value. A caller with no `org_id` claim, including a local-auth or OIDC-mapped user whose tenant landed in `tenant_id`, is refused, and so is a claim with more than one value; the filter never falls back to `tenant_id` and never serves unscoped rows. A client can never supply either key through wire context. The second setting stamps actor columns with `user_id`, the caller's subject as the mapper writes it. Don't name a raw token claim such as `sub` here: under the default JWT inbound claim map `sub` is renamed and absent, and where it is present it is a string array. A write whose `user-audit-key` value is not a single value is refused.
 
 For additional row-level filters, map columns to claims with `auto-filter`:
 

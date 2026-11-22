@@ -50,6 +50,70 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
         await Task.CompletedTask;
     }
 
+    // ---- I1: a configured tenant-context-key reads that user-context key, fail closed ----
+
+    [Fact]
+    public async Task DefaultTenantKey_ScopesByTheMappedIdentityTenant()
+    {
+        // Control: with no tenant-context-key the filter reads tenant_id, which the identity
+        // mapper writes from the identity's tenant (the local-auth tenant claim).
+        await StartAsync("main.notes { tenant-filter: org }");
+
+        using var reply = await SendGraphQlAsync("{ notes { data { body } } }",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1"), new Claim(Auth.LocalAuthClaims.Tenant, "acme")));
+
+        Errors(reply).Should().BeEmpty();
+        Bodies(reply).Should().Equal("acme-note");
+    }
+
+    [Fact]
+    public async Task ConfiguredTenantKey_IsNotFilledFromTheMappedIdentityTenant_AndDenies()
+    {
+        // The mapper writes the identity's tenant under tenant_id only; it does not rename it
+        // to the model's tenant-context-key. A caller whose tenant arrives that way has no
+        // org_id, and the filter refuses rather than reading everyone's rows.
+        await StartAsync(
+            ":root { tenant-context-key: org_id }",
+            "main.notes { tenant-filter: org }");
+
+        using var reply = await SendGraphQlAsync("{ notes { data { body } } }",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1"), new Claim(Auth.LocalAuthClaims.Tenant, "acme")));
+
+        reply.RootElement.GetRawText().Should().NotContain("-note");
+        Errors(reply).Should().ContainSingle().Which.Should().Contain("Tenant context required");
+    }
+
+    [Fact]
+    public async Task ConfiguredTenantKey_ReadsTheSingleValuedPrincipalClaim()
+    {
+        // A principal claim whose type is the configured key reaches the user context as a
+        // one-element array, which the tenant coercion reads as its single value.
+        await StartAsync(
+            ":root { tenant-context-key: org_id }",
+            "main.notes { tenant-filter: org }");
+
+        using var reply = await SendGraphQlAsync("{ notes { data { body } } }",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1"), new Claim("org_id", "acme")));
+
+        Errors(reply).Should().BeEmpty();
+        Bodies(reply).Should().Equal("acme-note");
+    }
+
+    [Fact]
+    public async Task ConfiguredTenantKey_MultiValuedPrincipalClaim_Denies()
+    {
+        await StartAsync(
+            ":root { tenant-context-key: org_id }",
+            "main.notes { tenant-filter: org }");
+
+        using var reply = await SendGraphQlAsync("{ notes { data { body } } }",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1"),
+                new Claim("org_id", "acme"), new Claim("org_id", "globex")));
+
+        reply.RootElement.GetRawText().Should().NotContain("-note");
+        Errors(reply).Should().ContainSingle().Which.Should().Be("Tenant context value is invalid for the target column.");
+    }
+
     // ---- I2: server-owned identity keys can never be supplied by wire context ----
 
     [Fact]
@@ -229,6 +293,10 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
     private static ClaimsPrincipal DecodePrincipal(string header)
         => Principal(JsonSerializer.Deserialize<string[][]>(Convert.FromBase64String(header))!
             .Select(pair => new Claim(pair[0], pair[1])).ToArray());
+
+    private static IReadOnlyList<string> Bodies(JsonDocument reply)
+        => reply.RootElement.GetProperty("data").GetProperty("notes").GetProperty("data")
+            .EnumerateArray().Select(row => row.GetProperty("body").GetString()!).ToList();
 
     private static IReadOnlyList<string> Errors(JsonDocument reply)
         => reply.RootElement.TryGetProperty("errors", out var errors)

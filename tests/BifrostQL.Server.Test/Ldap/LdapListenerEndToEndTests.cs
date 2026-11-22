@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Ldap;
+using BifrostQL.Tests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -37,17 +38,36 @@ namespace BifrostQL.Server.Test.Ldap
         private int _port;
         private int _ldapsPort;
 
+        /// <summary>
+        /// Kestrel binds these ports itself, and a connection handler listener does not publish
+        /// its assigned port back through the addresses feature, so both are chosen before the
+        /// host starts and a lost probe-then-bind race is retried on a fresh pair.
+        /// </summary>
         public async Task InitializeAsync()
-        {
-            _port = FreePort();
-            _ldapsPort = FreePort();
+            => _host = await LoopbackPort.StartWithRetryAsync(async () =>
+            {
+                (_port, _ldapsPort) = LoopbackPort.ProbePair();
+                var host = BuildHost();
+                try
+                {
+                    await host.StartAsync();
+                    return host;
+                }
+                catch
+                {
+                    host.Dispose();
+                    throw;
+                }
+            });
 
+        private IHost BuildHost()
+        {
             var model = LdapModelBuilder.Create().WithPeople().WithGroups().Build();
             var pipeline = new LdapFakeIntentExecutor(model)
                 .WithPeople(3, tenant: "acme", startId: 1)
                 .WithPeople(3, tenant: "globex", startId: 20);
 
-            _host = new HostBuilder()
+            return new HostBuilder()
                 .ConfigureWebHost(web => web
                     .UseKestrel()
                     .ConfigureServices(services =>
@@ -71,28 +91,12 @@ namespace BifrostQL.Server.Test.Ldap
                     })
                     .Configure(_ => { }))
                 .Build();
-
-            await _host.StartAsync();
         }
 
         public async Task DisposeAsync()
         {
             await _host.StopAsync(TimeSpan.FromSeconds(5));
             _host.Dispose();
-        }
-
-        /// <summary>
-        /// An ephemeral port the OS is not currently using. Kestrel binds these itself, and a
-        /// connection handler listener does not publish its assigned port back through the
-        /// addresses feature, so the port has to be chosen before the host starts.
-        /// </summary>
-        private static int FreePort()
-        {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         private static async Task<(TcpClient Socket, LdapTestClient Client)> ConnectAsync(int port)

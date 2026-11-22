@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using BifrostQL.Server;
 using BifrostQL.Server.Resp;
+using BifrostQL.Tests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -64,25 +65,15 @@ namespace BifrostQL.Server.Test.Resp
         // ---- fixtures --------------------------------------------------------
 
         /// <summary>
-        /// Binds a real listener, retrying on a lost port race: the free-port probe releases the
-        /// port before Kestrel claims it, so a concurrently running test can take it in between.
+        /// Binds a real listener on a probed port, retrying a lost probe-then-bind race.
         /// </summary>
-        private static async Task<(IHost Host, int Port)> StartOnAFreePortAsync(
+        private static Task<(IHost Host, int Port)> StartOnAFreePortAsync(
             X509Certificate2 certificate, int maxConnections)
-        {
-            for (var attempt = 1; ; attempt++)
+            => LoopbackPort.StartWithRetryAsync(async () =>
             {
-                var port = FreePort();
-                try
-                {
-                    return (await StartAsync(port, certificate, maxConnections), port);
-                }
-                catch (IOException) when (attempt < 5)
-                {
-                    // Another listener claimed the probed port; try a different one.
-                }
-            }
-        }
+                var port = LoopbackPort.Probe();
+                return (await StartAsync(port, certificate, maxConnections), port);
+            });
 
         private static async Task<IHost> StartAsync(int port, X509Certificate2 certificate, int maxConnections)
         {
@@ -141,15 +132,6 @@ namespace BifrostQL.Server.Test.Resp
             {
                 return true;
             }
-        }
-
-        private static int FreePort()
-        {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         private static X509Certificate2 SelfSigned()

@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using BifrostQL.Tests.Shared;
 using BifrostQL.UI;
 using BifrostQL.UI.Web;
 using FluentAssertions;
@@ -80,12 +81,12 @@ public sealed class HostStartupTests
     [Fact]
     public async Task TryStartAsync_returns_null_when_the_port_is_free()
     {
-        var port = FreePort();
+        // Port 0: the OS picks a free port at bind time, so nothing can take it first.
         var state = new ConnectionState();
         await using var sshTunnel = new SshTunnelManager();
-        var app = BifrostUiWebHost.Build(null, port, state, sshTunnel);
+        var app = BifrostUiWebHost.Build(null, 0, state, sshTunnel);
 
-        var failure = await HostStartup.TryStartAsync(app, port, CancellationToken.None);
+        var failure = await HostStartup.TryStartAsync(app, 0, CancellationToken.None);
 
         try
         {
@@ -182,13 +183,27 @@ public sealed class HostStartupTests
     [Fact]
     public async Task StartWithFallbackAsync_keeps_the_requested_port_when_it_is_free()
     {
-        var port = FreePort();
         var state = new ConnectionState();
         await using var sshTunnel = new SshTunnelManager();
 
-        var result = await HostStartup.StartWithFallbackAsync(
-            p => BifrostUiWebHost.Build(null, p, state, sshTunnel),
-            port, portWasExplicit: false, CancellationToken.None);
+        // The requested port must be a real number, so it is probed, and the probe releases it
+        // before the host binds. A fallback is only a lost race when something else now holds the
+        // probed port; that case is retried on a fresh port. A fallback off a port nobody holds is
+        // the bug this test pins, and reaches the assertion below.
+        var (result, port) = await LoopbackPort.StartWithRetryAsync(async () =>
+        {
+            var probed = LoopbackPort.Probe();
+            var started = await HostStartup.StartWithFallbackAsync(
+                p => BifrostUiWebHost.Build(null, p, state, sshTunnel),
+                probed, portWasExplicit: false, CancellationToken.None);
+            if (started.Port != probed && LoopbackPort.IsTaken(probed))
+            {
+                if (started.App is not null)
+                    await started.App.DisposeAsync();
+                throw new SocketException((int)SocketError.AddressAlreadyInUse);
+            }
+            return (started, probed);
+        });
 
         try
         {
@@ -203,14 +218,5 @@ public sealed class HostStartupTests
                 await result.App.DisposeAsync();
             }
         }
-    }
-
-    private static int FreePort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 }

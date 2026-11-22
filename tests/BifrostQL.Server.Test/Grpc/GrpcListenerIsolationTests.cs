@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Grpc;
+using BifrostQL.Tests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -34,8 +34,9 @@ namespace BifrostQL.Server.Test.Grpc
         [InlineData(Reflection)]
         public async Task Grpc_routes_do_not_answer_on_a_host_listener(string path)
         {
-            var (hostPort, grpcPort) = (FreePort(), FreePort());
-            using var host = await StartAsync(hostPort, grpcPort);
+            var (host, grpcPort) = await StartAsync();
+            using var _ = host;
+            var hostPort = HostPort(host, grpcPort);
 
             var onHost = await PostGrpcAsync(hostPort, path);
             var onGrpc = await PostGrpcAsync(grpcPort, path);
@@ -51,8 +52,9 @@ namespace BifrostQL.Server.Test.Grpc
         [Fact]
         public async Task Host_pipeline_does_not_answer_on_the_grpc_listener()
         {
-            var (hostPort, grpcPort) = (FreePort(), FreePort());
-            using var host = await StartAsync(hostPort, grpcPort);
+            var (host, grpcPort) = await StartAsync();
+            using var _ = host;
+            var hostPort = HostPort(host, grpcPort);
 
             var onGrpc = await GetAsync(grpcPort, "/graphql");
             var onHost = await GetAsync(hostPort, "/graphql");
@@ -71,20 +73,12 @@ namespace BifrostQL.Server.Test.Grpc
             // The gRPC listener is declared in code (KestrelServerOptions.Listen). Kestrel treats
             // code-declared endpoints as replacing the hosting URLs (UseUrls, ASPNETCORE_URLS,
             // --urls), so registering the adapter silently unbound the host's own HTTP port.
-            // The hosting URL asks for port 0, so Kestrel picks the port at bind time and no other
-            // test can take it between a probe and the bind. The gRPC port must be known up front
-            // (the isolation keys on it), so only that one is probed.
-            var grpcPort = FreePort();
-            using var host = await StartAsync(hostPort: 0, grpcPort, hostListenerViaUrls: true);
+            var (host, grpcPort) = await StartAsync(hostListenerViaUrls: true);
+            using var _ = host;
 
             // Kestrel publishes every endpoint it actually bound. Without the carry-over only the
             // gRPC listener is there: the hosting URL was dropped.
-            var bound = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses
-                .Select(a => BindingAddress.Parse(a).Port)
-                .ToList();
-            bound.Should().Contain(grpcPort);
-            var hostPort = bound.Where(p => p != grpcPort).Should().ContainSingle(
-                "the hosting URL must still bind beside the code-declared gRPC listener").Which;
+            var hostPort = HostPort(host, grpcPort);
 
             using var http1 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var response = await http1.GetAsync($"http://127.0.0.1:{hostPort}/graphql");
@@ -97,7 +91,30 @@ namespace BifrostQL.Server.Test.Grpc
 
         // ---- fixtures --------------------------------------------------------
 
-        private static async Task<IHost> StartAsync(int hostPort, int grpcPort, bool hostListenerViaUrls = false)
+        /// <summary>
+        /// The host listener asks for port 0, so Kestrel picks it at bind time and nothing can take
+        /// it first; <see cref="HostPort"/> reads it back. The gRPC port must be known up front
+        /// (the isolation keys on it), so only that one is probed, and a lost race is retried.
+        /// </summary>
+        private static Task<(IHost Host, int GrpcPort)> StartAsync(bool hostListenerViaUrls = false)
+            => LoopbackPort.StartWithRetryAsync(async () =>
+            {
+                var grpcPort = LoopbackPort.Probe();
+                return (await StartAsync(hostPort: 0, grpcPort, hostListenerViaUrls), grpcPort);
+            });
+
+        /// <summary>The one bound port that is not the gRPC listener's.</summary>
+        private static int HostPort(IHost host, int grpcPort)
+        {
+            var bound = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses
+                .Select(a => BindingAddress.Parse(a).Port)
+                .ToList();
+            bound.Should().Contain(grpcPort);
+            return bound.Where(p => p != grpcPort).Should().ContainSingle(
+                "the host listener must bind beside the code-declared gRPC listener").Which;
+        }
+
+        private static async Task<IHost> StartAsync(int hostPort, int grpcPort, bool hostListenerViaUrls)
         {
             var model = Task.FromResult(Model());
             var executor = Substitute.For<IQueryIntentExecutor>();
@@ -169,15 +186,6 @@ namespace BifrostQL.Server.Test.Grpc
             var response = await client.GetAsync($"http://127.0.0.1:{port}{path}");
             await response.Content.LoadIntoBufferAsync();
             return response;
-        }
-
-        private static int FreePort()
-        {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         private static IDbModel Model()

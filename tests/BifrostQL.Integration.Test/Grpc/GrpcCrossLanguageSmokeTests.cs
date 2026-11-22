@@ -6,6 +6,7 @@ using BifrostQL.Model;
 using BifrostQL.Server;
 using BifrostQL.Server.Grpc;
 using BifrostQL.Sqlite;
+using BifrostQL.Tests.Shared;
 using FluentAssertions;
 using Google.Protobuf.Reflection;
 using Microsoft.AspNetCore.Builder;
@@ -148,51 +149,55 @@ namespace BifrostQL.Integration.Test.Grpc
                 }
 
                 DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
-                var builder = WebApplication.CreateBuilder();
-                builder.WebHost.UseSetting("urls", ""); // the adapter's listener is the sole endpoint
-                builder.Services.AddBifrostEndpoints(o =>
-                    o.AddEndpoint(e =>
-                    {
-                        e.ConnectionString = connString;
-                        e.Provider = "sqlite";
-                        e.Path = GrpcLoopbackFixture.EndpointPath;
-                        e.Metadata = metadataRules;
-                        e.DisableAuth = true;
-                    }));
-                builder.Services.AddSingleton<IBifrostAuthContextFactory, HeaderIdentityFactory>();
-                builder.Services.AddBifrostGrpc(o =>
+                // The probed port is released before Kestrel binds it, so a lost race is retried
+                // on a fresh port.
+                return await LoopbackPort.StartWithRetryAsync(async () =>
                 {
-                    o.Endpoint = GrpcLoopbackFixture.EndpointPath;
-                    // AddBifrostGrpc binds its own h2c listener on BindAddress (loopback) and Port,
-                    // which must be 1..65535: take a free loopback port. Discovered below.
-                    o.Port = FreeLoopbackPort();
+                    var builder = WebApplication.CreateBuilder();
+                    builder.WebHost.UseSetting("urls", ""); // the adapter's listener is the sole endpoint
+                    builder.Services.AddBifrostEndpoints(o =>
+                        o.AddEndpoint(e =>
+                        {
+                            e.ConnectionString = connString;
+                            e.Provider = "sqlite";
+                            e.Path = GrpcLoopbackFixture.EndpointPath;
+                            e.Metadata = metadataRules;
+                            e.DisableAuth = true;
+                        }));
+                    builder.Services.AddSingleton<IBifrostAuthContextFactory, HeaderIdentityFactory>();
+                    builder.Services.AddBifrostGrpc(o =>
+                    {
+                        o.Endpoint = GrpcLoopbackFixture.EndpointPath;
+                        // AddBifrostGrpc binds its own h2c listener on BindAddress (loopback) and Port,
+                        // which must be 1..65535: probe a free loopback port. Discovered below.
+                        o.Port = LoopbackPort.Probe();
+                    });
+
+                    var app = builder.Build();
+                    app.UseRouting();
+                    await app.MapBifrostGrpcAsync();
+                    try
+                    {
+                        await app.StartAsync();
+                    }
+                    catch
+                    {
+                        await app.DisposeAsync();
+                        throw;
+                    }
+
+                    var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
+                    var url = addresses!.Addresses.First();
+                    var authority = new Uri(url).Authority;
+                    _ = keepAlive; // kept open for the app lifetime by the shared-cache connection above
+                    return new RealKestrelHost(app, authority);
                 });
-
-                var app = builder.Build();
-                app.UseRouting();
-                await app.MapBifrostGrpcAsync();
-                await app.StartAsync();
-
-                var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>();
-                var url = addresses!.Addresses.First();
-                var authority = new Uri(url).Authority;
-                _ = keepAlive; // kept open for the app lifetime by the shared-cache connection above
-                return new RealKestrelHost(app, authority);
             }
 
             public async ValueTask DisposeAsync()
             {
                 await _app.StopAsync();
                 await _app.DisposeAsync();
-            }
-
-            private static int FreeLoopbackPort()
-            {
-                var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-                probe.Start();
-                var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-                probe.Stop();
-                return port;
             }
         }
     }

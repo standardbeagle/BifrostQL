@@ -1,10 +1,10 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Grpc;
+using BifrostQL.Tests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -32,14 +32,13 @@ namespace BifrostQL.Server.Test.Grpc
             var certPath = WriteSelfSignedPfx();
             try
             {
-                var port = FreePort();
-                using var host = await StartAsync(o =>
+                var (host, port) = await StartOnAProbedPortAsync(o =>
                 {
-                    o.Port = port;
                     o.RequireTls = true;
                     o.TlsCertificatePath = certPath;
                     o.TlsCertificatePassword = CertPassword;
                 });
+                using var _ = host;
 
                 // Cleartext h2c must NOT be served: a credential sent here would be readable by
                 // anyone on the path.
@@ -66,9 +65,10 @@ namespace BifrostQL.Server.Test.Grpc
             var certPath = WriteSelfSignedPfx();
             try
             {
+                // The certificate load fails before Kestrel binds, so no port race is in play.
                 var act = () => StartAsync(o =>
                 {
-                    o.Port = FreePort();
+                    o.Port = LoopbackPort.Probe();
                     o.RequireTls = true;
                     o.TlsCertificatePath = certPath;
                     o.TlsCertificatePassword = "not-the-password";
@@ -88,18 +88,29 @@ namespace BifrostQL.Server.Test.Grpc
         {
             // The documented default. Pinned so the fix above cannot silently turn every existing
             // h2c deployment into a TLS port.
-            var port = FreePort();
-            using var host = await StartAsync(o =>
-            {
-                o.Port = port;
-                o.RequireTls = false;
-            });
+            var (host, port) = await StartOnAProbedPortAsync(o => o.RequireTls = false);
+            using var _ = host;
 
             (await Record.ExceptionAsync(() => GetAsync($"http://127.0.0.1:{port}/", tls: false)))
                 .Should().BeNull();
         }
 
         // ---- fixtures --------------------------------------------------------
+
+        /// <summary>
+        /// The gRPC adapter needs its port before start (it validates 1..65535), so the port is
+        /// probed and a lost probe-then-bind race is retried on a fresh one.
+        /// </summary>
+        private static Task<(IHost Host, int Port)> StartOnAProbedPortAsync(Action<GrpcWireOptions> configure)
+            => LoopbackPort.StartWithRetryAsync(async () =>
+            {
+                var port = LoopbackPort.Probe();
+                return (await StartAsync(o =>
+                {
+                    o.Port = port;
+                    configure(o);
+                }), port);
+            });
 
         private static async Task<IHost> StartAsync(Action<GrpcWireOptions> configure)
         {
@@ -147,15 +158,6 @@ namespace BifrostQL.Server.Test.Grpc
 
             // Any HTTP status proves the transport worked; only a transport fault throws.
             await client.GetAsync(url, deadline.Token);
-        }
-
-        private static int FreePort()
-        {
-            var probe = new TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         private static string WriteSelfSignedPfx()

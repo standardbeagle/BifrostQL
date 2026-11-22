@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Probe-then-bind with a bounded retry, for listeners that need their port before start. -->
+    <Compile Include="../Shared/LoopbackPort.cs" Link="Shared/LoopbackPort.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/BifrostQL.UI/BifrostQL.UI.csproj" />
   </ItemGroup>
 

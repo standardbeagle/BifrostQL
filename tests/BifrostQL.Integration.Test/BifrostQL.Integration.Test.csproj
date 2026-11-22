@@ -65,6 +65,8 @@
 		<!-- Sample declarative MCP tool document loaded at startup by the DSL-loading
 		     integration test; ships as a living authoring example. -->
 		<None Include="Infrastructure\sample-mcp-tools.json" CopyToOutputDirectory="PreserveNewest" />
+		<!-- Probe-then-bind with a bounded retry, for listeners that need their port before start. -->
+		<Compile Include="..\Shared\LoopbackPort.cs" Link="Shared\LoopbackPort.cs" />
 		<None Include="..\..\packages\@bifrostql\react\src\hooks\__fixtures__\batch-wire-contract.json"
 		      Link="Fixtures\batch-wire-contract.json"
 		      CopyToOutputDirectory="PreserveNewest" />

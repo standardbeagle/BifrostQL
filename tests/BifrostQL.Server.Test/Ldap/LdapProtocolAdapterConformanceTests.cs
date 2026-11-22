@@ -5,6 +5,7 @@ using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Ldap;
 using BifrostQL.Server.Test;
+using BifrostQL.Tests.Shared;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Hosting;
@@ -475,7 +476,9 @@ namespace BifrostQL.Server.Test.Ldap
             var (slots, closed, handshook) = await ProtocolTlsAdmissionHarness.ProbeAsync(
                 async (port, certificate) =>
                 {
-                    var cleartextPort = ProtocolTlsAdmissionHarness.FreePort();
+                    // Probed inside the harness's retried start, so a lost race on either port
+                    // is retried with fresh ones.
+                    var cleartextPort = LoopbackPort.Probe();
                     var host = await new HostBuilder().ConfigureWebHost(web =>
                     {
                         web.UseKestrel();

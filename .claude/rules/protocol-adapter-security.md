@@ -25,7 +25,7 @@ The posture table is in AGENTS.md, "Listener Exposure Posture". Every new front 
 - Cap whole frames by total bytes (`MaxFrameLength`), not just per element. Every size cap counts received bytes, never declared ones.
 - Rate-limit credential handshakes per source (`ProtocolSourceKey.Of`, IP not ip:port) and per account, via a sealed `ProtocolAuthAttemptLimiter` subtype. Refuse before the credential lookup, with text that doesn't depend on whether the account exists.
 - Cap per-session state (e.g. pgwire `MaxPreparedStatements` / `MaxPortals`).
-- Project identity through `AdapterIdentityProjection.TryProject` (raw wire) or `BifrostIdentityGate.Project` (HTTP mounts). An empty user context is not a refusal.
+- Project identity through `AdapterIdentityProjection.TryProjectAsync` (raw wire) or `BifrostIdentityGate.ProjectAsync` (HTTP mounts). Both await the grant resolver; never block on it. An empty user context is not a refusal.
 - Refuse credentials on cleartext transport before reading them. A dev override is default-off with a startup warning; StartTLS accepts no buffered plaintext.
 - Bound searches/reads per request. Clients may only narrow the bounds. Report limits explicitly, never truncate silently, and apply join fan-out bounds per entry.
 - MAC continuation cookies and re-derive their binding from the live request. An invalid cookie is refused, never restarted (`LdapPageCookie`, `ODataContinuationToken`, `GrpcPageCursor`).

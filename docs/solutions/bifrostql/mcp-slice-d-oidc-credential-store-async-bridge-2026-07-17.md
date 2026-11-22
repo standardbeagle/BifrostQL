@@ -123,9 +123,10 @@ scope (and its `SynchronizationContext`) is still live:
    `ConfigureAwait(false)`, but still a real `await`, never
    `.GetAwaiter().GetResult()`.
 3. The resolved principal is projected through the shared
-   `IBifrostAuthContextFactory` **synchronously, exactly once**, and the
-   result is snapshotted into a frozen dictionary
-   (`BifrostMcpAdapter.CreateProjectionProvider`).
+   `IBifrostAuthContextFactory` **exactly once**, and the result is
+   snapshotted into a frozen dictionary
+   (`BifrostMcpAdapter.CreateProjectionProviderAsync`; since the grant
+   resolver became awaited end to end, this projection is awaited too).
 4. The `userContextProvider` seam — still `Func<IDictionary<string,object?>>`,
    unchanged sync contract — is satisfied by a provider that just returns a
    **plain copy of the already-computed frozen dict** on every subsequent

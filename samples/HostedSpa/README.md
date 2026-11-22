@@ -54,7 +54,7 @@ leave the metadata alone.
 | Self-protected role (admins included) | `main.app_users { ...; policy-self-deny: roles }` |
 
 The sidecar workflow endpoints share the same decisions: each asks the scoped
-`IPolicyGate` before the first write, so a caller the policy refuses gets a `403`
+`IPolicyGate` (awaited from `IPolicyGateAccessor`) before the first write, so a caller the policy refuses gets a `403`
 with an empty body up front. The seed ships one login, the first admin
 (`admin@riverside-tennis.example` / `ChangeMe!2024`); `policy-default: deny` means
 an anonymous caller can read `widgets` and nothing else, so sign in through

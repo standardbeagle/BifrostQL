@@ -67,6 +67,8 @@ if (principal is not null)
 var userContext = _authFactory.CreateUserContext(identityCarrier);
 ```
 
+`CreateUserContext` is synchronous, so it cannot run a registered `IGrantResolver` without blocking a thread. While a resolver is registered, the default factory refuses an authenticated principal on this call: it throws `InvalidOperationException`, and your adapter must treat that as a refused login. Bifrost's own adapters project through an internal async path that awaits the resolver.
+
 An authenticated principal yields the full claim projection; an unauthenticated request yields an empty context, which the tenant transformers downstream refuse on tenant-filtered tables. Pass entries your frontend already parsed from the wire through `BifrostRequest.WireContext`. After resolving the model, the engine merges them with `WireContextMerger`: identity-derived keys always win, and identity-owned and security-context keys are excluded even when the identity did not supply them.
 
 Never map claims yourself and never fabricate tenant/user keys in the user context: that is exactly the drift the shared factory exists to prevent.

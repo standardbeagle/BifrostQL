@@ -79,8 +79,9 @@ for a client that shapes its controls from the discovery query.
 
 Clients discover these decisions through `_dbSchema`, `_grants`, and `_can`
 (see [Ask first](#ask-first)); they do not recreate the guards in UI or endpoint
-code. The sample's sidecar workflow endpoints ask the scoped `IPolicyGate`
-before their first write, so REST and GraphQL share one evaluator.
+code. The sample's sidecar workflow endpoints ask the request's `IPolicyGate`
+(awaited from `IPolicyGateAccessor`) before their first write, so REST and GraphQL
+share one evaluator.
 
 ## Declare a policy
 
@@ -372,14 +373,24 @@ API that bypasses policy.
 Application endpoints can ask the same evaluator:
 
 ```csharp
-app.MapPost("/payments", (IPolicyGate policy) =>
+app.MapPost("/payments", async (IPolicyGateAccessor policyGates, HttpContext http) =>
 {
+    var policy = await policyGates.GetAsync(http.RequestAborted);
     policy.Require("public.payments", PolicyAction.Create);
     return Results.Ok();
 });
 ```
 
 This checks table and column policy only; row-level answers come from the data path or `_can`.
+
+`IPolicyGateAccessor` is scoped. `GetAsync` builds the gate on its first call and reuses it for
+the rest of the request. Building it projects the caller, which awaits your grant resolver, and
+loads the endpoint's database model. Both steps are asynchronous and run only when an endpoint
+awaits the accessor, so health checks and static routes never trigger a schema load. A caller
+with no projectable identity gets a gate that refuses everything, and the model is not loaded.
+`GetAsync` throws `InvalidOperationException` when there is no active request, or when more than
+one GraphQL endpoint is registered and the request path names none of them. `IPolicyGate` itself
+is not registered in DI: resolving it there could only block on those two steps.
 
 ## Related
 

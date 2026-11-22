@@ -96,6 +96,17 @@ public class AdapterIdentityProjectionTests
         userContext.Should().BeEmpty();
     }
 
+    [Fact]
+    public void Project_AHostFactoryReturningNull_IsRefused()
+    {
+        var projected = AdapterIdentityProjection.TryProject(
+            new FixedAuthContextFactory(null!),
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+
+        projected.Should().BeFalse("no projection is no identity");
+        userContext.Should().BeEmpty();
+    }
+
     private static ClaimsPrincipal AuthenticatedPrincipal()
         => new(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "u") }, "t"));
 

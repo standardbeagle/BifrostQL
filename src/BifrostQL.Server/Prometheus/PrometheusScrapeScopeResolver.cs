@@ -175,8 +175,10 @@ namespace BifrostQL.Server.Prometheus
             if (principal?.Identity?.IsAuthenticated != true)
                 return null;
 
+            // A null projection is no scoping authority, refused like a missing service identity.
             var carrier = new DefaultHttpContext { User = principal };
-            return UserContexts.Copy(_authFactory.CreateUserContext(carrier));
+            var projected = _authFactory.CreateUserContext(carrier);
+            return projected is null ? null : UserContexts.Copy(projected);
         }
     }
 }

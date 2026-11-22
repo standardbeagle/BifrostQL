@@ -249,10 +249,13 @@ namespace BifrostQL.Mcp
         /// Normalises a factory projection to the case-insensitive user context every surface
         /// reads. A host <see cref="IBifrostAuthContextFactory"/> may return an ordinal dictionary;
         /// one holding keys that differ only in case is refused as
-        /// <see cref="McpIdentityException"/>, in the funnelled set, rather than escaping.
+        /// <see cref="McpIdentityException"/>, in the funnelled set, rather than escaping. So is a
+        /// null projection, which no surface can read.
         /// </summary>
-        internal static IDictionary<string, object?> NormalizeProjection(IDictionary<string, object?> projected)
+        internal static IDictionary<string, object?> NormalizeProjection(IDictionary<string, object?>? projected)
         {
+            if (projected is null)
+                throw new McpIdentityException();
             try
             {
                 return UserContexts.Copy(projected);

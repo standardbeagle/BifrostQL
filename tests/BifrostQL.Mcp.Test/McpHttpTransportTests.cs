@@ -344,6 +344,44 @@ namespace BifrostQL.Mcp.Test
             FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();
         }
 
+        // ---- a host factory returning null is refused with the funnelled refusal ----
+
+        [Fact]
+        public async Task Http_HostFactoryReturnsNull_RefusedAtRevalidation()
+        {
+            var services = new ServiceCollection()
+                .AddSingleton<IBifrostAuthContextFactory>(new FixedAuthContextFactory(() => null!))
+                .BuildServiceProvider();
+            var httpContext = new DefaultHttpContext { RequestServices = services };
+            httpContext.Request.Headers.Authorization = $"Bearer {ValidToken}";
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var identity = new BifrostMcpHttpExtensions.McpHttpSessionIdentity(Auth, accessor, ValidToken);
+
+            var act = () => identity.RevalidateAsync(CancellationToken.None).AsTask();
+
+            await act.Should().ThrowAsync<McpIdentityException>();
+        }
+
+        [Fact]
+        public async Task Stdio_HostFactoryReturnsNull_RefusesAsSanitizedError()
+        {
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(
+                new FixedAuthContextFactory(() => null!), _host.Services, StdioBearer(ValidToken));
+
+            var result = await StdioQueryOrdersAsync(provider);
+            result.IsError.Should().BeTrue();
+            result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("Authentication failed");
+        }
+
+        [Fact]
+        public void ProjectionProvider_HostFactoryReturnsNull_RefusesOnEveryCall_NotAtSetup()
+        {
+            var provider = BifrostMcpAdapter.CreateProjectionProvider(
+                new FixedAuthContextFactory(() => null!), _host.Services, TenantPrincipal("user-a", "tenant-a"));
+
+            FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();
+        }
+
         private sealed class FixedAuthContextFactory : IBifrostAuthContextFactory
         {
             private readonly Func<IDictionary<string, object?>> _create;

@@ -216,6 +216,35 @@ namespace BifrostQL.Server.Test.Prometheus
         }
 
         [Fact]
+        public async Task A_host_factory_returning_null_for_the_service_identity_fails_closed()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("scope-nullctx", new[] { AggregateMode }, Seed);
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
+            var config = PrometheusMetricConfig.FromTable(table);
+            var resolver = new PrometheusScrapeScopeResolver(
+                new PrometheusScrapeSecurityOptions
+                {
+                    BusinessMetricsEnabled = true,
+                    ScrapeCredential = "token",
+                    ServiceIdentity = ServicePrincipal("tenant-a"),
+                },
+                new NullAuthContextFactory());
+
+            // No projection is no scoping authority: excluded like a missing service identity,
+            // never an escaping ArgumentNullException that faults the whole scrape.
+            var scope = resolver.ResolveScope(config, table);
+
+            scope.IsIncluded.Should().BeFalse();
+            scope.UserContext.Should().BeNull();
+            scope.Reason.Should().Contain("service identity");
+        }
+
+        private sealed class NullAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory
+        {
+            public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext context) => null!;
+        }
+
+        [Fact]
         public async Task Per_tenant_mode_with_no_service_identity_fails_closed()
         {
             await using var harness = await ODataRealDbHarness.StartAsync("scope-pt-noid", new[] { PerTenantMode }, Seed);

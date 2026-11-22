@@ -26,7 +26,13 @@ namespace BifrostQL.Server
     {
         public ClaimsPrincipal? User { get; init; }
 
-        public BifrostContext(HttpContext context)
+        /// <summary>
+        /// Keys compare case-insensitively, as every owned-key check and every downstream context
+        /// copy (audit observer, workflow trigger and executor) does. With ordinal keys, raw claim
+        /// types differing only in case, or a raw <c>User</c> claim beside <c>user</c>, made those
+        /// copies throw: the transition committed unaudited and workflows silently did not run.
+        /// </summary>
+        public BifrostContext(HttpContext context) : base(StringComparer.OrdinalIgnoreCase)
         {
             User = context.User;
             if (User == null) return;
@@ -51,9 +57,12 @@ namespace BifrostQL.Server
             // taken from a raw claim, even when the mapper left it empty: the mapper omits
             // tenant_id for an identity with no tenant, and a raw tenant_id claim filling that
             // slot would scope the caller to a tenant the identity projection never asserted.
+            // Claim types differing only in case are one key (the context is case-insensitive):
+            // their values merge under the first casing seen. A key already present (a mapper
+            // key, or "user") is never overwritten by a raw claim in another case.
             this["user"] = User;
             var ownedKeys = mapper.OwnedKeyNames;
-            foreach (var g in User.Claims.GroupBy(c => c.Type))
+            foreach (var g in User.Claims.GroupBy(c => c.Type, StringComparer.OrdinalIgnoreCase))
             {
                 if (!ContainsKey(g.Key) && !ownedKeys.Contains(g.Key))
                     this[g.Key] = g.Select(c => c.Value).ToArray();

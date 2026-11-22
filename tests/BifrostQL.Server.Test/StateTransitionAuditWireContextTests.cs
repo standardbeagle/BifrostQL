@@ -106,6 +106,31 @@ public sealed class StateTransitionAuditWireContextTests : IAsyncLifetime
             "a committed transition is always audited");
     }
 
+    [Theory]
+    [InlineData("groups", "Groups")]
+    [InlineData("User", null)]
+    public async Task RawClaimTypesDifferingOnlyInCase_DoNotSuppressTheAuditRow(string claimType, string? otherCasing)
+    {
+        // Raw principal claims land in the user context under their claim type. Two types that
+        // differ only in case (groups/Groups), or a raw "User" claim beside the context's "user"
+        // principal, were two ordinal keys; the audit observer's case-insensitive copy threw on
+        // them, and the committed transition went unaudited.
+        await StartAsync();
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, "7"), new(ClaimTypes.Role, "admin"), new(claimType, "a"),
+        };
+        if (otherCasing is not null)
+            claims.Add(new Claim(otherCasing, "b"));
+
+        using var reply = await SendTransitionAsync(new Dictionary<string, object?>(), Principal(claims.ToArray()));
+
+        Errors(reply).Should().BeEmpty();
+        (await ScalarAsync("SELECT status FROM tickets WHERE id = 1")).Should().Be("closed");
+        (await ScalarAsync("SELECT count(*) FROM audit_log")).Should().Be(1L,
+            "a committed transition is always audited");
+    }
+
     // ---- host ----
 
     private async Task StartAsync(params string[] extraMetadata)

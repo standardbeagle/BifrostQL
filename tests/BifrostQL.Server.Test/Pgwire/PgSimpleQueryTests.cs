@@ -396,6 +396,29 @@ namespace BifrostQL.Server.Test.Pgwire
             ok.HasError.Should().BeFalse();
         }
 
+        [Theory]
+        [InlineData("\u0663")]          // ARABIC-INDIC DIGIT THREE
+        [InlineData("\u0663.5")]        // decimal branch
+        [InlineData("\uFF13")]          // FULLWIDTH DIGIT THREE
+        public async Task NonAsciiDigitLiteral_ReturnsSyntaxError_NotInternalError(string literal)
+        {
+            // char.IsDigit admitted Unicode Nd digits into the number reader, whose long/decimal
+            // Parse then threw FormatException: XX000 plus a stack-trace warning, not a 42601.
+            var executor = FakeExecutor(UsersTable(),
+                new IReadOnlyDictionary<string, object?>[]
+                {
+                    new Dictionary<string, object?> { ["id"] = 1, ["name"] = "alice", ["active"] = true },
+                }, out _);
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            await fixture.Client.SendQueryAsync($"SELECT id FROM users WHERE id = {literal}");
+            var errored = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            errored.HasError.Should().BeTrue();
+            errored.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+            errored.TransactionStatus.Should().Be('I');
+        }
+
         [Fact]
         public async Task OutOfSubsetFeature_ReturnsFeatureNotSupported_AndSessionSurvives()
         {

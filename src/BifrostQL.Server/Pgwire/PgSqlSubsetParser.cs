@@ -145,12 +145,14 @@ namespace BifrostQL.Server.Pgwire
                     tokens.Add(ReadQuotedIdent(sql, ref i));
                     continue;
                 }
-                if (c == '$' && i + 1 < n && char.IsDigit(sql[i + 1]))
+                if (c == '$' && i + 1 < n && char.IsAsciiDigit(sql[i + 1]))
                 {
                     tokens.Add(ReadParameter(sql, ref i));
                     continue;
                 }
-                if (char.IsDigit(c) || (c == '.' && i + 1 < n && char.IsDigit(sql[i + 1])))
+                // ASCII digits only: char.IsDigit admits every Unicode Nd digit (U+0663, U+FF13),
+                // which the invariant number grammar then cannot parse.
+                if (char.IsAsciiDigit(c) || (c == '.' && i + 1 < n && char.IsAsciiDigit(sql[i + 1])))
                 {
                     tokens.Add(ReadNumber(sql, ref i));
                     continue;
@@ -232,7 +234,7 @@ namespace BifrostQL.Server.Pgwire
             i++; // '$'
             var start = i;
             var n = sql.Length;
-            while (i < n && char.IsDigit(sql[i])) i++;
+            while (i < n && char.IsAsciiDigit(sql[i])) i++;
             var text = sql[start..i];
             if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var ordinal)
                 || ordinal < 1 || ordinal > PgWireProtocol.MaxParameterOrdinal)
@@ -245,7 +247,7 @@ namespace BifrostQL.Server.Pgwire
             var start = i;
             var n = sql.Length;
             var seenDot = false;
-            while (i < n && (char.IsDigit(sql[i]) || (sql[i] == '.' && !seenDot)))
+            while (i < n && (char.IsAsciiDigit(sql[i]) || (sql[i] == '.' && !seenDot)))
             {
                 if (sql[i] == '.') seenDot = true;
                 i++;
@@ -254,20 +256,22 @@ namespace BifrostQL.Server.Pgwire
             // Cast one branch to object so the conditional's common type does not
             // coerce the integer branch to decimal (which would defeat the `is long`
             // check in LIMIT/OFFSET parsing).
+            // TryParse with an explicit style and culture (invariant 5): an out-of-range or
+            // malformed literal is CLIENT input, so it is a clean syntax_error (42601), never an
+            // escaped OverflowException/FormatException mapped to internal_error. The raw value is
+            // not echoed back (invariant 3).
             object literal;
-            try
+            if (seenDot)
             {
-                literal = seenDot
-                    ? decimal.Parse(text, CultureInfo.InvariantCulture)
-                    : (object)long.Parse(text, CultureInfo.InvariantCulture);
+                if (!decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var d))
+                    throw Reject("numeric literal is out of range.");
+                literal = d;
             }
-            catch (OverflowException)
+            else
             {
-                // An out-of-range numeric literal is malformed CLIENT input, not a
-                // server fault: raise a clean syntax_error (42601) so it never escapes
-                // as an OverflowException mapped to internal_error. The raw value is not
-                // echoed back (invariant 3); full detail stays server-side.
-                throw Reject("numeric literal is out of range.");
+                if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var l))
+                    throw Reject("numeric literal is out of range.");
+                literal = l;
             }
             return new Tok(TokKind.Number, text, literal);
         }

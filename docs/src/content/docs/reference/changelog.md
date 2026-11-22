@@ -34,6 +34,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`SecretScrubber` masks single-quoted and doubled-quote-escaped `Password`/`Pwd`/`User Id`/`Uid` values.** `Password='ab;cd'` used to leak `cd'`.
 - **A history row's `entity_id` stores key values as their column type.** A write addressed by `_primaryKey: ["5"]` recorded `{"id":"5"}` while the insert recorded `{"id":5}`, so a right-to-erasure purge by the typed key left the string-keyed rows, and their before-images, behind. Rows already written with string keys are not migrated.
 - **A frontend that forwards client context can no longer set the model's `user-audit-key` and author a write.** The tenant key was identity-owned; the configured actor key was not, so a caller whose identity lacked it could name any author.
+- **Wire context can no longer set `tenant_id` when `tenant-context-key` names another key, or suppress the state-transition audit row with a key that differs only in case (`User`).** The case twin made the audit observer's copy throw; the error was swallowed, so the transition committed unaudited.
+- **CLI commands never print a provider's connection-string parse error.** A password containing an unquoted `;` was quoted back (`Keyword not supported: 'cd'`) by `config-validate`, `test`, `doctor` and `watch` (every poll). Unhandled CLI exceptions are reported by type only, and Postgres/MySQL failures in `schema`, `export` and `config-generate` no longer crash.
 
 ### Breaking — fifth review pass
 
@@ -51,6 +53,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **A write whose `user-audit-key` claim holds more than one value is refused.** Raw principal claims such as `sub` are copied as string arrays, so the actor bound an array or recorded `"System.String[]"`. Use `user_id`; the docs used `sub` and are corrected.
 - **A metadata rule whose selector starts with `:` and is not `:root` (for example `:auth`) is refused at model load.** Such rules matched nothing and were dropped silently, typos included. The shipped Host `appsettings.json` loses its inert `:auth { enable-auth: false; }` rules.
 - **`MetadataValidator.ValidateTableMetadata`, `ValidateColumnMetadata` and `ValidateDatabaseMetadata` are removed.** Nothing called them but their tests, and they had drifted from the load-time gate. Nothing public replaces them; `ModelConfigValidator` runs at model load.
+- **A raw `tenant_id` token claim no longer supplies the tenant when the identity has none.** It filled the key the OIDC mapper had chosen not to project. Project the tenant through an `IOidcClaimMapper`, or name the claim with `tenant-context-key`.
+- **`bifrost config-validate` reports a malformed connection string with constant text instead of naming the rejected keyword.**
 
 ### Fixed — fifth review pass
 
@@ -82,6 +86,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Computed-column providers no longer run for the extra rows a nested paged collection fetches only to keep its total.**
 - **SQL Server pivot labels equal only under accent, kana or width folding use the CASE WHEN form** instead of failing with error 8156 under an accent-insensitive collation.
 - **Docs: `tenant-context-key` names the user-context key the tenant filter reads.** It does not rename the mapped `tenant_id`; a missing or multi-valued claim is refused. Under `DisableAuth` an unauthenticated write stamps NULL actors; no placeholder identity is assigned.
+- **A host-supplied `JsonElement` under `user-audit-key` is refused when it is an array or object and stamped as its value when it is a scalar.** Every `JsonElement` reached the driver as a struct it could not bind.
+- **The state-transition audit row records the tenant from the model's `tenant-context-key`.** It read a hard-coded `tenant_id`.
+- **SQL Server pivots with non-ASCII labels no longer fail with error 8156 under invariant globalization.** Culture-aware folding is unavailable there, so a label set that may collide under some collation uses the CASE WHEN form.
+- **`config-validate` and `doctor` name a wrong-shaped config file (non-object root or section, non-string metadata entry)** instead of calling it invalid JSON; `doctor` crashed on it.
 
 ### Security — silent fallbacks
 

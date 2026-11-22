@@ -1,3 +1,4 @@
+using System.Globalization;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
@@ -127,7 +128,8 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
     private static async Task<bool> IsDistinctActorAsync(
         IDbTable table, Dictionary<string, object?> data, MutationTransformContext context, string authorColumn)
     {
-        var actor = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString();
+        var actor = Convert.ToString(
+            AuditMutationTransformer.ResolveActor(context.Model, context.UserContext), CultureInfo.InvariantCulture);
         if (string.IsNullOrWhiteSpace(actor))
             return false;
 
@@ -142,19 +144,28 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             return false;
 
         var row = await context.LoadRowForUpdateAsync(table, new[] { authorColumn }, key);
-        var author = row is not null && row.TryGetValue(authorColumn, out var authorValue) ? authorValue?.ToString() : null;
+        var author = row is not null && row.TryGetValue(authorColumn, out var authorValue)
+            ? Convert.ToString(authorValue is DBNull ? null : authorValue, CultureInfo.InvariantCulture)
+            : null;
         return !string.IsNullOrWhiteSpace(author) && !SameActor(author, actor);
     }
 
     /// <summary>
-    /// Whether two actor spellings name one person. Uuids compare as values and everything
-    /// else ignoring case: an IdP may issue the subject in another case than the column reads
-    /// back, and erring toward "same" refuses a transition rather than allowing self-approval.
+    /// Whether two actor spellings name one person. Uuids and numbers compare as values and
+    /// everything else ignoring case: an IdP may issue the subject in another case than the
+    /// column reads back, a numeric claim may be 42.0 where the column reads back 42, and
+    /// erring toward "same" refuses a transition rather than allowing self-approval. Both sides
+    /// are invariant-culture text, so numbers parse with the invariant culture.
     /// </summary>
     internal static bool SameActor(string author, string actor)
-        => Guid.TryParse(author, out var authorId) && Guid.TryParse(actor, out var actorId)
-            ? authorId == actorId
-            : string.Equals(author.Trim(), actor.Trim(), StringComparison.OrdinalIgnoreCase);
+    {
+        if (Guid.TryParse(author, out var authorId) && Guid.TryParse(actor, out var actorId))
+            return authorId == actorId;
+        if (decimal.TryParse(author, NumberStyles.Number, CultureInfo.InvariantCulture, out var authorNumber)
+            && decimal.TryParse(actor, NumberStyles.Number, CultureInfo.InvariantCulture, out var actorNumber))
+            return authorNumber == actorNumber;
+        return string.Equals(author.Trim(), actor.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool TryGetValue(
         IReadOnlyDictionary<string, object?>? data,

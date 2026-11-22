@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
@@ -39,7 +41,8 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
             "DROP TABLE IF EXISTS claims; " +
             "CREATE TABLE claims (id INTEGER PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, created_by TEXT NULL); " +
             "INSERT INTO claims (id, title, status, created_by) VALUES (1, 'by alice', 'submitted', 'alice'), " +
-            "(2, 'legacy', 'submitted', NULL), (3, 'by a guid', 'submitted', '0f8fad5b-d9cb-469f-a165-70867728950e');",
+            "(2, 'legacy', 'submitted', NULL), (3, 'by a guid', 'submitted', '0f8fad5b-d9cb-469f-a165-70867728950e'), " +
+            "(4, 'by employee 42', 'submitted', '42'), (5, 'by employee 42.5', 'submitted', '42.5');",
             _keepAlive);
         await cmd.ExecuteNonQueryAsync();
     }
@@ -70,6 +73,55 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
         await upperGuid.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
         (await StatusAsync(1)).Should().Be("submitted");
         (await StatusAsync(3)).Should().Be("submitted");
+    }
+
+    [Fact]
+    public async Task Author_AsANonIntegerJsonNumberClaim_IsRefused()
+    {
+        // A host auth context can carry the actor as a JSON number. 42.0 used to become the
+        // decimal 42.0, whose text "42.0" differed from the stored author "42", so the author
+        // approved their own row. A JSON number that is not an integer is not an actor.
+        var fractional = () => Approve(4, JsonDocument.Parse("42.0").RootElement.Clone());
+        var overflowing = () => Approve(4, JsonDocument.Parse("1e400").RootElement.Clone());
+
+        await fractional.Should().ThrowAsync<BifrostExecutionError>().WithMessage(AuditMutationTransformer.NonIntegerActorMessage);
+        await overflowing.Should().ThrowAsync<BifrostExecutionError>().WithMessage(AuditMutationTransformer.NonIntegerActorMessage);
+        (await StatusAsync(4)).Should().Be("submitted");
+    }
+
+    [Fact]
+    public async Task Author_AsANumericClaim_IsTheAuthorWhateverItsSpelling()
+    {
+        // A host-supplied CLR number names the author whether it is 42L or 42.0m.
+        var asDecimal = () => Approve(4, 42.0m);
+        var asLong = () => Approve(4, 42L);
+
+        await asDecimal.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        await asLong.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        (await StatusAsync(4)).Should().Be("submitted");
+    }
+
+    [Fact]
+    public async Task Author_AsANumericClaim_ComparesUnderTheInvariantCulture()
+    {
+        // Under de-DE 42.5m formats as "42,5", which differed from the stored "42.5".
+        var previous = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+        try
+        {
+            42.5m.ToString().Should().Be("42,5", "control: the ambient culture formats differently");
+            var byAuthor = () => Approve(5, 42.5m);
+
+            await byAuthor.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+            (await StatusAsync(5)).Should().Be("submitted");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+
+        await Approve(5, 43L);
+        (await StatusAsync(5)).Should().Be("approved", "control: a different actor may approve");
     }
 
     [Fact]
@@ -110,7 +162,7 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
     private static Task<IDbModel> LoadAsync(string rule)
         => new DbModelLoader(new SqliteDbConnFactory(ConnString), new MetadataLoader(new[] { rule })).LoadAsync();
 
-    private static async Task Approve(int id, string? userId)
+    private static async Task Approve(int id, object? userId)
     {
         var context = new Dictionary<string, object?> { ["roles"] = new[] { "manager" } };
         if (userId is not null)

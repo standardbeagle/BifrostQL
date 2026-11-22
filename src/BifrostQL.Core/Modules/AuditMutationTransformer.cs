@@ -126,12 +126,17 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         // A host auth context can carry a JSON token claim as a JsonElement, a struct that is not
         // IEnumerable: an array or object passed the check above, and every JsonElement reached
         // the provider as the struct, which it cannot bind (a database error, not this refusal).
-        // A JSON scalar is one author and is stamped as its CLR value.
+        // A JSON scalar is one author and is stamped as its CLR value. A number must be an
+        // integer: 42.0 read as the decimal 42.0, whose text differs from a stored author 42
+        // (the separation-of-duties compare passed for the author), and a number past
+        // decimal's range threw FormatException out of GetDecimal.
         if (value is System.Text.Json.JsonElement element)
             return element.ValueKind switch
             {
                 System.Text.Json.JsonValueKind.String => element.GetString(),
-                System.Text.Json.JsonValueKind.Number => element.TryGetInt64(out var integer) ? (object)integer : element.GetDecimal(),
+                System.Text.Json.JsonValueKind.Number => element.TryGetInt64(out var integer)
+                    ? (object)integer
+                    : throw new BifrostExecutionError(NonIntegerActorMessage),
                 System.Text.Json.JsonValueKind.True => true,
                 System.Text.Json.JsonValueKind.False => false,
                 System.Text.Json.JsonValueKind.Null => null,
@@ -148,6 +153,14 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
     public const string NonScalarActorMessage =
         "The claim named by user-audit-key is not a single value. " +
         "Name a claim the identity mapper writes, such as user_id.";
+
+    /// <summary>
+    /// The refusal for a <c>user-audit-key</c> claim that is a JSON number but not a 64-bit
+    /// integer (<c>42.0</c>, <c>4.2</c>, <c>1e400</c>). Constant text: it never echoes the claim.
+    /// </summary>
+    public const string NonIntegerActorMessage =
+        "The claim named by user-audit-key is a number that is not an integer. " +
+        "Name a claim that holds the actor as text or a whole number.";
 
     /// <summary>
     /// The actor behind a mutation: the user-context claim named by the model-level

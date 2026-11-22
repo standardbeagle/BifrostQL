@@ -114,7 +114,7 @@ public sealed class ServeCommand : ICommand
             && System.Net.IPAddress.IsLoopback(ip);
     }
 
-    private static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
+    internal static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
     {
         try
         {
@@ -222,7 +222,9 @@ public sealed class ServeCommand : ICommand
             return null;
 
         var json = await File.ReadAllTextAsync(path);
-        var section = ConfigFileReader.ReadBifrostSection(json);
+        // The connection string comes from the caller (flag or positional args), but the file is
+        // still served, so it passes every check config-validate applies, connectionStrings too.
+        var section = ConfigFileReader.ReadServeConfig(json).Section;
         section.ConfigFilePath = Path.GetFullPath(path);
         return section;
     }
@@ -256,5 +258,5 @@ public sealed class ServeCommand : ICommand
         output.WriteInfo("  Or create a bifrostql.json with 'bifrost init'");
     }
 
-    private readonly record struct ResolvedConnection(string ConnectionString, BifrostConfigSection? ConfigSection);
+    internal readonly record struct ResolvedConnection(string ConnectionString, BifrostConfigSection? ConfigSection);
 }

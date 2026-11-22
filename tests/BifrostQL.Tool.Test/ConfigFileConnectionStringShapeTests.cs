@@ -60,6 +60,28 @@ public sealed class ConfigFileConnectionStringShapeTests : IDisposable
         root.GetProperty("error").GetString().Should().ContainEquivalentOf(expected);
     }
 
+    [Theory]
+    [MemberData(nameof(WrongShapes))]
+    public async Task Serve_ExplicitConnectionString_WrongShapedConfigFile_IsReported(string configJson, string expected)
+    {
+        // --connection-string X --config f.json takes the connection from the flag but still
+        // reads the file; it must refuse every shape config-validate refuses, not only the
+        // BifrostQL section's.
+        var configPath = await WriteConfigAsync(configJson);
+        var writer = new StringWriter();
+        var config = ToolConfig.Parse(new[]
+        {
+            "serve", "--connection-string", "Data Source=serve-shape.db", "--config", configPath, "--json",
+        });
+
+        var resolved = await ServeCommand.ResolveConnectionString(config, new OutputFormatter(writer, jsonMode: true));
+
+        resolved.Should().BeNull("a wrong-shaped config file is refused, not served");
+        var root = JsonDocument.Parse(writer.ToString()).RootElement;
+        root.GetProperty("success").GetBoolean().Should().BeFalse();
+        root.GetProperty("error").GetString().Should().ContainEquivalentOf(expected);
+    }
+
     private async Task<string> WriteConfigAsync(string configJson)
     {
         var configPath = Path.Combine(_dir, "bifrostql.json");

@@ -196,16 +196,79 @@ internal static class ConfigFileReader
     /// rules come from the runtime reader <see cref="MetadataLoader.ReadMetadataRules"/>.
     /// </summary>
     public static IReadOnlyList<string> ReadMetadataRules(string json)
-    {
-        using (var doc = ConfigFileReader.ParseJson(json))
-            GetBifrostSection(doc.RootElement);
+        => ReadMetadataRules(BifrostSection(ReadConfigFile(json)));
 
-        IConfigurationRoot configuration;
+    /// <summary>
+    /// The connection string the server's <c>GetConnectionString(key)</c> reads from this file.
+    /// Keys match case-insensitively, as on the server.
+    /// </summary>
+    public static string? ReadConnectionString(string json, string key = "bifrost")
+    {
+        var file = ReadConfigFile(json);
+        foreach (var kind in KindsAt(file.Root, "ConnectionStrings"))
+        {
+            if (kind is not (System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Null))
+                throw new ConfigFileShapeException($"Config file connectionStrings section must be a JSON object, found {kind}.");
+        }
+        foreach (var kind in KindsAt(file.Root, "ConnectionStrings", key))
+        {
+            if (kind is not (System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Null))
+                throw new ConfigFileShapeException($"Config file connectionStrings.{key} must be a string, found {kind}.");
+        }
+        return file.Configuration.GetConnectionString(key);
+    }
+
+    public static BifrostConfigSection ReadBifrostSection(string json)
+    {
+        var section = BifrostSection(ReadConfigFile(json));
+        if (section is null)
+            return new BifrostConfigSection();
+
+        bool disableAuth;
         try
         {
-            configuration = new ConfigurationBuilder()
-                .AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
-                .Build();
+            disableAuth = section.GetValue("DisableAuth", true);
+        }
+        // The binder's message can quote the value; this one names the path only.
+        catch (InvalidOperationException)
+        {
+            throw new ConfigFileShapeException("Config file BifrostQL:DisableAuth must be true or false.");
+        }
+
+        return new BifrostConfigSection
+        {
+            Path = section["Path"],
+            Playground = section["Playground"],
+            DisableAuth = disableAuth,
+            Metadata = ReadMetadataRules(section),
+        };
+    }
+
+    // The bound configuration every value is read from, and the parsed JSON, kept only to name
+    // the JSON kind of a mis-shaped element (configuration reads a number as its text).
+    private sealed record ConfigFile(IConfigurationRoot Configuration, System.Text.Json.JsonElement Root);
+
+    /// <summary>
+    /// Binds the file the way the server's <c>AddJsonFile</c> does: keys compare
+    /// case-insensitively, and keys that differ only in case are refused. Malformed JSON throws
+    /// <see cref="System.Text.Json.JsonException"/>; a non-object root or a refused binding throws
+    /// <see cref="ConfigFileShapeException"/>.
+    /// </summary>
+    private static ConfigFile ReadConfigFile(string json)
+    {
+        System.Text.Json.JsonElement root;
+        using (var doc = ParseJson(json))
+            root = doc.RootElement.Clone();
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+            throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
+
+        try
+        {
+            return new ConfigFile(
+                new ConfigurationBuilder()
+                    .AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
+                    .Build(),
+                root);
         }
         // The JSON parsed above, so this is a binding refusal such as a duplicate key. Its
         // message names the key, never a value.
@@ -213,83 +276,56 @@ internal static class ConfigFileReader
         {
             throw new ConfigFileShapeException($"Config file cannot be bound as configuration: {ex.Message}");
         }
+    }
 
+    /// <summary>
+    /// The JSON kinds of every element at <paramref name="path"/>, each segment matched
+    /// case-insensitively as configuration matches keys. Two objects whose names differ only in
+    /// case are one configuration section, so both are checked.
+    /// </summary>
+    private static IEnumerable<System.Text.Json.JsonValueKind> KindsAt(System.Text.Json.JsonElement element, params string[] path)
+    {
+        if (path.Length == 0)
+        {
+            yield return element.ValueKind;
+            yield break;
+        }
+        if (element.ValueKind != System.Text.Json.JsonValueKind.Object)
+            yield break;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, path[0], StringComparison.OrdinalIgnoreCase))
+                continue;
+            foreach (var kind in KindsAt(property.Value, path[1..]))
+                yield return kind;
+        }
+    }
+
+    // The BifrostQL section, or null when the file has none.
+    private static IConfigurationSection? BifrostSection(ConfigFile file)
+    {
+        foreach (var kind in KindsAt(file.Root, "BifrostQL"))
+        {
+            if (kind is not (System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Null))
+                throw new ConfigFileShapeException($"Config file BifrostQL section must be a JSON object, found {kind}.");
+        }
+        var section = file.Configuration.GetSection("BifrostQL");
+        return section.Exists() ? section : null;
+    }
+
+    private static IReadOnlyList<string> ReadMetadataRules(IConfigurationSection? bifrostSection)
+    {
+        if (bifrostSection is null)
+            return Array.Empty<string>();
         try
         {
-            return MetadataLoader.ReadMetadataRules(configuration.GetSection("BifrostQL:Metadata"));
+            return MetadataLoader.ReadMetadataRules(bifrostSection.GetSection("Metadata"));
         }
         // The runtime reader's shape refusal; its message names the configuration path only.
         catch (InvalidOperationException ex)
         {
             throw new ConfigFileShapeException(ex.Message);
         }
-    }
-
-    public static string? ReadConnectionString(string json, string key = "bifrost")
-    {
-        using var doc = ConfigFileReader.ParseJson(json);
-        var root = doc.RootElement;
-        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
-            throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
-
-        if (!root.TryGetProperty("connectionStrings", out var connSection) &&
-            !root.TryGetProperty("ConnectionStrings", out connSection))
-        {
-            return null;
-        }
-
-        if (connSection.ValueKind != System.Text.Json.JsonValueKind.Object)
-            throw new ConfigFileShapeException($"Config file connectionStrings section must be a JSON object, found {connSection.ValueKind}.");
-
-        if (!connSection.TryGetProperty(key, out var value) || value.ValueKind == System.Text.Json.JsonValueKind.Null)
-            return null;
-
-        if (value.ValueKind != System.Text.Json.JsonValueKind.String)
-            throw new ConfigFileShapeException($"Config file connectionStrings.{key} must be a string, found {value.ValueKind}.");
-
-        return value.GetString();
-    }
-
-    public static BifrostConfigSection ReadBifrostSection(string json)
-    {
-        using var doc = ConfigFileReader.ParseJson(json);
-        var root = doc.RootElement;
-
-        var section = GetBifrostSection(root);
-        if (section == null)
-            return new BifrostConfigSection();
-
-        var result = new BifrostConfigSection();
-
-        if (section.Value.TryGetProperty("path", out var path) ||
-            section.Value.TryGetProperty("Path", out path))
-            result.Path = path.GetString();
-
-        if (section.Value.TryGetProperty("playground", out var playground) ||
-            section.Value.TryGetProperty("Playground", out playground))
-            result.Playground = playground.GetString();
-
-        if (section.Value.TryGetProperty("disableAuth", out var disableAuth) ||
-            section.Value.TryGetProperty("DisableAuth", out disableAuth))
-            result.DisableAuth = disableAuth.GetBoolean();
-
-        result.Metadata = ReadMetadataRules(json);
-
-        return result;
-    }
-
-    private static System.Text.Json.JsonElement? GetBifrostSection(System.Text.Json.JsonElement root)
-    {
-        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
-            throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
-        if (root.TryGetProperty("bifrostQL", out var section) ||
-            root.TryGetProperty("BifrostQL", out section))
-        {
-            if (section.ValueKind != System.Text.Json.JsonValueKind.Object)
-                throw new ConfigFileShapeException($"Config file BifrostQL section must be a JSON object, found {section.ValueKind}.");
-            return section;
-        }
-        return null;
     }
 }
 

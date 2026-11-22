@@ -139,6 +139,64 @@ public sealed class ConfigValidateCommandTests : IDisposable
     }
 
     [Fact]
+    public void KeysInAnotherCase_AreReadLikeTheServerReadsThem()
+    {
+        // The server reads configuration keys case-insensitively. The CLI looked up exact
+        // spellings, so these were reported missing or read as defaults.
+        const string config = """
+            {
+              "connectionstrings": { "Bifrost": "Data Source=lower.db" },
+              "BIFROSTQL": {
+                "PATH": "/gql",
+                "playGround": "/pg",
+                "disableauth": false,
+                "METADATA": [ "dbo.orders { soft-delete: deleted_at }" ]
+              }
+            }
+            """;
+
+        ConfigFileReader.ReadConnectionString(config).Should().Be("Data Source=lower.db");
+        var section = ConfigFileReader.ReadBifrostSection(config);
+        section.Path.Should().Be("/gql");
+        section.Playground.Should().Be("/pg");
+        section.DisableAuth.Should().BeFalse();
+        section.Metadata.Should().Equal("dbo.orders { soft-delete: deleted_at }");
+    }
+
+    [Theory]
+    [InlineData("""{ "ConnectionStrings": { "bifrost": "Data Source=a.db", "Bifrost": "Data Source=b.db" } }""")]
+    [InlineData("""{ "ConnectionStrings": { "bifrost": "Data Source=a.db" }, "connectionStrings": { "Bifrost": "Data Source=b.db" } }""")]
+    public void DuplicateCaseKeys_AreRefusedAsTheServerRefusesThem(string config)
+    {
+        // The configuration provider refuses keys that differ only in case; the CLI picked one.
+        FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+            .Should().Throw<ConfigFileShapeException>().WithMessage("*duplicate key*")
+            .Which.Message.Should().NotContain("a.db").And.NotContain("b.db");
+    }
+
+    [Fact]
+    public void DuplicateCaseKeysInTheBifrostSection_AreRefused()
+    {
+        FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection("""{ "BifrostQL": { "Path": "/a", "path": "/b" } }"""))
+            .Should().Throw<ConfigFileShapeException>().WithMessage("*duplicate key*");
+    }
+
+    [Theory]
+    [InlineData("""{ "connectionstrings": 5 }""", "connectionStrings section must be a JSON object, found Number")]
+    [InlineData("""{ "ConnectionStrings": { "BIFROST": { "a": "b" } } }""", "connectionStrings.bifrost must be a string, found Object")]
+    [InlineData("""{ "ConnectionStrings": { "bifrost": [ "a" ] } }""", "connectionStrings.bifrost must be a string, found Array")]
+    [InlineData("""{ "ConnectionStrings": { "other": "x" }, "connectionStrings": { "Bifrost": 5 } }""", "connectionStrings.bifrost must be a string, found Number")]
+    public void MisShapedConnectionStrings_AreReportedAsShapeErrors(string config, string expected)
+        => FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+            .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
+
+    [Fact]
+    public void NonBooleanDisableAuth_IsAShapeError_ThatDoesNotQuoteTheValue()
+        => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection("""{ "BifrostQL": { "DisableAuth": "maybe-secret" } }"""))
+            .Should().Throw<ConfigFileShapeException>().WithMessage("*BifrostQL:DisableAuth*")
+            .Which.Message.Should().NotContain("maybe-secret");
+
+    [Fact]
     public async Task NumberMetadataRule_IsReportedAsTheServerReportsIt()
     {
         // Configuration binds a JSON number as its text, so the server reads "42" as a rule and

@@ -47,6 +47,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`type: url` columns in the generated detail view are links only for absolute http/https URLs.** HTML encoding left `javascript:` and `data:` schemes intact, so a stored value could run script when clicked. Other values render as plain text.
 - **`SecretScrubber` masks single-quoted and doubled-quote-escaped `Password`/`Pwd`/`User Id`/`Uid` values.** `Password='ab;cd'` used to leak `cd'`.
 - **A history row's `entity_id` stores key values as their column type.** A write addressed by `_primaryKey: ["5"]` recorded `{"id":"5"}` while the insert recorded `{"id":5}`, so a right-to-erasure purge by the typed key left the string-keyed rows, and their before-images, behind. Rows already written with string keys are not migrated.
+- **A frontend that forwards client context can no longer set the model's `user-audit-key` and author a write.** The tenant key was identity-owned; the configured actor key was not, so a caller whose identity lacked it could name any author.
 
 ### Breaking — fifth review pass
 
@@ -57,10 +58,13 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Malformed `prefix-groups` entries, and prefixes that match no table, fail model load.** They were skipped silently.
 - **`soft-delete-by` records the `user-audit-key` actor, the same value audit and history record.** It read a hardcoded `user_id` claim, so with `user-audit-key: email` the three disagreed. A host relying on the old claim adds `:root { user-audit-key: user_id }`; without it, model load fails (see below). `SoftDeleteMutationTransformer.UserIdContextKey` is removed.
 - **State transitions and workflow triggers identify the row by its full key and the table by `schema.name`.** Transitions carried only the first key column, so composite-key rows were indistinguishable, and triggers matched the bare table name, so a workflow for `employee` fired for every schema. Triggers accept `schema.name`; a bare name matches only when it is unique. Trigger inputs replace `entityId` with `entityKey`, `entity` and `table` are schema-qualified, and the transition `audit_log` row's `entity_id` is the key as JSON. `StateTransitionInfo` carries the resolved table and `EntityKey`.
-- **Model load fails when `soft-delete-by` or `populate: created-by`/`updated-by`/`deleted-by` is declared without a model-level `user-audit-key`.** Those columns were silently never stamped. The legacy `audit-user-key` was accepted but never read; the error names it and asks for the rename. The shipped Host `appsettings.json` used it and is fixed.
+- **Model load fails when `soft-delete-by` or `populate: created-by`/`updated-by`/`deleted-by` is declared without a model-level `user-audit-key`.** Those columns were silently never stamped. The legacy `audit-user-key` was accepted but never read; it is now refused (see below). The shipped Host `appsettings.json` used it and is fixed.
 - **`<table>Pivot` returns at most `max-query-rows - 1` rows; the last row fetched is the truncation check, as on every other capped surface.** It fetched one row past the ceiling, and a ceiling of `int.MaxValue` overflowed into a negative FETCH/LIMIT.
 - **Model load refuses the retired `audit-user-key` and names its replacement, `user-audit-key`.** It was accepted and never read, so a model setting only it recorded a null actor in audit columns, history and state transitions.
 - **`bifrost config-validate` parses with the server's metadata loader and, given `--connection-string`, runs model-load validation.** Its own parser disagreed with the runtime (comma selectors, `;` inside backticks, duplicate keys, malformed segments, `:auth`) and never ran model-load checks. The connection string is now optional. `ConfigValidator`, `ConfigValidationIssue` and `ConfigIssueSeverity` are removed with no public replacement; use `new MetadataLoader(rules)` and `DbModelLoader.LoadAsync`.
+- **A write whose `user-audit-key` claim holds more than one value is refused.** Raw principal claims such as `sub` are copied as string arrays, so the actor bound an array or recorded `"System.String[]"`. Use `user_id`; the docs used `sub` and are corrected.
+- **A metadata rule whose selector starts with `:` and is not `:root` (for example `:auth`) is refused at model load.** Such rules matched nothing and were dropped silently, typos included. The shipped Host `appsettings.json` loses its inert `:auth { enable-auth: false; }` rules.
+- **`MetadataValidator.ValidateTableMetadata`, `ValidateColumnMetadata` and `ValidateDatabaseMetadata` are removed.** Nothing called them but their tests, and they had drifted from the load-time gate. Nothing public replaces them; `ModelConfigValidator` runs at model load.
 
 ### Fixed — fifth review pass
 
@@ -88,6 +92,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **The shipped Host config stamps actor columns from the `id` the identity mapper writes.** It named `username`, which no mapper writes, so every actor was NULL.
 - **The ambiguous workflow trigger-table warning is logged once per workflow per model, not on every write.**
 - **`pnpm test:js` builds the tested packages' workspace dependencies first,** so a stale `dist` no longer produces false failures.
+- **`bifrost config-validate` reports malformed config JSON, non-string rules and a bad connection string as errors, and says when the model was not validated.** They crashed the tool with a stack trace. The connection string is never echoed.
+- **Computed-column providers no longer run for the extra rows a nested paged collection fetches only to keep its total.**
+- **SQL Server pivot labels equal only under accent, kana or width folding use the CASE WHEN form** instead of failing with error 8156 under an accent-insensitive collation.
+- **Docs: `tenant-context-key` names the user-context key the tenant filter reads.** It does not rename the mapped `tenant_id`; a missing or multi-valued claim is refused. Under `DisableAuth` an unauthenticated write stamps NULL actors; no placeholder identity is assigned.
 
 ### Security — silent fallbacks
 

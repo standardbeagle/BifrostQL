@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Schema;
 using FluentAssertions;
 using GraphQL;
@@ -198,6 +199,33 @@ public sealed class IdentityProjectionScopeTests
     }
 
     [Fact]
+    public async Task AHostFactorysValueTypeCollectionsAndDictionaries_AreSnapshotted_SoNoCallerSharesThem()
+    {
+        var orgIds = new List<int> { 7 };
+        var groups = new HashSet<Guid> { Guid.Parse("11111111-1111-1111-1111-111111111111") };
+        var profile = new Dictionary<string, object?> { ["tier"] = "gold", ["regions"] = new List<int> { 1 } };
+        var host = new Host(factory: new ValueCollectionsFactory(orgIds, groups, profile));
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var first = await http.GetBifrostUserContextAsync();
+        ((IList)first["org_ids"]!)[0] = 99;
+        ((IDictionary<string, object?>)first["profile"]!)["tier"] = "scribbled-by-the-first-caller";
+        orgIds.Add(8);
+        groups.Clear();
+        ((List<int>)profile["regions"]!).Add(2);
+        var second = await http.GetBifrostUserContextAsync();
+
+        second["org_ids"].Should().BeOfType<object[]>().Which.Should().Equal(7);
+        second["groups"].Should().BeOfType<object[]>().Which.Should().ContainSingle();
+        var secondProfile = second["profile"].Should().BeAssignableTo<IDictionary<string, object?>>().Subject;
+        secondProfile["tier"].Should().Be("gold", "one caller's write into a dictionary never reaches another caller");
+        secondProfile["regions"].Should().BeOfType<object[]>().Which.Should().Equal(1);
+        TenantFilterTransformer.ReadTenantValue(second, "org_ids").Should().Be("7",
+            "a boxed-int snapshot reads as its single tenant value");
+    }
+
+    [Fact]
     public async Task AStepUpIdentityAddedToTheSamePrincipal_IsProjectedAfresh()
     {
         var host = new Host();
@@ -325,6 +353,24 @@ public sealed class IdentityProjectionScopeTests
         {
             [MetadataKeys.Auth.DefaultUserIdContextKey] = "user-1",
             [MetadataKeys.Auth.DefaultPermissionsContextKey] = _permissions,
+        };
+    }
+
+    private sealed class ValueCollectionsFactory : IBifrostAuthContextFactory
+    {
+        private readonly List<int> _orgIds;
+        private readonly HashSet<Guid> _groups;
+        private readonly Dictionary<string, object?> _profile;
+
+        public ValueCollectionsFactory(List<int> orgIds, HashSet<Guid> groups, Dictionary<string, object?> profile)
+            => (_orgIds, _groups, _profile) = (orgIds, groups, profile);
+
+        public IDictionary<string, object?> CreateUserContext(HttpContext context) => new Dictionary<string, object?>
+        {
+            [MetadataKeys.Auth.DefaultUserIdContextKey] = "user-1",
+            ["org_ids"] = _orgIds,
+            ["groups"] = _groups,
+            ["profile"] = _profile,
         };
     }
 

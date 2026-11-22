@@ -161,6 +161,44 @@ public sealed class GenericTableQuerySecurityFilterTests : IAsyncLifetime
         result.Rows.Should().ContainSingle(r => (string)r["name"]! == "tenant-two-a");
     }
 
+    [Fact]
+    public async Task GenericTableQuery_TenantFromASnapshottedHostList_ScopesByTheBoxedNumber()
+    {
+        // A host factory's List<int> tenant reaches the security modules as the identity memo's
+        // snapshot: a fresh object[] of boxed ints, which the coercer reads as its single value.
+        var model = await LoadModelAsync();
+        var schema = DbSchema.FromModel(model);
+        var factory = new SqliteDbConnFactory(ConnString);
+        var services = BuildServices(new IFilterTransformer[] { new TenantFilterTransformer() });
+        var resolver = new GenericTableQueryResolver(model, GenericTableConfig.FromModel(model));
+        var hostTenant = new List<int> { 2 };
+        var userContext = BifrostQL.Core.Auth.UserContexts.Snapshot(new Dictionary<string, object?>
+        {
+            ["user"] = AdminPrincipal(),
+            ["tenant_id"] = hostTenant,
+        });
+
+        var context = new FakeFieldContext
+        {
+            Arguments = new Dictionary<string, object?> { ["name"] = "orders" },
+            UserContext = userContext,
+            RequestServices = services,
+            InputExtensions = new Dictionary<string, object?>
+            {
+                ["connFactory"] = factory,
+                ["model"] = model,
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
+            },
+        };
+        hostTenant[0] = 1;
+
+        var result = (GenericTableResult)(await resolver.ResolveAsync(context))!;
+
+        userContext["tenant_id"].Should().BeOfType<object[]>().Which.Should().Equal(2);
+        result.Rows.Should().ContainSingle(r => (string)r["name"]! == "tenant-two-a",
+            "the host's later write into its own list never reaches the snapshot");
+    }
+
     private sealed class FakeFieldContext : IBifrostFieldContext
     {
         public string FieldName => "_table";

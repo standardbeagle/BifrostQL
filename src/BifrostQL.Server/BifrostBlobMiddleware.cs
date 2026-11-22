@@ -158,10 +158,14 @@ namespace BifrostQL.Server
             {
                 await ServeAsync(context, executor, model, userContext, segments[0], segments[1]);
             }
-            catch (BifrostExecutionError)
+            catch (BifrostExecutionError ex) when (ex.ErrorCode is BifrostExecutionError.AccessDeniedCode or BifrostExecutionError.NotFoundCode)
             {
                 // Pipeline rejection (tenant scope, policy deny, …): the SAME 404 as a
                 // row that does not exist — a denial must not be an existence oracle.
+                // Matched by CONDITION CODE, never by type (invariant 10): SqlExecutionManager
+                // wraps every driver fault as a BifrostExecutionError too, and a type match
+                // read a database outage as "Not found." with nothing logged. Every other
+                // code falls through to the logged 500 below.
                 await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
             }
             catch (Exception ex)

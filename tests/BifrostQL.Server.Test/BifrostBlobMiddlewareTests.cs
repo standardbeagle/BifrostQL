@@ -5,6 +5,8 @@ using BifrostQL.Server;
 using BifrostQL.Server.Test.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test
@@ -280,6 +282,61 @@ namespace BifrostQL.Server.Test
         public void Base64DecodedLength_RefusesANonCanonicalLength()
         {
             BifrostBlobMiddleware.Base64DecodedLength("abc").Should().BeNull();
+        }
+
+        private const string SecretDetail = "connection to db-internal-7 refused";
+
+        private async Task<(int Status, string Body, FakeLogger<BifrostBlobMiddleware> Log)> RequestWithReadFaultAsync(Exception fault)
+        {
+            var log = new FakeLogger<BifrostBlobMiddleware>();
+            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, new BifrostBlobOptions(), requiresAuth: false, log);
+            var context = new DefaultHttpContext { RequestServices = new ReadsOverride(_harness.Services, new ThrowingReads(_harness.Reads, fault)) };
+            context.Request.Method = "GET";
+            context.Request.Path = "/_blob/files/data";
+            context.Request.QueryString = new QueryString("?k.id=0");
+            context.Response.Body = new MemoryStream();
+            await middleware.InvokeAsync(context);
+            context.Response.Body.Seek(0, SeekOrigin.Begin);
+            using var reader = new StreamReader(context.Response.Body);
+            return (context.Response.StatusCode, await reader.ReadToEndAsync(), log);
+        }
+
+        [Fact]
+        public async Task A_database_fault_answers_500_and_logs_at_error_not_404()
+        {
+            // SqlExecutionManager wraps every driver fault as a BifrostExecutionError, so a
+            // type-matched catch read a database outage as "Not found." with nothing logged.
+            var (status, body, log) = await RequestWithReadFaultAsync(
+                BifrostExecutionError.FromDatabaseException(new InvalidOperationException(SecretDetail)));
+
+            status.Should().Be(500, "a database fault is a server fault, not a missing blob");
+            body.Should().NotContain(SecretDetail, "fault detail never reaches the wire (invariant 3)");
+            log.Collector.GetSnapshot().Should().Contain(e => e.Level == LogLevel.Error && e.Exception != null,
+                "an operator must see the fault above Debug");
+        }
+
+        [Theory]
+        [InlineData(BifrostExecutionError.AccessDeniedCode)]
+        [InlineData(BifrostExecutionError.NotFoundCode)]
+        public async Task A_denial_or_absence_code_answers_the_identical_404(string errorCode)
+        {
+            var (status, body, log) = await RequestWithReadFaultAsync(
+                new BifrostExecutionError(SecretDetail) { ErrorCode = errorCode });
+
+            status.Should().Be(404);
+            body.Should().Be("Not found.");
+            log.Collector.GetSnapshot().Should().NotContain(e => e.Level >= LogLevel.Warning);
+        }
+
+        /// <summary>Resolves the model through the real seam, then fails every read.</summary>
+        private sealed class ThrowingReads : IQueryIntentExecutor
+        {
+            private readonly IQueryIntentExecutor _inner;
+            private readonly Exception _fault;
+            public ThrowingReads(IQueryIntentExecutor inner, Exception fault) => (_inner, _fault) = (inner, fault);
+            public Task<IDbModel> GetModelAsync(string? endpoint = null) => _inner.GetModelAsync(endpoint);
+            public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+                => Task.FromException<QueryIntentResult>(_fault);
         }
 
         [Fact]

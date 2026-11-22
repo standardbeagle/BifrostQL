@@ -190,6 +190,38 @@ public sealed class ConfigValidateCommandTests : IDisposable
         => FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
+    // Configuration splits a property name on ':', so a colon-keyed property is the same key as
+    // the nested form. The shape check matched one JSON segment at a time and missed it, and the
+    // configuration then read the number or bool as its text.
+    [Theory]
+    [InlineData("""{ "ConnectionStrings:bifrost": 42 }""", "connectionStrings.bifrost must be a string, found Number")]
+    [InlineData("""{ "connectionstrings:BIFROST": true }""", "connectionStrings.bifrost must be a string, found True")]
+    public void ColonKeyedNonStringConnectionString_IsAShapeError(string config, string expected)
+        => FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+            .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
+
+    [Theory]
+    [InlineData("""{ "BifrostQL:Path": 5 }""", "BifrostQL:Path must be a string, found Number")]
+    [InlineData("""{ "bifrostql:PATH": false }""", "BifrostQL:Path must be a string, found False")]
+    [InlineData("""{ "BifrostQL": { "Path": 5 } }""", "BifrostQL:Path must be a string, found Number")]
+    [InlineData("""{ "BifrostQL:Playground": true }""", "BifrostQL:Playground must be a string, found True")]
+    public void NonStringPaths_AreShapeErrors(string config, string expected)
+        => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection(config))
+            .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
+
+    [Fact]
+    public void ColonKeyedStringValues_AreReadLikeTheServerReadsThem()
+    {
+        const string config = """
+            { "ConnectionStrings:bifrost": "Data Source=colon.db", "BifrostQL:Path": "/gql", "bifrostql:playground": "/pg" }
+            """;
+
+        ConfigFileReader.ReadConnectionString(config).Should().Be("Data Source=colon.db");
+        var section = ConfigFileReader.ReadBifrostSection(config);
+        section.Path.Should().Be("/gql");
+        section.Playground.Should().Be("/pg");
+    }
+
     [Fact]
     public void NonBooleanDisableAuth_IsAShapeError_ThatDoesNotQuoteTheValue()
         => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection("""{ "BifrostQL": { "DisableAuth": "maybe-secret" } }"""))

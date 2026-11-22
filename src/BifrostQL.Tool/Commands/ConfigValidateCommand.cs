@@ -205,12 +205,12 @@ internal static class ConfigFileReader
     public static string? ReadConnectionString(string json, string key = "bifrost")
     {
         var file = ReadConfigFile(json);
-        foreach (var kind in KindsAt(file.Root, "ConnectionStrings"))
+        foreach (var kind in file.KindsAt("ConnectionStrings"))
         {
             if (kind is not (System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Null))
                 throw new ConfigFileShapeException($"Config file connectionStrings section must be a JSON object, found {kind}.");
         }
-        foreach (var kind in KindsAt(file.Root, "ConnectionStrings", key))
+        foreach (var kind in file.KindsAt("ConnectionStrings", key))
         {
             if (kind is not (System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Null))
                 throw new ConfigFileShapeException($"Config file connectionStrings.{key} must be a string, found {kind}.");
@@ -220,9 +220,20 @@ internal static class ConfigFileReader
 
     public static BifrostConfigSection ReadBifrostSection(string json)
     {
-        var section = BifrostSection(ReadConfigFile(json));
+        var file = ReadConfigFile(json);
+        var section = BifrostSection(file);
         if (section is null)
             return new BifrostConfigSection();
+
+        // Configuration reads a number or bool as its text, so "Path": 5 would serve at "5".
+        foreach (var name in new[] { "Path", "Playground" })
+        {
+            foreach (var kind in file.KindsAt("BifrostQL", name))
+            {
+                if (kind is not (System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Null))
+                    throw new ConfigFileShapeException($"Config file BifrostQL:{name} must be a string, found {kind}.");
+            }
+        }
 
         bool disableAuth;
         try
@@ -244,9 +255,20 @@ internal static class ConfigFileReader
         };
     }
 
-    // The bound configuration every value is read from, and the parsed JSON, kept only to name
-    // the JSON kind of a mis-shaped element (configuration reads a number as its text).
-    private sealed record ConfigFile(IConfigurationRoot Configuration, System.Text.Json.JsonElement Root);
+    // The bound configuration every value is read from, and the JSON kind of every element by its
+    // full configuration path, kept only to name the kind of a mis-shaped element (configuration
+    // reads a number as its text).
+    private sealed record ConfigFile(
+        IConfigurationRoot Configuration, ILookup<string, System.Text.Json.JsonValueKind> Kinds)
+    {
+        /// <summary>
+        /// The JSON kinds of every element whose configuration path is <paramref name="path"/>,
+        /// compared case-insensitively. <c>"A:B": 1</c> and <c>"a": { "b": 1 }</c> are the same
+        /// configuration key, so both are returned.
+        /// </summary>
+        public IEnumerable<System.Text.Json.JsonValueKind> KindsAt(params string[] path)
+            => Kinds[ConfigurationPath.Combine(path)];
+    }
 
     /// <summary>
     /// Binds the file the way the server's <c>AddJsonFile</c> does: keys compare
@@ -268,7 +290,7 @@ internal static class ConfigFileReader
                 new ConfigurationBuilder()
                     .AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
                     .Build(),
-                root);
+                FlattenKinds(root, null).ToLookup(e => e.Path, e => e.Kind, StringComparer.OrdinalIgnoreCase));
         }
         // The JSON parsed above, so this is a binding refusal such as a duplicate key. Its
         // message names the key, never a value.
@@ -279,32 +301,38 @@ internal static class ConfigFileReader
     }
 
     /// <summary>
-    /// The JSON kinds of every element at <paramref name="path"/>, each segment matched
-    /// case-insensitively as configuration matches keys. Two objects whose names differ only in
-    /// case are one configuration section, so both are checked.
+    /// Every element below <paramref name="element"/> with its configuration path, built as
+    /// <c>JsonConfigurationFileParser</c> builds keys: property names joined with ':' as written
+    /// (a name containing ':' is several segments), array items by index.
     /// </summary>
-    private static IEnumerable<System.Text.Json.JsonValueKind> KindsAt(System.Text.Json.JsonElement element, params string[] path)
+    private static IEnumerable<(string Path, System.Text.Json.JsonValueKind Kind)> FlattenKinds(
+        System.Text.Json.JsonElement element, string? path)
     {
-        if (path.Length == 0)
+        if (path is not null)
+            yield return (path, element.ValueKind);
+
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
         {
-            yield return element.ValueKind;
-            yield break;
+            foreach (var property in element.EnumerateObject())
+                foreach (var child in FlattenKinds(property.Value, path is null ? property.Name : ConfigurationPath.Combine(path, property.Name)))
+                    yield return child;
         }
-        if (element.ValueKind != System.Text.Json.JsonValueKind.Object)
-            yield break;
-        foreach (var property in element.EnumerateObject())
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
         {
-            if (!string.Equals(property.Name, path[0], StringComparison.OrdinalIgnoreCase))
-                continue;
-            foreach (var kind in KindsAt(property.Value, path[1..]))
-                yield return kind;
+            var index = 0;
+            foreach (var item in element.EnumerateArray())
+            {
+                var name = (index++).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                foreach (var child in FlattenKinds(item, path is null ? name : ConfigurationPath.Combine(path, name)))
+                    yield return child;
+            }
         }
     }
 
     // The BifrostQL section, or null when the file has none.
     private static IConfigurationSection? BifrostSection(ConfigFile file)
     {
-        foreach (var kind in KindsAt(file.Root, "BifrostQL"))
+        foreach (var kind in file.KindsAt("BifrostQL"))
         {
             if (kind is not (System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Null))
                 throw new ConfigFileShapeException($"Config file BifrostQL section must be a JSON object, found {kind}.");

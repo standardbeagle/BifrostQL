@@ -1876,9 +1876,8 @@ namespace BifrostQL.Core.Model
                 errors.Add(
                     $"  {columnRef} [{MetadataKeys.Crypto.KeyRef}]: an encrypted column requires a key-ref " +
                     $"(e.g. 'kms:pii' or 'config:pii').");
-            else if (!BifrostQL.Core.Crypto.KeyRef.TryParse(keyRef, out _))
-                errors.Add(Problem(table, MetadataKeys.Crypto.KeyRef, keyRef,
-                    $"malformed key-ref (expected 'provider:id' with provider one of {string.Join(", ", MetadataKeys.Crypto.KeyRefProviders)})"));
+            else if (!BifrostQL.Core.Crypto.KeyRef.TryParse(keyRef, out _, out var keyRefError))
+                errors.Add(Problem(table, MetadataKeys.Crypto.KeyRef, keyRef, keyRefError!));
 
             if (!string.IsNullOrWhiteSpace(mask) && !MetadataKeys.Crypto.MaskModes.Contains(mask))
                 errors.Add(Problem(table, MetadataKeys.Crypto.Mask, mask,

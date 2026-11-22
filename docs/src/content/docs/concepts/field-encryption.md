@@ -153,13 +153,13 @@ dbo.customers.ssn {
 | Key | Meaning |
 |-----|---------|
 | `encrypt` | Algorithm; enables encryption. Only `aes-256-gcm` today. |
-| `key-ref` | Which DEK, as `provider:id` (`kms:pii`, `config:pii`). Required. |
+| `key-ref` | Which DEK, as `provider:id` (`kms:pii`, `config:pii`). Required. The id must not end in `v` followed by a number of 2 or more (`config:piiv2`): DEK version 2 of `config:pii` is stored under that name, so the two would share a key. |
 | `mask` | What non-unmask-role callers see: `redact` (default), `last4`, `email`. |
 | `unmask-role` | Role that may read plaintext. Absent ⇒ only the model's `policy-admin-role`, and nobody when the model names none. |
 | `blind-index` | Sibling column holding the deterministic hash for equality search. Must exist. |
 
 Misconfiguration fails fast at model load: an unsupported algorithm, a missing or
-malformed `key-ref`, an unknown `mask` mode, a `blind-index` naming a non-existent
+malformed `key-ref` (or one that is another key-ref's version slot), an unknown `mask` mode, a `blind-index` naming a non-existent
 column, or any encryption key set on a column without `encrypt`.
 
 ## Key rotation

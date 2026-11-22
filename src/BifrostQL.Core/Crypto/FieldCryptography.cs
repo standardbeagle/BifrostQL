@@ -18,13 +18,21 @@ namespace BifrostQL.Core.Crypto
 
         /// <summary>
         /// Parses and validates a <c>key-ref</c>. The provider must be a recognized
-        /// one (<see cref="MetadataKeys.Crypto.KeyRefProviders"/>) and the id must be
-        /// non-empty. Returns false (not throw) on a malformed value so callers can
-        /// surface a descriptive validation error.
+        /// one (<see cref="MetadataKeys.Crypto.KeyRefProviders"/>), the id must be
+        /// non-empty, and the key-ref must not be another key-ref's DEK version slot
+        /// (<see cref="EnvelopeKeyManager.IsVersionSlotOfAnotherKeyRef"/>). Returns false
+        /// (not throw) on a bad value so callers can surface a descriptive validation error.
         /// </summary>
-        public static bool TryParse(string? raw, out KeyRef keyRef)
+        public static bool TryParse(string? raw, out KeyRef keyRef) => TryParse(raw, out keyRef, out _);
+
+        /// <inheritdoc cref="TryParse(string?, out KeyRef)"/>
+        /// <param name="raw">The metadata value.</param>
+        /// <param name="keyRef">The parsed key-ref; default on failure.</param>
+        /// <param name="error">Why the value was refused; null on success.</param>
+        public static bool TryParse(string? raw, out KeyRef keyRef, out string? error)
         {
             keyRef = default;
+            error = $"malformed key-ref (expected 'provider:id' with provider one of {string.Join(", ", MetadataKeys.Crypto.KeyRefProviders)})";
             if (string.IsNullOrWhiteSpace(raw))
                 return false;
 
@@ -39,7 +47,15 @@ namespace BifrostQL.Core.Crypto
             if (!MetadataKeys.Crypto.KeyRefProviders.Contains(provider))
                 return false;
 
+            var canonical = new KeyRef(provider, id).ToString();
+            if (EnvelopeKeyManager.IsVersionSlotOfAnotherKeyRef(canonical, out var baseKeyRef, out var version))
+            {
+                error = EnvelopeKeyManager.VersionSlotCollisionMessage(canonical, baseKeyRef, version);
+                return false;
+            }
+
             keyRef = new KeyRef(provider, id);
+            error = null;
             return true;
         }
     }

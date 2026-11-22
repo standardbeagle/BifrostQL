@@ -206,11 +206,58 @@ namespace BifrostQL.Core.Crypto
 
         /// <summary>
         /// The DEK-version separator embedded in a store key. Version 1 uses the bare key-ref
-        /// (backward compatible with pre-rotation stored DEKs); version N&gt;1 appends this
-        /// unit-separator + <c>v</c> + N, so versioned slots never collide with the base slot
-        /// and the durable file store hex-encodes the whole thing safely.
+        /// (backward compatible with pre-rotation stored DEKs); version N&gt;1 appends a plain
+        /// lowercase <c>v</c> + N (invariant digits). There is no unit separator, so version 2
+        /// of <c>config:pii</c> is stored as <c>config:piiv2</c>: the bare (version 1) slot of
+        /// the key-ref <c>config:piiv2</c>. Such key-refs are refused
+        /// (<see cref="IsVersionSlotOfAnotherKeyRef"/>) instead of changing the separator,
+        /// which would orphan every stored version-2+ DEK.
         /// </summary>
         private const string VersionSeparator = "v";
+
+        /// <summary>
+        /// True when <paramref name="keyRef"/> is exactly the store slot <see cref="StoreKeyFor"/>
+        /// gives version N&gt;=2 of a shorter key-ref: a non-blank <paramref name="baseKeyRef"/>,
+        /// then <c>v</c>, then N rendered as invariant digits (no sign, no leading zero). Using
+        /// both key-refs would share one wrapped DEK and one wrap AAD, and the shorter key-ref
+        /// would report a version it never rotated to.
+        /// </summary>
+        internal static bool IsVersionSlotOfAnotherKeyRef(string keyRef, out string baseKeyRef, out int version)
+        {
+            baseKeyRef = string.Empty;
+            version = 0;
+            var separatorAt = keyRef.LastIndexOf(VersionSeparator, StringComparison.Ordinal);
+            if (separatorAt <= 0)
+                return false;
+            var digits = keyRef[(separatorAt + VersionSeparator.Length)..];
+            if (!int.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n)
+                || n < 2
+                || !string.Equals(digits, n.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal))
+                return false;
+            var candidate = keyRef[..separatorAt];
+            if (string.IsNullOrWhiteSpace(candidate))
+                return false;
+            baseKeyRef = candidate;
+            version = n;
+            return true;
+        }
+
+        /// <summary>The refusal text for a key-ref that <see cref="IsVersionSlotOfAnotherKeyRef"/> matches.</summary>
+        internal static string VersionSlotCollisionMessage(string keyRef, string baseKeyRef, int version)
+            => $"key-ref '{keyRef}' is the stored slot of DEK version {version} of key-ref '{baseKeyRef}', " +
+               "so the two would share one data-encryption key; choose a key-ref that does not end in 'v' " +
+               "followed by a number of 2 or more";
+
+        /// <summary>
+        /// Validates a key-ref at every manager entry point: non-blank, and not another
+        /// key-ref's version slot (<see cref="IsVersionSlotOfAnotherKeyRef"/>).
+        /// </summary>
+        private static void ThrowIfInvalidKeyRef(string keyRef)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            if (IsVersionSlotOfAnotherKeyRef(keyRef, out var baseKeyRef, out var version))
+                throw new ArgumentException(VersionSlotCollisionMessage(keyRef, baseKeyRef, version), nameof(keyRef));
+        }
 
         /// <summary>
         /// Returns the 32-byte plaintext DEK for <paramref name="keyRef"/>'s ORIGINAL
@@ -220,7 +267,7 @@ namespace BifrostQL.Core.Crypto
         /// </summary>
         public ValueTask<byte[]> GetDataKeyAsync(string keyRef, CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ThrowIfInvalidKeyRef(keyRef);
             return ResolveDekAsync(keyRef, cancellationToken);
         }
 
@@ -232,7 +279,7 @@ namespace BifrostQL.Core.Crypto
         /// </summary>
         public ValueTask<byte[]> GetDataKeyAsync(string keyRef, int version, CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ThrowIfInvalidKeyRef(keyRef);
             if (version < 1)
                 throw new ArgumentOutOfRangeException(nameof(version), version, "DEK version must be >= 1.");
             return ResolveDekAsync(StoreKeyFor(keyRef, version), cancellationToken);
@@ -245,7 +292,7 @@ namespace BifrostQL.Core.Crypto
         /// </summary>
         public async ValueTask<int> GetCurrentVersionAsync(string keyRef, CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ThrowIfInvalidKeyRef(keyRef);
             // Ensure the base (v1) slot exists so a fresh key-ref reports version 1.
             await ResolveDekAsync(keyRef, cancellationToken);
             var version = 1;
@@ -267,7 +314,7 @@ namespace BifrostQL.Core.Crypto
         /// </summary>
         public async ValueTask<int> RotateAsync(string keyRef, CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ThrowIfInvalidKeyRef(keyRef);
             var next = await GetCurrentVersionAsync(keyRef, cancellationToken) + 1;
             // Materialize (generate + persist) the new version's slot so GetCurrentVersionAsync
             // sees it as the new highest. Resolution is first-writer-wins, so a lost race adopts
@@ -287,6 +334,7 @@ namespace BifrostQL.Core.Crypto
             ArgumentNullException.ThrowIfNull(keyRefs);
             foreach (var keyRef in keyRefs.Distinct(StringComparer.Ordinal))
             {
+                ThrowIfInvalidKeyRef(keyRef);
                 // A version newer than the cached ones exists only after a rotation, which this
                 // process caches as it mints it. Another process's rotation is found by probing
                 // the store for the next slot, at most once per VersionProbeInterval per key-ref,
@@ -319,7 +367,7 @@ namespace BifrostQL.Core.Crypto
         /// </summary>
         public bool TryGetCachedDataKey(string keyRef, int? version, out byte[] dek)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ThrowIfInvalidKeyRef(keyRef);
             if (_dekCache.TryGetValue(StoreKeyFor(keyRef, version ?? 1), out var cached))
             {
                 dek = (byte[])cached.Clone();

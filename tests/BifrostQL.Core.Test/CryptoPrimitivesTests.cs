@@ -43,6 +43,8 @@ public class CryptoPrimitivesTests
     [InlineData("vault:pii")]        // unknown provider
     [InlineData("kms:")]             // empty id
     [InlineData(":pii")]             // empty provider
+    [InlineData("config:piiv2")]     // is config:pii's DEK version-2 store slot
+    [InlineData("kms:ssnv10")]       // is kms:ssn's DEK version-10 store slot
     public void KeyRef_TryParse_Invalid(string? raw)
         => KeyRef.TryParse(raw, out _).Should().BeFalse();
 
@@ -291,6 +293,56 @@ public class CryptoPrimitivesTests
         (await m2.GetCurrentVersionAsync("config:pii")).Should().Be(2);
         (await m2.GetDataKeyAsync("config:pii", 2)).Should().Equal((await m1.GetDataKeyAsync("config:pii", 2)));
         (await m2.GetDataKeyAsync("config:pii", 1)).Should().Equal((await m1.GetDataKeyAsync("config:pii", 1)));
+    }
+
+    // DEK version N>=2 of a key-ref lives at store key keyRef + "v" + N; version 1 lives at the
+    // bare key-ref. So the key-ref "config:piiv2" (its v1 slot is "config:piiv2") is the store
+    // slot of "config:pii" version 2: the two share one wrapped DEK and one AAD, and
+    // "config:pii" reports version 2 without ever being rotated.
+    [Fact]
+    public async Task EnvelopeKeyManager_KeyRefOccupyingAnotherKeyRefsVersionSlot_IsRefused()
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+
+        ArgumentException? refusal = null;
+        try { await manager.GetDataKeyAsync("config:piiv2"); }
+        catch (ArgumentException ex) { refusal = ex; }
+
+        (await manager.GetCurrentVersionAsync("config:pii")).Should().Be(1,
+            "config:pii was never rotated; config:piiv2 must not occupy its version-2 slot");
+        refusal.Should().NotBeNull("a key-ref that is another key-ref's version slot is refused");
+        refusal!.Message.Should().Contain("config:piiv2").And.Contain("config:pii");
+    }
+
+    [Theory]
+    [InlineData("config:piiv2")]
+    [InlineData("config:piiv10")]
+    [InlineData("kms:v7")]
+    public async Task EnvelopeKeyManager_EveryEntryPoint_RefusesVersionSlotKeyRef(string keyRef)
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        await FluentActions.Awaiting(async () => await manager.GetDataKeyAsync(keyRef)).Should().ThrowAsync<ArgumentException>();
+        await FluentActions.Awaiting(async () => await manager.GetDataKeyAsync(keyRef, 1)).Should().ThrowAsync<ArgumentException>();
+        await FluentActions.Awaiting(async () => await manager.GetCurrentVersionAsync(keyRef)).Should().ThrowAsync<ArgumentException>();
+        await FluentActions.Awaiting(async () => await manager.RotateAsync(keyRef)).Should().ThrowAsync<ArgumentException>();
+        await FluentActions.Awaiting(async () => await manager.WarmAsync(new[] { keyRef })).Should().ThrowAsync<ArgumentException>();
+        FluentActions.Invoking(() => manager.TryGetCachedDataKey(keyRef, null, out _)).Should().Throw<ArgumentException>();
+    }
+
+    // Only a lowercase 'v' followed by the invariant rendering of an int >= 2 is ever written
+    // after a key-ref, so these never collide and stay accepted.
+    [Theory]
+    [InlineData("config:piiv1")]   // version 1 is the bare key-ref, never "...v1"
+    [InlineData("config:piiv0")]
+    [InlineData("config:piiv02")]  // leading zero is never rendered
+    [InlineData("config:piiV2")]   // store keys are ordinal; the suffix is lowercase
+    [InlineData("config:piiv")]
+    [InlineData("config:v2pii")]
+    public async Task EnvelopeKeyManager_NonCollidingSuffix_IsAccepted(string keyRef)
+    {
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        (await manager.GetCurrentVersionAsync(keyRef)).Should().Be(1);
+        KeyRef.TryParse(keyRef, out _).Should().BeTrue();
     }
 
     [Fact]

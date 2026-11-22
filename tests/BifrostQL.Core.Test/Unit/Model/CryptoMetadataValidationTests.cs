@@ -74,6 +74,18 @@ public class CryptoMetadataValidationTests
     }
 
     [Fact]
+    public void Validate_KeyRefThatIsAnotherKeyRefsVersionSlot_Throws()
+    {
+        var model = EncryptedColumn(MetadataKeys.Crypto.Encrypt, "aes-256-gcm",
+            (MetadataKeys.Crypto.KeyRef, "config:piiv2")).Build(); // = config:pii DEK v2 slot
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("config:piiv2").And.Contain("version 2 of key-ref 'config:pii'");
+    }
+
+    [Fact]
     public void Validate_UnknownMaskMode_Throws()
     {
         var model = EncryptedColumn(MetadataKeys.Crypto.Encrypt, "aes-256-gcm",

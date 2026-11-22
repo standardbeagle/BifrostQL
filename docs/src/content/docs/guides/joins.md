@@ -129,6 +129,8 @@ You can declare one manually when automatic detection is not enough:
 "dbo.posts { many-to-many: tags:post_tags; }"
 ```
 
+The junction is a table name. A bare name (`post_tags`) resolves in the declaring table's schema first; failing that, to the one schema that has it. When two or more other schemas have it, model load reports it as ambiguous: name it as `schema.table` (`tags:blog.post_tags`).
+
 Model load checks every `many-to-many` entry. An entry that is not `Target:Junction`, names a table that does not exist, or names a junction without a foreign key to both tables fails startup with the offending value. The same applies to the `polymorphic-type-column`, `polymorphic-id-column` and `polymorphic-map` keys: a missing column, a malformed `discriminator=table` entry, an unknown parent, or a parent without a single-column primary key fails startup. A negated entry (`!tags`) only prunes an auto-detected bridge and declares nothing.
 
 ## Relationship field names

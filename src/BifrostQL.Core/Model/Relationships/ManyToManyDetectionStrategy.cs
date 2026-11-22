@@ -33,7 +33,7 @@ namespace BifrostQL.Core.Model.Relationships
 
         /// <summary>
         /// The one reading of <paramref name="sourceTable"/>'s <c>many-to-many</c> entries
-        /// (<c>Target:Junction</c>): discovery links what resolves, and <c>ModelConfigValidator</c>
+        /// (<c>Target:Junction</c>, or <c>Target:schema.Junction</c>): discovery links what resolves, and <c>ModelConfigValidator</c>
         /// reports what does not, so a typo fails model load instead of dropping the field.
         /// Negated entries (<c>!Target[:Junction]</c>) prune an auto-detected bridge and declare
         /// nothing here.
@@ -68,11 +68,9 @@ namespace BifrostQL.Core.Model.Relationships
                     continue;
                 }
 
-                var junctionTable = model.Tables.FirstOrDefault(t =>
-                    string.Equals(t.DbName, parts[1], StringComparison.OrdinalIgnoreCase));
-                if (junctionTable is null)
+                if (!TryResolveJunction(model, sourceTable, parts[1], out var junctionTable, out var junctionProblem))
                 {
-                    problems.Add(new RelationshipMetadataProblem(key, parts[1], "names no junction table"));
+                    problems.Add(new RelationshipMetadataProblem(key, parts[1], junctionProblem));
                     continue;
                 }
 
@@ -110,6 +108,42 @@ namespace BifrostQL.Core.Model.Relationships
                 });
             }
             return new ParsedMetadata(links, problems);
+        }
+
+        /// <summary>
+        /// Resolves the junction of a <c>Target:Junction</c> entry. A table's bare name is not its
+        /// identity, so <c>schema.name</c> names one table exactly; a bare name resolves in the
+        /// source table's schema first, then to the one schema that defines it. A bare name
+        /// defined in two or more other schemas is ambiguous: any pick would be read order.
+        /// </summary>
+        private static bool TryResolveJunction(IDbModel model, IDbTable sourceTable, string name,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? junction, out string problem)
+        {
+            problem = "names no junction table";
+            var dot = name.IndexOf('.');
+            if (dot > 0 && dot < name.Length - 1)
+            {
+                var schema = name[..dot];
+                var dbName = name[(dot + 1)..];
+                junction = model.Tables.FirstOrDefault(t =>
+                    string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(t.DbName, dbName, StringComparison.OrdinalIgnoreCase));
+                return junction is not null;
+            }
+
+            var candidates = model.Tables
+                .Where(t => string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            junction = candidates.FirstOrDefault(t =>
+                           string.Equals(t.TableSchema, sourceTable.TableSchema, StringComparison.OrdinalIgnoreCase))
+                       ?? (candidates.Count == 1 ? candidates[0] : null);
+            if (junction is not null)
+                return true;
+            if (candidates.Count > 1)
+                problem = "is ambiguous: it names " +
+                          string.Join(", ", candidates.Select(t => $"{t.TableSchema}.{t.DbName}")) +
+                          $", none in {sourceTable.TableSchema}; qualify it as schema.name";
+            return false;
         }
 
         /// <summary>

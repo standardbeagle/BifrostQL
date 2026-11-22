@@ -177,6 +177,19 @@ public sealed class ConfigValidateCommand : ICommand
 /// </summary>
 internal static class ConfigFileReader
 {
+    // The server reads this file through the JSON configuration provider (AddJsonFile), which
+    // skips comments and allows trailing commas. The CLI parses it the same way, or a file the
+    // server accepts is refused here as invalid JSON.
+    private static readonly System.Text.Json.JsonDocumentOptions ConfigurationJsonOptions = new()
+    {
+        CommentHandling = System.Text.Json.JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    /// <summary>Parses a config file's text with the configuration provider's JSON grammar.</summary>
+    public static System.Text.Json.JsonDocument ParseJson(string json)
+        => System.Text.Json.JsonDocument.Parse(json, ConfigurationJsonOptions);
+
     /// <summary>
     /// Reads the metadata rules the server would read from this file: the JSON is bound into
     /// an <see cref="IConfiguration"/> the way the Host's <c>AddJsonFile</c> binds it, and the
@@ -184,7 +197,7 @@ internal static class ConfigFileReader
     /// </summary>
     public static IReadOnlyList<string> ReadMetadataRules(string json)
     {
-        using (var doc = System.Text.Json.JsonDocument.Parse(json))
+        using (var doc = ConfigFileReader.ParseJson(json))
             GetBifrostSection(doc.RootElement);
 
         IConfigurationRoot configuration;
@@ -214,7 +227,7 @@ internal static class ConfigFileReader
 
     public static string? ReadConnectionString(string json, string key = "bifrost")
     {
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        using var doc = ConfigFileReader.ParseJson(json);
         var root = doc.RootElement;
         if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
             throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
@@ -239,7 +252,7 @@ internal static class ConfigFileReader
 
     public static BifrostConfigSection ReadBifrostSection(string json)
     {
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        using var doc = ConfigFileReader.ParseJson(json);
         var root = doc.RootElement;
 
         var section = GetBifrostSection(root);

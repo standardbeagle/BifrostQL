@@ -101,6 +101,43 @@ public sealed class ConfigValidateCommandTests : IDisposable
         json.GetProperty("error").GetString().Should().StartWith("Config file is not valid JSON:");
     }
 
+    // The server reads appsettings through AddJsonFile, which skips comments and allows trailing
+    // commas (samples/HostedSpa/appsettings.json relies on both). The CLI must read the same file.
+    private const string CommentedConfig = """
+        {
+          // connection for the CLI and the server
+          "ConnectionStrings": { "bifrost": "Data Source=commented.db", },
+          "BifrostQL": {
+            /* block comment */
+            "Path": "/gql",
+            "Metadata": [
+              // one rule per line
+              "dbo.orders { soft-delete: deleted_at }",
+              "dbo.items { tenant-filter }",
+            ],
+          },
+        }
+        """;
+
+    [Fact]
+    public async Task CommentedConfigWithTrailingCommas_IsReadLikeTheServerReadsIt()
+    {
+        var (exit, json) = await RunRawAsync(null, CommentedConfig);
+
+        exit.Should().Be(1, "the second rule is malformed");
+        json.TryGetProperty("error", out _).Should().BeFalse("the file itself is valid configuration JSON");
+        Messages(json).Should().ContainSingle().Which.Should().Contain("Invalid metadata property 'tenant-filter'");
+    }
+
+    [Fact]
+    public void CommentedConfig_ServeAndDoctorReadersAcceptIt()
+    {
+        ConfigFileReader.ReadConnectionString(CommentedConfig).Should().Be("Data Source=commented.db");
+        var section = ConfigFileReader.ReadBifrostSection(CommentedConfig.Replace("\"dbo.items { tenant-filter }\",", ""));
+        section.Path.Should().Be("/gql");
+        section.Metadata.Should().Equal("dbo.orders { soft-delete: deleted_at }");
+    }
+
     [Fact]
     public async Task NumberMetadataRule_IsReportedAsTheServerReportsIt()
     {

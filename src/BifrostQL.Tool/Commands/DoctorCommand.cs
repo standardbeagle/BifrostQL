@@ -237,7 +237,7 @@ public sealed class DoctorCommand : ICommand
             try
             {
                 var json = await File.ReadAllTextAsync(bifrostConfigPath);
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                using var doc = ConfigFileReader.ParseJson(json);
                 checks.Add(new DoctorCheck("Config File", DoctorStatus.Pass, "Valid JSON format"));
 
                 var rules = ConfigFileReader.ReadMetadataRules(json);

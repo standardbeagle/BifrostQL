@@ -103,11 +103,16 @@ namespace BifrostQL.Core.Views
                 return $"<a href=\"mailto:{Encode(email)}\">{Encode(email)}</a>";
             }
 
-            // URL column (via metadata override)
+            // URL column (via metadata override). Only an absolute http(s) URL becomes a link:
+            // HTML encoding leaves a javascript:/data: scheme intact, so any other stored value
+            // renders as encoded text instead of a clickable script link.
             if (string.Equals(metadataType, "url", StringComparison.OrdinalIgnoreCase))
             {
                 var url = value.ToString() ?? "";
-                return $"<a href=\"{Encode(url)}\">{Encode(url)}</a>";
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                    return $"<a href=\"{Encode(url)}\">{Encode(url)}</a>";
+                return Encode(url);
             }
 
             return Encode(value.ToString() ?? "");

@@ -188,6 +188,43 @@ public class DetailViewBuilderTests
         Assert.Contains(">https://example.com</a>", html);
     }
 
+    // HTML encoding leaves a script scheme intact, so a stored url value of
+    // "javascript:..." became a clickable script link. Only absolute http(s) URLs
+    // become anchors; anything else renders as encoded text.
+    [Theory]
+    [InlineData("javascript:alert(document.cookie)")]
+    [InlineData("JaVaScRiPt:alert(1)")]
+    [InlineData(" javascript:alert(1)")]
+    [InlineData("\tjavascript:alert(1)")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("vbscript:msgbox(1)")]
+    [InlineData("/relative/path")]
+    public void GenerateFieldRow_UrlColumn_NonHttpValue_RendersEncodedTextNotLink(string value)
+    {
+        var model = CreateModelWithUrlColumn();
+        var builder = new DetailViewBuilder(model);
+        var table = model.GetTableFromDbName("Companies");
+
+        var result = builder.GenerateFieldRow(table.ColumnLookup["Website"], value, table);
+
+        Assert.Equal($"<dt>Website</dt><dd>{System.Net.WebUtility.HtmlEncode(value)}</dd>", result);
+    }
+
+    [Theory]
+    [InlineData("https://example.com/a?b=1&c=2")]
+    [InlineData("HTTP://example.com")]
+    public void GenerateFieldRow_UrlColumn_HttpValue_RendersLink(string value)
+    {
+        var model = CreateModelWithUrlColumn();
+        var builder = new DetailViewBuilder(model);
+        var table = model.GetTableFromDbName("Companies");
+
+        var result = builder.GenerateFieldRow(table.ColumnLookup["Website"], value, table);
+
+        var encoded = System.Net.WebUtility.HtmlEncode(value);
+        Assert.Equal($"<dt>Website</dt><dd><a href=\"{encoded}\">{encoded}</a></dd>", result);
+    }
+
     #endregion
 
     #region Action Buttons

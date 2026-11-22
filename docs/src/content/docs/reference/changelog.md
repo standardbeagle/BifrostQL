@@ -25,6 +25,39 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Security — fifth review pass
+
+- **`bifrostui` on its loopback bind refuses requests whose Host header is not `localhost`, `127.0.0.1` or `[::1]`.** The desktop host had no Host filtering, so a DNS-rebinding page became same-origin and could reach `/api/sqlite/connect`, `/api/vault/*`, `/graphql` (auth disabled) and `/_bridge`. `--expose` keeps accepting any host.
+- **Every `/_bridge` POST has its Content-Type checked and its body parsed, including chunked requests with no Content-Length.** Both checks were gated on `Content-Length > 0`, so a chunked POST skipped them and ran the handler with an empty payload.
+- **pgwire `MaxSessionPortalBytes` also counts Bind parameter bytes and the SQL text each portal pins.** Bind values and the statements portals kept alive after a re-Parse were never charged, so `Bind p1..p200` with 1 MiB values and no Sync held hundreds of MiB per session. Close('P') and Sync refund them.
+- **`type: url` columns in the generated detail view are links only for absolute http/https URLs.** HTML encoding left `javascript:` and `data:` schemes intact, so a stored value could run script when clicked. Other values render as plain text.
+- **`SecretScrubber` masks single-quoted and doubled-quote-escaped `Password`/`Pwd`/`User Id`/`Uid` values.** `Password='ab;cd'` used to leak `cd'`.
+- **A history row's `entity_id` stores key values as their column type.** A write addressed by `_primaryKey: ["5"]` recorded `{"id":"5"}` while the insert recorded `{"id":5}`, so a right-to-erasure purge by the typed key left the string-keyed rows, and their before-images, behind. Rows already written with string keys are not migrated.
+
+### Breaking — fifth review pass
+
+- **OData `$top` caps the total rows across all pages, not the page size.** `$top=10` returned 10 rows plus a nextLink that re-sent `$top`, so a client following nextLink walked the whole entity set. The end of the walk now travels in the signed `$skiptoken` (version `odatact2`); tokens minted before this change are refused with a 400. `ODataContinuationToken.Decode` returns `ODataPagePosition`.
+- **Root fields bind to their own parsed node, and only the executing operation is parsed.** An unaliased field could pick up an aliased sibling's node (`{ a: users(filter:…) {…} users {…} }` returned only `a`'s rows), and with several operations in one document another operation's node could answer. `IBifrostFieldContext` adds `Operation`; `new SqlVisitor()` throws on a multi-operation document.
+- **`_table` is bounded by `max-query-rows` as well as `generic-table-max-rows`, and `limit: 0` returns no rows.** It used to return up to `generic-table-max-rows` whatever the ceiling, and `limit: 0` meant the maximum.
+- **A `key-ref` whose id ends in `v` and a whole number of 2 or more (for example `config:piiv2`) is refused at model load and by `EnvelopeKeyManager`.** Version N of `config:pii` is stored at `config:piivN`, so the two key-refs silently shared a data key. A deployment already using such a key-ref must re-encrypt under a new name.
+- **Malformed `prefix-groups` entries, and prefixes that match no table, fail model load.** They were skipped silently.
+- **`soft-delete-by` records the `user-audit-key` actor, the same value audit and history record.** It read a hardcoded `user_id` claim, so with `user-audit-key: email` the three disagreed. Without `user-audit-key` the column is left unset; a host relying on the old claim adds `:root { user-audit-key: user_id }`. `SoftDeleteMutationTransformer.UserIdContextKey` is removed.
+- **State transitions and workflow triggers identify the row by its full key and the table by `schema.name`.** Transitions carried only the first key column, so composite-key rows were indistinguishable, and triggers matched the bare table name, so a workflow for `employee` fired for every schema. Triggers accept `schema.name`; a bare name matches only when it is unique. Trigger inputs replace `entityId` with `entityKey`, `entity` and `table` are schema-qualified, and the transition `audit_log` row's `entity_id` is the key as JSON. `StateTransitionInfo` carries the resolved table and `EntityKey`.
+
+### Fixed — fifth review pass
+
+- **A many-to-many field renamed to avoid a column (`roles` → `roles_2`) can be queried.** Its join was named after the target table, so reading it failed with "Unable to find queryField".
+- **`<table>Pivot` honours `max-query-rows`, ordered by the row keys, and reports a cut with `truncated: true`.** It returned one row per group with no ceiling, so `rowKeys: [id]` read the whole table.
+- **Pivot columns are aliased by position.** On PostgreSQL a label over 63 bytes was truncated as an identifier and its cells came back null; two labels sharing a 63-byte prefix failed the query. A missing pivot column now throws instead of reading as null.
+- **`/_blob` answers 500 and logs at Error on a database fault.** Every `BifrostExecutionError`, outages included, answered an unlogged 404. Only access-denied and not-found still answer 404.
+- **`/_blob` parses Range bounds and integer keys culture-invariantly.** `bytes=+0-` is ignored as malformed and `bytes=-0` answers 416, matching S3.
+- **A pgwire numeric literal written with non-ASCII digits is refused with 42601.** It reached an unhandled `FormatException` and answered XX000 with a logged stack trace.
+- **Name-based links inside a table prefix group resolve within the child table's schema first.** With `sales.app_*` and `archive.app_*`, `archive.app_order.customer_id` could link to `sales.app_customer`.
+- **The junction in `many-to-many: Target:Junction` resolves in the source table's schema first and accepts `schema.table`.** It took the first table with that name in any schema; an ambiguous bare name now fails model load and lists the candidates.
+- **Undoing a deferred change set replays its inverses newest first.** A TreeSync or batch that inserted a parent and then its children was undone parent first, hit a foreign-key violation, and stayed in `undoing` forever.
+- **`policy-write-deny` (or `write-requires`) on the `tenant-filter` column no longer makes the table unwritable.** The policy check judged the tenant column the server had just stamped; it now runs first and judges only the columns the client wrote. A client that sends the tenant column itself is still refused.
+- **Workflow `on-mutation` triggers receive the model.** No production call site set it on the observer context.
+
 ### Security — silent fallbacks
 
 - **An encrypted column on a table whose name exists in two schemas is masked again.** `CryptoReadProjector` looked the table up again by bare name. In a model with, say, `dbo.users` and `audit.users`, that lookup threw, and a catch-all returned the stored value unprojected: ciphertext, or legacy plaintext, went to callers who should have seen it redacted. `CryptoReadProjector.Project` now takes the resolved `IDbTable` instead of a table name.

@@ -236,7 +236,7 @@ This checks:
 - Connection string format
 - Database connectivity
 - Schema access permissions
-- Configuration file validity
+- Configuration file validity: the file goes through the reader `serve` and `config-validate` use, so doctor refuses exactly the files they refuse
 
 ## Schema Watching
 

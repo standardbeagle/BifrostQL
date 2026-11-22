@@ -15,13 +15,9 @@ public sealed class DoctorCommand : ICommand
     {
         var issues = new List<DoctorIssue>();
         var checks = new List<DoctorCheck>();
-        var configFileRefused = false;
 
-        // Both config-file reads (the connection string here, the metadata rules in check 4)
-        // report a malformed or wrong-shaped file through this one handler, once.
         void ReportConfigFileRefusal(Exception ex)
         {
-            configFileRefused = true;
             if (ex is System.Text.Json.JsonException)
             {
                 checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, $"Invalid JSON: {ex.Message}"));
@@ -42,24 +38,36 @@ public sealed class DoctorCommand : ICommand
             ));
         }
 
+        // The config file is read once, through serve's own reader, so doctor refuses exactly the
+        // files serve and config-validate refuse, whether or not --connection-string is given.
+        // A missing connection string is not a shape fault: the flag may supply it, as for serve.
+        var configPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
+        var configFileExists = File.Exists(configPath);
+        string? fileConnectionString = null;
+        BifrostConfigSection? fileSection = null;
+        if (configFileExists)
+        {
+            var json = await File.ReadAllTextAsync(configPath);
+            try
+            {
+                (fileConnectionString, fileSection) = ConfigFileReader.ReadServeConfig(json);
+            }
+            // JsonException: malformed JSON. ConfigFileShapeException: well-formed JSON of the
+            // wrong shape. Neither message quotes the file's content.
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
+            {
+                ReportConfigFileRefusal(ex);
+            }
+        }
+
         // Check 1: Connection string provided
         var connectionString = config.ConnectionString;
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            // Try to load from config file
-            var configPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
-            if (File.Exists(configPath))
+            if (configFileExists)
             {
                 checks.Add(new DoctorCheck("Config File", DoctorStatus.Info, $"Found config file: {configPath}"));
-                var json = await File.ReadAllTextAsync(configPath);
-                try
-                {
-                    connectionString = ConfigFileReader.ReadConnectionString(json);
-                }
-                catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
-                {
-                    ReportConfigFileRefusal(ex);
-                }
+                connectionString = fileConnectionString;
                 if (!string.IsNullOrWhiteSpace(connectionString))
                 {
                     checks.Add(new DoctorCheck("Connection String", DoctorStatus.Pass, "Loaded from config file"));
@@ -230,25 +238,13 @@ public sealed class DoctorCommand : ICommand
             }
         }
 
-        // Check 4: Config file validation
-        var bifrostConfigPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
-        if (!configFileRefused && File.Exists(bifrostConfigPath))
+        // Check 4: Config file validation (the file was read above; a refusal is already reported)
+        if (fileSection is not null)
         {
-            try
+            checks.Add(new DoctorCheck("Config File", DoctorStatus.Pass, "Valid JSON format"));
+            if (fileSection.Metadata.Count > 0)
             {
-                var json = await File.ReadAllTextAsync(bifrostConfigPath);
-                using var doc = ConfigFileReader.ParseJson(json);
-                checks.Add(new DoctorCheck("Config File", DoctorStatus.Pass, "Valid JSON format"));
-
-                var rules = ConfigFileReader.ReadMetadataRules(json);
-                if (rules.Count > 0)
-                {
-                    checks.Add(new DoctorCheck("Metadata Rules", DoctorStatus.Info, $"{rules.Count} rules found"));
-                }
-            }
-            catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
-            {
-                ReportConfigFileRefusal(ex);
+                checks.Add(new DoctorCheck("Metadata Rules", DoctorStatus.Info, $"{fileSection.Metadata.Count} rules found"));
             }
         }
 

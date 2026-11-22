@@ -209,29 +209,89 @@ public sealed class ConfigValidateCommandTests : IDisposable
         => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
-    // config-validate read only the metadata rules, so a file serve refuses at its shape check
-    // passed validate. Both seams run in one fact, and validate must refuse with serve's message.
-    [Theory]
-    [InlineData("""{ "BifrostQL": { "Path": 5 } }""")]
-    [InlineData("""{ "BifrostQL:Playground": true }""")]
-    [InlineData("""{ "BifrostQL": { "DisableAuth": "maybe" } }""")]
-    [InlineData("""{ "ConnectionStrings": { "bifrost": 42 } }""")]
-    [InlineData("""{ "ConnectionStrings:bifrost": [ "a" ] }""")]
-    [InlineData("""{ "connectionStrings": 5 }""")]
-    public async Task ShapeServeRefuses_IsRefusedByConfigValidate(string config)
+    public static TheoryData<string> ShapesServeRefuses() => new()
     {
-        var serveRefusal = FluentActions.Invoking(() =>
+        """{ "BifrostQL": { "Path": 5 } }""",
+        """{ "BifrostQL:Playground": true }""",
+        """{ "BifrostQL": { "DisableAuth": "maybe" } }""",
+        """{ "ConnectionStrings": { "bifrost": 42 } }""",
+        """{ "ConnectionStrings:bifrost": [ "a" ] }""",
+        """{ "connectionStrings": 5 }""",
+    };
+
+    private static string ServeRefusal(string config)
+        => FluentActions.Invoking(() =>
             {
                 ConfigFileReader.ReadConnectionString(config);
                 ConfigFileReader.ReadBifrostSection(config);
             })
             .Should().Throw<ConfigFileShapeException>().Which.Message;
 
+    // config-validate read only the metadata rules, so a file serve refuses at its shape check
+    // passed validate. Both seams run in one fact, and validate must refuse with serve's message.
+    [Theory]
+    [MemberData(nameof(ShapesServeRefuses))]
+    public async Task ShapeServeRefuses_IsRefusedByConfigValidate(string config)
+    {
+        var serveRefusal = ServeRefusal(config);
+
         var (exit, json) = await RunRawAsync(null, config);
 
         exit.Should().Be(1, "config-validate must refuse a file serve refuses");
         json.GetProperty("success").GetBoolean().Should().BeFalse();
         json.GetProperty("error").GetString().Should().Be(serveRefusal);
+    }
+
+    // doctor read only the connection string and the metadata rules, so "Path": 5 passed doctor
+    // and then serve refused it. With --connection-string it skipped the connectionStrings
+    // checks too. Doctor must report serve's refusal, once, with and without the flag.
+    [Theory]
+    [MemberData(nameof(ShapesServeRefuses))]
+    public async Task ShapeServeRefuses_IsRefusedByDoctor(string config)
+    {
+        var serveRefusal = ServeRefusal(config);
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, config);
+
+        foreach (var flag in new[] { false, true })
+        {
+            var json = await RunDoctorAsync(configPath, flag);
+
+            json.GetProperty("success").GetBoolean().Should().BeFalse();
+            json.GetProperty("issues").EnumerateArray()
+                .Where(i => i.GetProperty("title").GetString() == "Invalid Config File")
+                .Select(i => i.GetProperty("message").GetString())
+                .Should().Equal(new[] { serveRefusal }, $"--connection-string given: {flag}");
+        }
+    }
+
+    // Control: a well-shaped file with no connection string is not a config-file fault when the
+    // flag supplies the connection, matching serve.
+    [Fact]
+    public async Task WellShapedFileWithoutConnectionString_DoctorWithFlag_ReportsNoConfigFileIssue()
+    {
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, """{ "BifrostQL": { "Path": "/gql", "Metadata": [ "dbo.orders { soft-delete: deleted_at }" ] } }""");
+
+        var json = await RunDoctorAsync(configPath, connectionStringFlag: true);
+
+        json.GetProperty("issues").EnumerateArray()
+            .Select(i => i.GetProperty("title").GetString())
+            .Should().NotContain("Invalid Config File");
+        json.GetProperty("checks").EnumerateArray()
+            .Should().Contain(c => c.GetProperty("name").GetString() == "Metadata Rules"
+                && c.GetProperty("message").GetString() == "1 rules found");
+    }
+
+    // A connection string that fails to parse, so doctor never dials a server.
+    private static async Task<JsonElement> RunDoctorAsync(string configPath, bool connectionStringFlag)
+    {
+        var args = new List<string> { "doctor", "--config", configPath, "--json" };
+        if (connectionStringFlag)
+            args.AddRange(new[] { "--connection-string", "Bogus Keyword=1" });
+        var writer = new StringWriter();
+        await new DoctorCommand().ExecuteAsync(ToolConfig.Parse(args.ToArray()), new OutputFormatter(writer, jsonMode: true));
+        return JsonDocument.Parse(writer.ToString()).RootElement.Clone();
     }
 
     [Fact]

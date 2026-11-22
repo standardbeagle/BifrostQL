@@ -6,8 +6,8 @@ using Microsoft.Extensions.Configuration;
 namespace BifrostQL.Tool.Commands;
 
 /// <summary>
-/// Validates metadata configuration rules with the runtime's own parser and validator.
-/// Every rule is parsed by <see cref="MetadataLoader"/>, exactly as the server parses it at
+/// Validates a config file with serve's own reader and the runtime's own parser and validator.
+/// The file goes through every shape and kind check serve applies. Every rule is parsed by <see cref="MetadataLoader"/>, exactly as the server parses it at
 /// startup, and each rule that would fail startup is reported. Given a connection string, the
 /// model is then loaded with those rules, which runs <c>ModelConfigValidator</c> against the live
 /// schema. Without one, only the parse is checked.
@@ -36,7 +36,9 @@ public sealed class ConfigValidateCommand : ICommand
         IReadOnlyList<string> rules;
         try
         {
-            rules = ConfigFileReader.ReadMetadataRules(configJson);
+            // Serve's own reader, so every shape and kind check serve applies to this file
+            // (connection string, Path, Playground, DisableAuth, Metadata) refuses it here too.
+            rules = ConfigFileReader.ReadServeConfig(configJson).Section.Metadata;
         }
         // JsonException: malformed JSON. ConfigFileShapeException: well-formed JSON of the
         // wrong shape. Neither message quotes the file's content.
@@ -217,6 +219,15 @@ internal static class ConfigFileReader
         }
         return file.Configuration.GetConnectionString(key);
     }
+
+    /// <summary>
+    /// Everything <c>bifrost serve</c> reads from a config file, through every shape and kind
+    /// check it applies. Serve and config-validate both read through here, so validate refuses
+    /// exactly the files serve refuses. A missing connection string is not a shape fault: it
+    /// comes back null for the caller to judge.
+    /// </summary>
+    public static (string? ConnectionString, BifrostConfigSection Section) ReadServeConfig(string json)
+        => (ReadConnectionString(json), ReadBifrostSection(json));
 
     public static BifrostConfigSection ReadBifrostSection(string json)
     {

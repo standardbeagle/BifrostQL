@@ -199,7 +199,7 @@ public sealed class ServeCommand : ICommand
         }
 
         var json = await File.ReadAllTextAsync(path);
-        var connStr = ConfigFileReader.ReadConnectionString(json);
+        var (connStr, section) = ConfigFileReader.ReadServeConfig(json);
         if (string.IsNullOrWhiteSpace(connStr))
         {
             if (output.IsJsonMode)
@@ -211,7 +211,6 @@ public sealed class ServeCommand : ICommand
             return null;
         }
 
-        var section = ConfigFileReader.ReadBifrostSection(json);
         section.ConfigFilePath = Path.GetFullPath(path);
         return new ResolvedConnection(connStr, section);
     }

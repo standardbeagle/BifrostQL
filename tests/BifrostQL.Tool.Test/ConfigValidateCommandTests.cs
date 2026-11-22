@@ -209,6 +209,31 @@ public sealed class ConfigValidateCommandTests : IDisposable
         => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
+    // config-validate read only the metadata rules, so a file serve refuses at its shape check
+    // passed validate. Both seams run in one fact, and validate must refuse with serve's message.
+    [Theory]
+    [InlineData("""{ "BifrostQL": { "Path": 5 } }""")]
+    [InlineData("""{ "BifrostQL:Playground": true }""")]
+    [InlineData("""{ "BifrostQL": { "DisableAuth": "maybe" } }""")]
+    [InlineData("""{ "ConnectionStrings": { "bifrost": 42 } }""")]
+    [InlineData("""{ "ConnectionStrings:bifrost": [ "a" ] }""")]
+    [InlineData("""{ "connectionStrings": 5 }""")]
+    public async Task ShapeServeRefuses_IsRefusedByConfigValidate(string config)
+    {
+        var serveRefusal = FluentActions.Invoking(() =>
+            {
+                ConfigFileReader.ReadConnectionString(config);
+                ConfigFileReader.ReadBifrostSection(config);
+            })
+            .Should().Throw<ConfigFileShapeException>().Which.Message;
+
+        var (exit, json) = await RunRawAsync(null, config);
+
+        exit.Should().Be(1, "config-validate must refuse a file serve refuses");
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().Be(serveRefusal);
+    }
+
     [Fact]
     public void ColonKeyedStringValues_AreReadLikeTheServerReadsThem()
     {

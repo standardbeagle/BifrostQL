@@ -1,3 +1,5 @@
+using BifrostQL.Core.Utils;
+
 namespace BifrostQL.Core.Storage
 {
     /// <summary>
@@ -58,7 +60,7 @@ namespace BifrostQL.Core.Storage
                 if (kv.Length != 2)
                     continue;
 
-                var key = kv[0].Trim().ToLowerInvariant();
+                var key = StringNormalizer.Normalize(kv[0]);
                 var value = kv[1].Trim();
 
                 switch (key)

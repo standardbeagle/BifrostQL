@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.UI.Vault;
 
@@ -276,7 +277,7 @@ public static class VaultServerProvider
     private static string MapSqlServerEncrypt(string? sslMode)
     {
         if (string.IsNullOrWhiteSpace(sslMode)) return "Mandatory";
-        return sslMode.Trim().ToLowerInvariant() switch
+        return StringNormalizer.Normalize(sslMode) switch
         {
             "false" or "disable" or "disabled" or "off" or "none" => "False",
             "true" or "require" or "required" or "mandatory" or "on"

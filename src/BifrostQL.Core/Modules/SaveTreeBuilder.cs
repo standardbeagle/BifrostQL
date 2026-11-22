@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Modules;
 
@@ -115,7 +116,7 @@ public sealed class SaveTreeBuilder
     {
         if (node.TryGetValue(OpField, out var raw) && raw is not null)
         {
-            var name = Convert.ToString(raw)?.Trim().ToLowerInvariant();
+            var name = StringNormalizer.Normalize(Convert.ToString(raw));
             return name switch
             {
                 "insert" => TreeSyncOperationType.Insert,

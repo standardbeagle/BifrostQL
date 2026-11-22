@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Auth;
 
@@ -150,7 +151,7 @@ public static class PolicyConfigCollector
     /// </summary>
     public static string NormalizeDenyMode(string raw)
     {
-        var mode = raw.Trim().ToLowerInvariant();
+        var mode = StringNormalizer.Normalize(raw);
         if (mode is "null" or "refuse")
             return mode;
         throw new InvalidOperationException(

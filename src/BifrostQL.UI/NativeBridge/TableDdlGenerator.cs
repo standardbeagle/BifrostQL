@@ -1,6 +1,7 @@
 using System.Text;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.UI.NativeBridge
 {
@@ -72,14 +73,14 @@ namespace BifrostQL.UI.NativeBridge
 
         private static bool IsLengthType(string type)
         {
-            var t = type.Trim().ToLowerInvariant();
+            var t = StringNormalizer.NormalizeType(type);
             return t is "char" or "nchar" or "varchar" or "nvarchar" or "binary" or "varbinary"
                 or "character" or "character varying" or "bit varying";
         }
 
         private static bool IsPrecisionType(string type)
         {
-            var t = type.Trim().ToLowerInvariant();
+            var t = StringNormalizer.NormalizeType(type);
             return t is "decimal" or "numeric";
         }
     }

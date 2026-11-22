@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Data.Common;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Model
 {
@@ -183,7 +184,7 @@ namespace BifrostQL.Core.Model
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
 
-            return providerName.Trim().ToLowerInvariant() switch
+            return StringNormalizer.Normalize(providerName) switch
             {
                 "sqlserver" or "mssql" => BifrostDbProvider.SqlServer,
                 "postgresql" or "postgres" or "npgsql" or "pgsql" => BifrostDbProvider.PostgreSql,

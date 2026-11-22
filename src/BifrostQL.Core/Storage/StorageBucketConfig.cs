@@ -1,3 +1,5 @@
+using BifrostQL.Core.Utils;
+
 namespace BifrostQL.Core.Storage
 {
     /// <summary>
@@ -73,7 +75,7 @@ namespace BifrostQL.Core.Storage
                     throw new InvalidOperationException(
                         $"Malformed storage config segment '{part}'; expected 'key:value'.");
 
-                var key = kv[0].Trim().ToLowerInvariant();
+                var key = StringNormalizer.Normalize(kv[0]);
                 var value = kv[1].Trim();
 
                 switch (key)

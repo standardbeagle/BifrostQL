@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Storage;
 
@@ -47,7 +48,7 @@ public static class FileFolderComputedColumnCollector
     }
 
     private static string NormalizeProvider(string provider)
-        => provider.Trim().ToLowerInvariant() switch
+        => StringNormalizer.Normalize(provider) switch
         {
             "local" => LocalProviderName,
             "s3" => S3ProviderName,

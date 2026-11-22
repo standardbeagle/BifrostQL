@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Auth;
 
@@ -234,7 +235,7 @@ public sealed record TablePolicy
         ColumnDenyModes = NormalizeDenyModes(columnDenyModes);
         TableDenyMode = string.IsNullOrWhiteSpace(tableDenyMode)
             ? null
-            : tableDenyMode.Trim().ToLowerInvariant();
+            : StringNormalizer.Normalize(tableDenyMode);
         RowScopeExpression = string.IsNullOrWhiteSpace(rowScopeExpression)
             ? null
             : rowScopeExpression.Trim();
@@ -293,7 +294,7 @@ public sealed record TablePolicy
         {
             if (string.IsNullOrWhiteSpace(column) || string.IsNullOrWhiteSpace(mode))
                 continue;
-            result[column.Trim()] = mode.Trim().ToLowerInvariant();
+            result[column.Trim()] = StringNormalizer.Normalize(mode);
         }
         return result;
     }

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -157,7 +158,7 @@ namespace BifrostQL.Core.Resolvers
             var raw = table.GetMetadataValue(MetadataKeys.Batch.DuplicatePolicy);
             if (string.IsNullOrWhiteSpace(raw))
                 return LastWins;
-            var policy = raw.Trim().ToLowerInvariant();
+            var policy = StringNormalizer.Normalize(raw);
             if (policy is LastWins or Reject)
                 return policy;
             throw new InvalidOperationException(

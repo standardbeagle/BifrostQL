@@ -27,6 +27,23 @@ public sealed class PolicyIdentityGrantsTests
     }
 
     [Fact]
+    public void TenantIsProjectedOnlyFromTheKeyTheCallerNames()
+    {
+        // The tenant lives under the model's tenant-context-key, which only the keyed overload
+        // knows. The key-less overload used to read tenant_id whatever the model configured.
+        var context = new Dictionary<string, object?>
+        {
+            [MetadataKeys.Auth.DefaultUserIdContextKey] = "user-1",
+            [MetadataKeys.Auth.DefaultTenantContextKey] = "mapped-tenant",
+            ["org_id"] = "configured-tenant",
+        };
+
+        PolicyIdentity.FromUserContext(context).TenantId.Should().BeNull();
+        PolicyIdentity.FromUserContext(context, "org_id").TenantId.Should().Be("configured-tenant");
+        PolicyIdentity.FromUserContext(context, tenantContextKey: null).TenantId.Should().Be("mapped-tenant");
+    }
+
+    [Fact]
     public void PermissionsProjectToRowScopeAndAdminGrant()
     {
         var member = PolicyIdentity.FromUserContext(new Dictionary<string, object?>

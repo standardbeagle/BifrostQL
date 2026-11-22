@@ -24,12 +24,22 @@ public static class PolicyIdentity
     /// A request with no resolved user still yields a stable <c>anonymous</c>
     /// identity so policy checks run normally (and deny by the table's rules)
     /// rather than being skipped.
+    /// <para>The identity carries no <see cref="AppIdentity.TenantId"/>: which user-context key
+    /// holds the tenant is the model's <c>tenant-context-key</c>, which this overload does not
+    /// know. A caller that reads the tenant uses
+    /// <see cref="FromUserContext(IDictionary{string, object?}, string?)"/> with
+    /// <c>TenantFilterTransformer.ResolveTenantContextKey(model)</c>.</para>
     /// </summary>
     public static AppIdentity FromUserContext(IDictionary<string, object?> userContext)
-        => FromUserContext(userContext, MetadataKeys.Auth.DefaultTenantContextKey);
+        => Build(userContext, tenantContextKey: null);
 
     /// <summary>Builds the policy identity including the configured tenant claim.</summary>
     public static AppIdentity FromUserContext(IDictionary<string, object?> userContext, string? tenantContextKey)
+        => Build(userContext, string.IsNullOrWhiteSpace(tenantContextKey)
+            ? MetadataKeys.Auth.DefaultTenantContextKey
+            : tenantContextKey);
+
+    private static AppIdentity Build(IDictionary<string, object?> userContext, string? tenantContextKey)
     {
         if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
@@ -40,10 +50,7 @@ public static class PolicyIdentity
         if (string.IsNullOrWhiteSpace(userId))
             userId = "anonymous";
 
-        tenantContextKey = string.IsNullOrWhiteSpace(tenantContextKey)
-            ? MetadataKeys.Auth.DefaultTenantContextKey
-            : tenantContextKey;
-        var tenantId = userContext.TryGetValue(tenantContextKey, out var tenantValue)
+        var tenantId = tenantContextKey is not null && userContext.TryGetValue(tenantContextKey, out var tenantValue)
             ? tenantValue?.ToString()
             : null;
 

@@ -1,5 +1,6 @@
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using System.Globalization;
 
 namespace BifrostQL.Server;
@@ -32,8 +33,12 @@ public sealed class StateTransitionAuditObserver : IStateTransitionObserver
             ["created_at"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
         };
 
-        if (userContext.TryGetValue(MetadataKeys.Auth.DefaultTenantContextKey, out var tenantId))
-            audit["tenant_id"] = ToAuditNumericValue(tenantId);
+        // The tenant the tenant filter scopes by: the model's tenant-context-key, not the
+        // mapper's default key. A raw principal claim under that key arrives as a one-element
+        // array, which the tenant filter reads as its single value; so does the audit row.
+        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(transition.Model);
+        if (userContext.TryGetValue(tenantKey, out var tenantId))
+            audit["tenant_id"] = ToAuditNumericValue(tenantId is Array { Length: 1 } single ? single.GetValue(0) : tenantId);
 
         await _executor.InsertAsync("audit_log", audit, BuildAuditContext(userContext));
     }

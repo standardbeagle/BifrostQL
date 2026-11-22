@@ -69,6 +69,25 @@ public sealed class StateTransitionAuditWireContextTests : IAsyncLifetime
         (await ScalarAsync("SELECT tenant_id FROM audit_log")).Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(null, "3")]
+    [InlineData(":root { tenant-context-key: org_id }", "5")]
+    public async Task AuditTenant_IsReadFromTheModelsTenantContextKey(string? metadata, string expectedTenant)
+    {
+        // The identity's tenant lands in tenant_id (3); the org_id claim (5) is what the tenant
+        // filter reads once tenant-context-key names it. The audit row records the tenant the
+        // tenant filter scoped the write by.
+        await StartAsync(metadata is null ? [] : [metadata]);
+
+        using var reply = await SendTransitionAsync(
+            new Dictionary<string, object?>(),
+            Principal(new Claim(ClaimTypes.NameIdentifier, "7"), new Claim(ClaimTypes.Role, "admin"),
+                new Claim(Auth.LocalAuthClaims.Tenant, "3"), new Claim("org_id", "5")));
+
+        Errors(reply).Should().BeEmpty();
+        (await ScalarAsync("SELECT tenant_id FROM audit_log")).Should().Be(long.Parse(expectedTenant));
+    }
+
     [Fact]
     public async Task WireUserKeyInAnotherCase_DoesNotSuppressTheAuditRow()
     {

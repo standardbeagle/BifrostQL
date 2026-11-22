@@ -32,7 +32,12 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
         "*.orders { tenant-filter: tenant_id }",
         "*.events { tenant-filter: tenant_id }",
         "*.tags { tenant-filter: tenant_id }",
+        "*.labels { tenant-filter: tenant_id }",
     };
+
+    // Longer than PostgreSQL's 63-byte identifier limit, and sharing its first 63 bytes.
+    private static readonly string LongLabelOne = new string('p', 63) + "_one";
+    private static readonly string LongLabelTwo = new string('p', 63) + "_two";
 
     public async Task InitializeAsync()
     {
@@ -95,6 +100,25 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
             INSERT INTO tags(id, tenant_id, grp, label) VALUES
                 (1, 1, 'x', NULL),
                 (2, 1, 'x', '_null_')
+            """);
+
+        await Exec("DROP TABLE IF EXISTS labels");
+        await Exec(
+            """
+            CREATE TABLE labels (
+                id INTEGER PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                grp TEXT NOT NULL,
+                label TEXT NOT NULL,
+                val REAL NOT NULL
+            )
+            """);
+        await Exec(
+            $"""
+            INSERT INTO labels(id, tenant_id, grp, label, val) VALUES
+                (1, 1, 'x', '{LongLabelOne}', 10),
+                (2, 1, 'x', '{LongLabelTwo}', 20),
+                (3, 1, 'x', 'grp', 30)
             """);
 
         var factory = new SqliteDbConnFactory(ConnString);
@@ -270,5 +294,29 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
         execution.Errors.Should().NotBeNullOrEmpty();
         (execution.Errors![0].InnerException?.Message ?? execution.Errors![0].Message)
             .Should().Contain("two output columns named '_null_'");
+    }
+
+    [Fact]
+    public async Task Pivot_CellsMapByPosition_ForLongLabels_AndALabelEqualToARowKey()
+    {
+        // Columns are aliased positionally and mapped back to their labels, so a label of
+        // any length keeps its own cell, and a label equal to a row-key column name ('grp')
+        // no longer collides with that column.
+        var execution = await ExecuteAsTenantAsync(
+            """
+            { labelsPivot(rowKeys: [grp], pivotColumn: label, valueColumn: val, aggregate: sum) }
+            """, tenantId: 1);
+        execution.Errors.Should().BeNullOrEmpty();
+        var pivot = JsonDocument.Parse(new GraphQLSerializer().Serialize(execution))
+            .RootElement.GetProperty("data").GetProperty("labelsPivot");
+
+        pivot.GetProperty("columns").EnumerateArray().Select(c => c.GetString())
+            .Should().BeEquivalentTo(new[] { LongLabelOne, LongLabelTwo, "grp" });
+        var row = pivot.GetProperty("rows")[0];
+        row.GetProperty("grp").GetString().Should().Be("x");
+        var cells = row.GetProperty("cells");
+        cells.GetProperty(LongLabelOne).GetDouble().Should().Be(10);
+        cells.GetProperty(LongLabelTwo).GetDouble().Should().Be(20);
+        cells.GetProperty("grp").GetDouble().Should().Be(30);
     }
 }

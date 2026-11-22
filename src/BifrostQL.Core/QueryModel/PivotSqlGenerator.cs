@@ -7,6 +7,16 @@ namespace BifrostQL.Core.QueryModel;
 public static class PivotSqlGenerator
 {
     /// <summary>
+    /// The result-set alias of the pivot column at <paramref name="position"/> in the
+    /// pivot-value list. Pivot columns are aliased by position, never by their label: a
+    /// label is client data of any length, and PostgreSQL truncates identifiers to 63
+    /// bytes, so a long label came back under another name (its cell read null) and two
+    /// labels sharing a 63-byte prefix collided. The caller maps each position back to
+    /// its label when it shapes the payload.
+    /// </summary>
+    public static string ColumnAlias(int position) => $"__pivot_{position}";
+
+    /// <summary>
     /// Dialect-aware entry point. Routes to the dialect's native PIVOT via
     /// <see cref="ISqlDialect.BuildNativePivot"/> when it provides one (only SQL
     /// Server), otherwise emits the portable CASE WHEN cross-tab fallback. Use this
@@ -64,9 +74,9 @@ public static class PivotSqlGenerator
         var caseColumns = new List<string>();
         var nextParamIndex = parameters.Count;
 
-        foreach (var value in pivotValues)
+        for (var position = 0; position < pivotValues.Count; position++)
         {
-            var alias = value == null ? config.NullLabel : value.ToString()!;
+            var value = pivotValues[position];
             string caseWhen;
 
             if (value == null)
@@ -80,7 +90,7 @@ public static class PivotSqlGenerator
                 caseWhen = $"{aggFunc}(CASE WHEN {pivotCol} = {paramName} THEN {valueCol} END)";
             }
 
-            caseColumns.Add($"{caseWhen} AS {dialect.EscapeIdentifier(alias)}");
+            caseColumns.Add($"{caseWhen} AS {dialect.EscapeIdentifier(ColumnAlias(position))}");
         }
 
         var caseColumnsSql = string.Join(", ", caseColumns);

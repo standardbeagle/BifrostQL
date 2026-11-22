@@ -55,10 +55,10 @@ public sealed class SqlServerPivotLabelTests
                 cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value);
             await using var rows = await cmd.ExecuteReaderAsync();
             (await rows.ReadAsync()).Should().BeTrue();
-            foreach (var value in pivotValues)
+            for (var position = 0; position < pivotValues.Count; position++)
             {
-                var label = value!.ToString()!;
-                rows[label].Should().Be(1, $"one row has {pivotColumn} = {label}");
+                var label = pivotValues[position]!.ToString()!;
+                rows[PivotSqlGenerator.ColumnAlias(position)].Should().Be(1, $"one row has {pivotColumn} = {label}");
             }
         }
         finally

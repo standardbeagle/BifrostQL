@@ -590,23 +590,27 @@ namespace BifrostQL.Core.Resolvers
                     "or pivot on a lower-cardinality column.");
             var pivotValues = distinctRows.Select(r => ReaderEnum.DbConvert(r.Length > 0 ? r[0] : null)).ToList();
 
-            // Every output column — the row keys plus one per pivot value — becomes a
-            // result-set column name AND a JSON payload key, both of which must be
-            // unique. Two pivot values whose labels coincide (classically a NULL, which
-            // takes the null label, alongside a literal equal to that label) or a value
-            // whose label matches a row-key column name would emit duplicate columns:
-            // the reader can't index them and the JSON object can't hold both. Reject
-            // with an actionable message BEFORE running the pivot on EITHER dialect,
-            // rather than surfacing the reader's opaque duplicate-name failure.
+            // Each pivot value's label is a key of every row's `cells` object, so labels
+            // must be unique. Two pivot values whose labels coincide (classically a NULL,
+            // which takes the null label, alongside a literal equal to that label) cannot
+            // both be held. Reject with an actionable message BEFORE running the pivot.
+            // The result-set columns are aliased by position (PivotSqlGenerator.ColumnAlias),
+            // so a label never becomes a SQL identifier and cannot collide with a row key.
             var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
-            var duplicate = config.GroupByColumns.Concat(labels)
+            var duplicate = labels
                 .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault(g => g.Count() > 1);
             if (duplicate != null)
                 throw new BifrostExecutionError(
                     $"Pivot of '{request.PivotColumnGraphQlName}' produces two output columns named '{duplicate.Key}' " +
-                    "(two pivot values sharing a label — e.g. a NULL and a literal null label — or a value matching a " +
-                    "row-key column). Filter or rename one of the colliding values before pivoting.");
+                    "(two pivot values sharing a label — e.g. a NULL and a literal null label). " +
+                    "Filter or rename one of the colliding values before pivoting.");
+            var rowKeyMatchingAlias = config.GroupByColumns.FirstOrDefault(c =>
+                Enumerable.Range(0, labels.Count).Any(i =>
+                    string.Equals(c, PivotSqlGenerator.ColumnAlias(i), StringComparison.OrdinalIgnoreCase)));
+            if (rowKeyMatchingAlias != null)
+                throw new BifrostExecutionError(
+                    $"Pivot row key '{rowKeyMatchingAlias}' collides with the pivot's reserved column names (__pivot_N).");
 
             // (2) Cross-tabulate with those values under the same scope filter. The
             // cross-tab is a GROUP BY over the row keys, so `rowKeys: [id]` is one output
@@ -628,10 +632,10 @@ namespace BifrostQL.Core.Resolvers
             // The filter guard above already rejects an encrypted column in any pivot
             // position, so this is the second line rather than the first — it holds
             // even in a host that registers no EncryptedColumnReadGuard. The pivot
-            // COLUMN LABELS are deliberately not projected: they are also the
-            // generated SQL result-set column names, so rewriting them would break the
-            // label→cell mapping — the filter guard is what keeps ciphertext out of
-            // that position.
+            // COLUMN LABELS are deliberately not projected: they are the values the
+            // cross-tab matched on (SQL Server's native PIVOT names them in its IN list),
+            // so rewriting them would misreport which value each column counts — the
+            // filter guard is what keeps ciphertext out of that position.
             var readChain = await TableReadChain.ForAsync(
                 context.RequestServices, _dbModel, table, scopedContext, ReadProjection.Client);
 
@@ -680,10 +684,10 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Shapes the cross-tab result set into the JSON pivot payload. Row-key values
         /// are read by their DB column name and keyed by GraphQL name for a stable
-        /// client contract; each pivot cell is read by its column <paramref name="labels"/> —
-        /// the same labels <see cref="PivotSqlGenerator"/> aliased the CASE columns with
-        /// (each value's string form, or the config's null label for NULL), already
-        /// verified collision-free by the caller.
+        /// client contract; the pivot cell at position i is read from the positional alias
+        /// <see cref="PivotSqlGenerator.ColumnAlias"/>(i) and keyed by <paramref name="labels"/>[i]
+        /// (the value's string form, or the config's null label for NULL), already verified
+        /// collision-free by the caller.
         /// </summary>
         private static IReadOnlyDictionary<string, object?> BuildPivotPayload(
             PivotQueryConfig config, PivotRequest request,
@@ -700,8 +704,8 @@ namespace BifrostQL.Core.Resolvers
                         config.GroupByColumns[i], ReadCell(index, row, config.GroupByColumns[i]));
 
                 var cells = new Dictionary<string, object?>(StringComparer.Ordinal);
-                foreach (var label in labels)
-                    cells[label] = ReadCell(index, row, label);
+                for (var position = 0; position < labels.Count; position++)
+                    cells[labels[position]] = ReadCell(index, row, PivotSqlGenerator.ColumnAlias(position));
                 rowObj["cells"] = cells;
                 outRows.Add(rowObj);
             }
@@ -993,10 +997,15 @@ namespace BifrostQL.Core.Resolvers
             return result;
         }
 
+        /// <summary>
+        /// The cell under <paramref name="alias"/>. Every alias read here is one the
+        /// generated SQL emitted, so a missing column is a generator/reader mismatch and
+        /// throws — never a null cell standing in for data that was not read.
+        /// </summary>
         private static object? ReadCell(IDictionary<string, int> index, object?[] row, string alias)
             => index.TryGetValue(alias, out var ordinal) && ordinal < row.Length
                 ? ReaderEnum.DbConvert(row[ordinal])
-                : null;
+                : throw new InvalidOperationException($"Pivot result set has no column '{alias}'.");
 
         /// <summary>
         /// Fires one query-observer phase notification. Centralizes the

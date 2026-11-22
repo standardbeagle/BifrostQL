@@ -224,7 +224,7 @@ public sealed class PivotQueryTests
         var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
-        result.Sql.Should().Contain("SELECT [Region], [Active], [Inactive], [Pending]");
+        result.Sql.Should().Contain("SELECT [Region], [Active] AS [__pivot_0], [Inactive] AS [__pivot_1], [Pending] AS [__pivot_2] FROM");
         result.Sql.Should().Contain("PIVOT (COUNT([Id])");
         result.Sql.Should().Contain("FOR [__pivot_col] IN ([Active], [Inactive], [Pending])");
         result.Sql.Should().Contain("FROM [Orders]");
@@ -239,7 +239,7 @@ public sealed class PivotQueryTests
         var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Sales]", pivotValues);
 
-        result.Sql.Should().Contain("SELECT [Region], [Year], [Open], [Closed]");
+        result.Sql.Should().Contain("SELECT [Region], [Year], [Open] AS [__pivot_0], [Closed] AS [__pivot_1] FROM");
         result.Sql.Should().Contain("PIVOT (SUM([Amount])");
     }
 
@@ -380,8 +380,11 @@ public sealed class PivotQueryTests
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region]");
-        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p0 THEN [Id] END) AS [Active]");
-        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p1 THEN [Id] END) AS [Inactive]");
+        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p0 THEN [Id] END) AS [__pivot_0],");
+        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p1 THEN [Id] END) AS [__pivot_1] FROM");
+        // A label is client data of any length (PostgreSQL truncates identifiers at 63
+        // bytes), so it never becomes the result-set alias.
+        result.Sql.Should().NotContain("AS [Active]").And.NotContain("AS [Inactive]");
         result.Sql.Should().Contain("GROUP BY [Region]");
         result.Parameters.Should().HaveCount(2);
     }
@@ -395,8 +398,8 @@ public sealed class PivotQueryTests
         var result = PivotSqlGenerator.GenerateCaseWhenPivot(
             Dialect, config, "[Orders]", pivotValues);
 
-        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] IS NULL THEN [Id] END) AS [_null_]");
-        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p0 THEN [Id] END) AS [Active]");
+        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p0 THEN [Id] END) AS [__pivot_0],");
+        result.Sql.Should().Contain("COUNT(CASE WHEN [Status] IS NULL THEN [Id] END) AS [__pivot_1] FROM");
         // Only one parameter for "Active", the NULL check uses IS NULL
         result.Parameters.Should().ContainSingle(p => p.Name == "@p0");
     }
@@ -410,7 +413,7 @@ public sealed class PivotQueryTests
         var result = PivotSqlGenerator.GenerateCaseWhenPivot(
             Dialect, config, "[Orders]", pivotValues);
 
-        result.Sql.Should().Contain("SUM(CASE WHEN [Status] = @p0 THEN [Amount] END) AS [Open]");
+        result.Sql.Should().Contain("SUM(CASE WHEN [Status] = @p0 THEN [Amount] END) AS [__pivot_0] FROM");
     }
 
     [Fact]
@@ -536,7 +539,7 @@ public sealed class PivotQueryTests
             Dialect, config, tableRef, pivotValues);
 
         // Assert
-        pivotSql.Sql.Should().Contain("SELECT [Region], [Q1], [Q2], [Q3], [Q4]");
+        pivotSql.Sql.Should().Contain("SELECT [Region], [Q1] AS [__pivot_0], [Q2] AS [__pivot_1], [Q3] AS [__pivot_2], [Q4] AS [__pivot_3] FROM");
         pivotSql.Sql.Should().Contain("PIVOT (SUM([Amount])");
         pivotSql.Sql.Should().Contain("FOR [__pivot_col] IN ([Q1], [Q2], [Q3], [Q4])");
     }
@@ -567,8 +570,8 @@ public sealed class PivotQueryTests
 
         // Assert
         result.Sql.Should().Contain("SELECT [Region]");
-        result.Sql.Should().Contain("SUM(CASE WHEN [Quarter] = @p0 THEN [Amount] END) AS [Q1]");
-        result.Sql.Should().Contain("SUM(CASE WHEN [Quarter] = @p1 THEN [Amount] END) AS [Q2]");
+        result.Sql.Should().Contain("SUM(CASE WHEN [Quarter] = @p0 THEN [Amount] END) AS [__pivot_0],");
+        result.Sql.Should().Contain("SUM(CASE WHEN [Quarter] = @p1 THEN [Amount] END) AS [__pivot_1] FROM");
         result.Sql.Should().Contain("GROUP BY [Region]");
         result.Parameters.Should().HaveCount(2);
     }
@@ -593,7 +596,7 @@ public sealed class PivotQueryTests
         var caseResult = PivotSqlGenerator.GenerateCaseWhenPivot(
             Dialect, config, "[dbo].[Orders]", pivotValues, filter);
 
-        caseResult.Sql.Should().Contain("AVG(CASE WHEN [Status] IS NULL THEN [Total] END) AS [_null_]");
+        caseResult.Sql.Should().Contain("AVG(CASE WHEN [Status] IS NULL THEN [Total] END) AS [__pivot_1],");
         caseResult.Sql.Should().Contain("WHERE [Year] >= @p0");
         caseResult.Sql.Should().Contain("GROUP BY [Category]");
     }

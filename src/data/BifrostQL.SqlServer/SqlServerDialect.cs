@@ -164,6 +164,10 @@ public sealed class SqlServerDialect : SqlDialectBase
             .ToList();
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));
+        // The PIVOT output columns carry the labels; the outer SELECT renames each to its
+        // positional alias, the same result-set shape the CASE WHEN cross-tab emits.
+        var positionalColumnList = string.Join(", ", pivotAliases.Select((label, position) =>
+            $"{EscapeIdentifier(label)} AS {EscapeIdentifier(PivotSqlGenerator.ColumnAlias(position))}"));
 
         // Bind NullLabel as a parameter to prevent SQL injection via user-controlled
         // config values. The index is offset past the filter params so names don't collide.
@@ -179,7 +183,7 @@ public sealed class SqlServerDialect : SqlDialectBase
         if (filter != null && !string.IsNullOrEmpty(filter.Sql))
             sourceSql += filter.Sql;
 
-        var sql = $"SELECT {groupByCols}, {pivotColumnList}" +
+        var sql = $"SELECT {groupByCols}, {positionalColumnList}" +
                   $" FROM ({sourceSql}) AS __src" +
                   $" PIVOT ({aggFunc}({valueCol}) FOR {EscapeIdentifier("__pivot_col")} IN ({pivotColumnList})) AS __pvt";
 

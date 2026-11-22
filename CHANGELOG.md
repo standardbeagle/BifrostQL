@@ -53,6 +53,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **A raw-claim tenant (`tenant-context-key` fed by a raw principal claim) is read as its single value everywhere.** Deferred change sets, pending changes, approvals and outbox rows recorded it as `"System.String[]"`, which merged every tenant: one org's review queue listed another's change sets, undo crossed tenants, and `pending_changes` reads returned other tenants' rows. A multi-valued tenant claim is refused, including by operations that touch no tenant table. Rows already stamped `"System.String[]"` match no caller and their approvals are refused; re-stamp them from `requester_context` or reject them.
 - **`transition-not-by` compares actors as values.** A numeric actor claim (`42.0` against a stored `42`) or a non-invariant culture made the author look like a different actor, so the author could approve their own row. JSON-number actors that are not integers are refused.
 - **`transition-not-by` no longer lets an author self-approve when the actor is a large number written in exponent form** (`1E+17` against `100000000000000000`).
+- **A host `IBifrostAuthContextFactory` context is normalised to case-insensitive keys at every identity seam, so reads and writes agree; keys that differ only in case are refused.** Reads scoped by `Org_Id` while writes answered "Tenant context required", and on MCP twin keys crashed session setup instead of refusing.
+- **`transition-not-by` compares exponent-form actors as doubles,** so a non-round large double (`1.2345678901234568E+17`) no longer lets its author self-approve.
 
 ### Breaking — fifth review pass
 
@@ -117,6 +119,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **A tenant claim whose case differs from `tenant-context-key` resolves the same on every surface.** User-context copies dropped the case-insensitive comparer, so GraphQL reads refused what mutations accepted. Every copy goes through `UserContexts.Copy`.
 - **`bifrost config-validate`, `doctor` and `serve` accept config files with comments and trailing commas, as the server does.**
 - **Docs: `IGrantResolver` receives only the identity tenant (`tenant_id`), not the `tenant-context-key` value;** grants resolve before any endpoint's model is known.
+- **The CLI (`serve`, `doctor`, `config-validate`) reads config keys case-insensitively, as the server does,** and refuses leaf keys that differ only in case. `"connectionstrings"` was reported missing and `"bifrostql"` was half-read.
+- **`IGrantResolver` receives the principal's raw claims in `AppIdentity.Claims`,** so a per-tenant resolver can read a raw `org_id` claim on every transport.
 
 ### Security — silent fallbacks
 

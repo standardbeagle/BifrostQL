@@ -79,7 +79,12 @@ cannot see. The resolver runs the tenant-isolation and soft-delete filter
 transformers **before** the distinct-value discovery query, so a cross-tenant
 pivot value never appears as an output column. This is the same fail-closed
 filter path the row and [aggregate](/BifrostQL/guides/aggregate-queries/) queries
-use. All identifiers are schema-derived and all values are parameterized.
+use. Table and column identifiers are schema-derived, and filter values and the
+null label are parameterized. Pivot *values* are data, not schema: the portable
+cross-tab binds each as a parameter, but SQL Server's native `PIVOT` writes each
+string value into its `IN` list as an escaped, bracket-quoted identifier. A value
+that cannot be an identifier (empty, or longer than 128 characters) takes the
+portable cross-tab instead.
 
 ## Cardinality cap
 

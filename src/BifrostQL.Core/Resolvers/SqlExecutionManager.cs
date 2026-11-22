@@ -595,7 +595,10 @@ namespace BifrostQL.Core.Resolvers
             // which takes the null label, alongside a literal equal to that label) cannot
             // both be held. Reject with an actionable message BEFORE running the pivot.
             // The result-set columns are aliased by position (PivotSqlGenerator.ColumnAlias),
-            // so a label never becomes a SQL identifier and cannot collide with a row key.
+            // so a label never names a result-set column and cannot collide with a row key.
+            // SQL Server's native PIVOT still writes each string label into its IN list as an
+            // escaped identifier (SqlServerDialect.BuildNativePivot), and falls back to the
+            // portable CASE WHEN pivot for a label that cannot be one.
             var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
             var duplicate = labels
                 .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)

@@ -67,6 +67,49 @@ public sealed class SqlServerPivotLabelTests
         }
     }
 
+    /// <summary>
+    /// The native PIVOT names each label as a bracketed identifier in its <c>IN (...)</c>
+    /// list. A label longer than 128 characters is error 103, and an empty one renders
+    /// <c>[]</c>, error 1038. Such labels take the CASE WHEN pivot, which binds them as
+    /// parameters. "short" is the control column in every case.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(129)]
+    [InlineData(0)]
+    [InlineData(128)]
+    public async Task Pivot_label_that_cannot_be_an_identifier_keeps_its_cell(int labelLength)
+    {
+        var connString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        Skip.If(string.IsNullOrEmpty(connString), "BIFROST_TEST_SQLSERVER not set");
+
+        var label = new string('x', labelLength);
+        var table = $"bq_pivot_{Guid.NewGuid():N}";
+        await using var conn = new SqlConnection(connString);
+        await conn.OpenAsync();
+        await ExecAsync(conn, $"""
+            CREATE TABLE [dbo].[{table}] (id int PRIMARY KEY, region nvarchar(20) NOT NULL, status nvarchar(200) NOT NULL);
+            INSERT INTO [dbo].[{table}] VALUES (1, N'north', N'{label}'), (2, N'north', N'short');
+            """);
+        try
+        {
+            var pivotValues = new List<object?> { label, "short" };
+            var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+            var pivot = PivotSqlGenerator.GeneratePivot(SqlServerDialect.Instance, config, $"[dbo].[{table}]", pivotValues);
+
+            await using var cmd = new SqlCommand(pivot.Sql, conn);
+            foreach (var p in pivot.Parameters)
+                cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value);
+            await using var rows = await cmd.ExecuteReaderAsync();
+            (await rows.ReadAsync()).Should().BeTrue();
+            rows[PivotSqlGenerator.ColumnAlias(0)].Should().Be(1, $"one row has the {labelLength}-character label");
+            rows[PivotSqlGenerator.ColumnAlias(1)].Should().Be(1, "one row has the label 'short'");
+        }
+        finally
+        {
+            await ExecAsync(conn, $"DROP TABLE [dbo].[{table}]");
+        }
+    }
+
     private static async Task ExecAsync(SqlConnection conn, string sql)
     {
         await using var cmd = new SqlCommand(sql, conn);

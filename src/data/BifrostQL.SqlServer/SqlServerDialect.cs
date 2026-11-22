@@ -15,6 +15,9 @@ public sealed class SqlServerDialect : SqlDialectBase
 {
     private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.SqlServer);
 
+    /// <summary> The longest identifier SQL Server accepts (sysname). </summary>
+    private const int MaxIdentifierLength = 128;
+
     /// <inheritdoc />
     /// <remarks>
     /// SQL Server has no read-only transaction, and T-SQL needs no separator between
@@ -162,6 +165,14 @@ public sealed class SqlServerDialect : SqlDialectBase
         var pivotAliases = pivotValues
             .Select(v => v == null ? config.NullLabel : v.ToString()!)
             .ToList();
+
+        // Native PIVOT names each output column by its label, so every label becomes a
+        // bracket-quoted identifier in the IN list. SQL Server refuses an empty identifier
+        // (error 1038) and one longer than 128 characters (error 103), which failed the
+        // whole pivot. Such a label takes the portable CASE WHEN pivot, which binds it as a
+        // parameter value.
+        if (pivotAliases.Any(label => label.Length == 0 || label.Length > MaxIdentifierLength))
+            return null;
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));
         // The PIVOT output columns carry the labels; the outer SELECT renames each to its

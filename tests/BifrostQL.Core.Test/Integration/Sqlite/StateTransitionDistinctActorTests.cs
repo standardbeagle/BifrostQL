@@ -43,7 +43,8 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
             "INSERT INTO claims (id, title, status, created_by) VALUES (1, 'by alice', 'submitted', 'alice'), " +
             "(2, 'legacy', 'submitted', NULL), (3, 'by a guid', 'submitted', '0f8fad5b-d9cb-469f-a165-70867728950e'), " +
             "(4, 'by employee 42', 'submitted', '42'), (5, 'by employee 42.5', 'submitted', '42.5'), " +
-            "(6, 'by employee 1e17', 'submitted', '100000000000000000');",
+            "(6, 'by employee 1e17', 'submitted', '100000000000000000'), " +
+            "(7, 'by employee 123456789012345678', 'submitted', '123456789012345678');",
             _keepAlive);
         await cmd.ExecuteNonQueryAsync();
     }
@@ -116,6 +117,23 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
 
         await Approve(6, 1.5e17d);
         (await StatusAsync(6)).Should().Be("approved", "control: a different actor in exponent form may approve");
+    }
+
+    [Fact]
+    public async Task Author_AsANonRoundDoubleClaimInExponentForm_IsStillTheAuthor()
+    {
+        // 123456789012345678 as a double formats as "1.2345678901234568E+17", which parsed as a
+        // decimal is 123456789012345680, not the stored 123456789012345678: the author approved
+        // their own row. The double is the nearest one to the stored id, so they are one actor.
+        Convert.ToString(123456789012345678d, CultureInfo.InvariantCulture)
+            .Should().Be("1.2345678901234568E+17", "control: the actor's text is non-round exponent form");
+        var byAuthor = () => Approve(7, 123456789012345678d);
+
+        await byAuthor.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        (await StatusAsync(7)).Should().Be("submitted");
+
+        await Approve(7, 2e17d);
+        (await StatusAsync(7)).Should().Be("approved", "control: a different actor in exponent form may approve");
     }
 
     [Fact]

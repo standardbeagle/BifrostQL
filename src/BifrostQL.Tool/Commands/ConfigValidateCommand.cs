@@ -1,31 +1,23 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Model;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Tool.Commands;
 
 /// <summary>
-/// Validates metadata configuration rules against the live database schema.
+/// Validates metadata configuration rules with the runtime's own parser and validator.
+/// Every rule is parsed by <see cref="MetadataLoader"/>, exactly as the server parses it at
+/// startup, and each rule that would fail startup is reported. Given a connection string, the
+/// model is then loaded with those rules, which runs <c>ModelConfigValidator</c> against the live
+/// schema. Without one, only the parse is checked.
 /// </summary>
 public sealed class ConfigValidateCommand : ICommand
 {
     public string Name => "config-validate";
-    public string Description => "Validate config rules against the database schema";
+    public string Description => "Validate config rules (parse; against the database schema with --connection-string)";
 
     public async Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
     {
-        var connectionString = config.ConnectionString;
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            if (output.IsJsonMode)
-            {
-                output.WriteJson(new { success = false, error = "Connection string is required. Use --connection-string." });
-                return 1;
-            }
-            output.WriteError("Connection string is required. Use --connection-string.");
-            return 1;
-        }
-
         var configPath = config.ConfigPath ?? Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
         if (!File.Exists(configPath))
         {
@@ -39,70 +31,89 @@ public sealed class ConfigValidateCommand : ICommand
             return 1;
         }
 
-        try
+        var configJson = await File.ReadAllTextAsync(configPath);
+        var rules = ConfigFileReader.ReadMetadataRules(configJson);
+        var issues = ParseRules(rules);
+
+        var modelValidated = false;
+        if (issues.Count == 0 && !string.IsNullOrWhiteSpace(config.ConnectionString))
         {
-            var configJson = await File.ReadAllTextAsync(configPath);
-            var rules = ConfigFileReader.ReadMetadataRules(configJson);
-
-            var metadataLoader = new MetadataLoader(Array.Empty<string>());
-            var loader = new DbModelLoader(connectionString, metadataLoader);
-            var model = await loader.LoadAsync();
-
-            var validator = new ConfigValidator();
-            var issues = validator.Validate(rules, model);
-
-            var errors = issues.Where(i => i.Severity == ConfigIssueSeverity.Error).ToList();
-            var warnings = issues.Where(i => i.Severity == ConfigIssueSeverity.Warning).ToList();
-
-            if (output.IsJsonMode)
+            try
             {
-                output.WriteJson(new
+                await new DbModelLoader(config.ConnectionString, new MetadataLoader(rules)).LoadAsync();
+                modelValidated = true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                issues.Add(new ConfigIssue(null, ex.Message));
+            }
+            catch (DbException ex)
+            {
+                if (output.IsJsonMode)
                 {
-                    success = errors.Count == 0,
-                    ruleCount = rules.Count,
-                    errorCount = errors.Count,
-                    warningCount = warnings.Count,
-                    issues = issues.Select(i => new { severity = i.Severity.ToString(), rule = i.Rule, message = i.Message }),
-                });
-                return errors.Count > 0 ? 1 : 0;
-            }
-
-            output.WriteHeader($"Validated {rules.Count} rules from {configPath}");
-
-            if (errors.Count == 0 && warnings.Count == 0)
-            {
-                output.WriteSuccess("All rules valid.");
-                return 0;
-            }
-
-            foreach (var error in errors)
-            {
-                output.WriteError($"  ERROR: {error.Message}");
-                output.WriteInfo($"         Rule: {error.Rule}");
-            }
-
-            foreach (var warning in warnings)
-            {
-                output.WriteWarning($"  WARN:  {warning.Message}");
-                output.WriteInfo($"         Rule: {warning.Rule}");
-            }
-
-            output.WriteInfo("");
-            output.WriteInfo($"  {errors.Count} error(s), {warnings.Count} warning(s)");
-
-            return errors.Count > 0 ? 1 : 0;
-        }
-        catch (SqlException ex)
-        {
-            if (output.IsJsonMode)
-            {
-                output.WriteJson(new { success = false, error = ex.Message });
+                    output.WriteJson(new { success = false, error = ex.Message });
+                    return 1;
+                }
+                output.WriteError($"Validation failed: {ex.Message}");
                 return 1;
             }
-            output.WriteError($"Validation failed: {ex.Message}");
+        }
+
+        if (output.IsJsonMode)
+        {
+            output.WriteJson(new
+            {
+                success = issues.Count == 0,
+                ruleCount = rules.Count,
+                errorCount = issues.Count,
+                modelValidated,
+                issues = issues.Select(i => new { rule = i.Rule, message = i.Message }),
+            });
+            return issues.Count > 0 ? 1 : 0;
+        }
+
+        output.WriteHeader($"Validated {rules.Count} rules from {configPath}");
+
+        foreach (var issue in issues)
+        {
+            output.WriteError($"  ERROR: {issue.Message}");
+            if (issue.Rule != null)
+                output.WriteInfo($"         Rule: {issue.Rule}");
+        }
+
+        if (issues.Count > 0)
+        {
+            output.WriteInfo("");
+            output.WriteInfo($"  {issues.Count} error(s)");
             return 1;
         }
+
+        output.WriteSuccess(modelValidated
+            ? "All rules valid against the database schema."
+            : "All rules parse. Pass --connection-string to validate them against the database schema.");
+        return 0;
     }
+
+    // Parses each rule on its own through the runtime parser, so every malformed rule is
+    // reported, not only the first one the server would stop at.
+    private static List<ConfigIssue> ParseRules(IReadOnlyList<string> rules)
+    {
+        var issues = new List<ConfigIssue>();
+        foreach (var rule in rules)
+        {
+            try
+            {
+                _ = new MetadataLoader(new[] { rule });
+            }
+            catch (ArgumentException ex)
+            {
+                issues.Add(new ConfigIssue(rule, ex.Message));
+            }
+        }
+        return issues;
+    }
+
+    private sealed record ConfigIssue(string? Rule, string Message);
 }
 
 /// <summary>

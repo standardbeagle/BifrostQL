@@ -127,7 +127,7 @@ dotnet tool uninstall --global BifrostQL.Tool
 | `bifrost doctor` | Diagnose configuration issues |
 | `bifrost watch` | Watch for schema changes |
 | `bifrost export [format]` | Export schema (json/sql/markdown) |
-| `bifrost config-validate` | Validate metadata rules |
+| `bifrost config-validate` | Parse metadata rules with the server's parser; with `--connection-string`, load the model and run model-load validation |
 | `bifrost config-generate` | Auto-generate config rules |
 | `bifrost init` | Create default config file |
 

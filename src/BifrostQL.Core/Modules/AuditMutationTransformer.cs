@@ -143,9 +143,29 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
     internal static void StampActor(
         IDbModel model, IDictionary<string, object?> userContext, IDictionary<string, object?> data, string column)
     {
-        if (string.IsNullOrWhiteSpace(model.GetMetadataValue(MetadataKeys.Audit.UserKey)))
+        if (!HasActorSource(model))
             data.Remove(column);
         else
             data[column] = ResolveActor(model, userContext);
+    }
+    /// <summary>
+    /// Whether the model names the claim an actor column is stamped from (<c>user-audit-key</c>).
+    /// Without it <see cref="StampActor"/> strips every actor column from the write, so model
+    /// load refuses an actor column on a model without one (ModelConfigValidator).
+    /// </summary>
+    internal static bool HasActorSource(IDbModel model)
+        => !string.IsNullOrWhiteSpace(model.GetMetadataValue(MetadataKeys.Audit.UserKey));
+
+    /// <summary>
+    /// Whether <paramref name="column"/> declares a populator this transformer stamps with the
+    /// actor (<c>created-by</c>, <c>updated-by</c>, <c>deleted-by</c>), by the same
+    /// comparisons the stamping switch makes.
+    /// </summary>
+    internal static bool StampsActor(ColumnDto column)
+    {
+        var marker = MetadataKeys.AutoPopulate.Marker;
+        return column.CompareMetadata(marker, MetadataKeys.AutoPopulate.CreatedBy)
+            || column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)
+            || column.CompareMetadata(marker, MetadataKeys.AutoPopulate.DeletedBy);
     }
 }

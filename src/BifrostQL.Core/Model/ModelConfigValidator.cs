@@ -69,6 +69,7 @@ namespace BifrostQL.Core.Model
                 ValidateColumnReference(table, MetadataKeys.SoftDelete.DeletedBy, errors);
                 ValidateColumnReference(table, MetadataKeys.Concurrency.Token, errors);
                 ValidateSoftDeleteNullability(table, errors);
+                ValidateSoftDeleteActor(model, table, errors);
                 ValidateAutoFilter(table, errors);
                 ValidateStateMachine(table, errors);
                 ValidatePolicy(table, model.TypeMapper, errors);
@@ -93,6 +94,7 @@ namespace BifrostQL.Core.Model
                     ValidateUnknownMetadataKeys(
                         column.Metadata, MetadataValidator.KnownColumnKeys, "column", columnRef, errors);
                     ValidateAutoPopulate(table, column, errors);
+                    ValidateActorPopulator(model, table, column, errors);
                     ValidateCrypto(table, column, errors);
                 }
             }
@@ -332,6 +334,38 @@ namespace BifrostQL.Core.Model
         {
             ValidateNullableColumnReference(table, MetadataKeys.SoftDelete.Column, errors);
             ValidateNullableColumnReference(table, MetadataKeys.SoftDelete.DeletedBy, errors);
+        }
+
+        /// <summary>
+        /// An actor column (<c>soft-delete-by</c>, <c>populate: created-by/updated-by/deleted-by</c>)
+        /// is stamped from the claim <c>user-audit-key</c> names. Without that key the stamp
+        /// strips the column from every write (<see cref="Modules.AuditMutationTransformer.StampActor"/>),
+        /// so the column silently stays NULL or its DB default; refuse the model instead.
+        /// </summary>
+        private static void ValidateSoftDeleteActor(IDbModel model, IDbTable table, List<string> errors)
+        {
+            var column = table.GetMetadataValue(MetadataKeys.SoftDelete.DeletedBy);
+            if (string.IsNullOrWhiteSpace(column) || Modules.AuditMutationTransformer.HasActorSource(model))
+                return;
+            errors.Add(Problem(table, MetadataKeys.SoftDelete.DeletedBy, column, MissingActorSource(model)));
+        }
+
+        private static void ValidateActorPopulator(IDbModel model, IDbTable table, ColumnDto column, List<string> errors)
+        {
+            if (!Modules.AuditMutationTransformer.StampsActor(column) || Modules.AuditMutationTransformer.HasActorSource(model))
+                return;
+            errors.Add(
+                $"  {table.TableSchema}.{table.DbName}.{column.ColumnName} [{MetadataKeys.AutoPopulate.Marker}]: " +
+                $"'{column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker)}' - {MissingActorSource(model)}");
+        }
+
+        private static string MissingActorSource(IDbModel model)
+        {
+            var reason = $"the model declares no '{MetadataKeys.Audit.UserKey}', so the actor column would never be " +
+                         $"stamped. Name the claim that identifies the writer, e.g. ':root {{ {MetadataKeys.Audit.UserKey}: user_id }}'";
+            return string.IsNullOrWhiteSpace(model.GetMetadataValue(MetadataKeys.Audit.LegacyUserKey))
+                ? reason
+                : reason + $"; '{MetadataKeys.Audit.LegacyUserKey}' is not read, rename it to '{MetadataKeys.Audit.UserKey}'";
         }
 
         private static void ValidateNullableColumnReference(IDbTable table, string metadataKey, List<string> errors)

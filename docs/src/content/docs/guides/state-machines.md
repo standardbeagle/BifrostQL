@@ -61,6 +61,7 @@ main.claims {
   transition-not-by: submitted->approved:created_by
 }
 main.claims.created_by { populate: created-by }
+:root { user-audit-key: user_id }
 ```
 
 On `submitted -> approved`, BifrostQL reads the row's `created_by` inside the update's transaction

@@ -389,6 +389,7 @@ Standard Directus-style operators:
 CSS-like selector syntax for configuration:
 ```csharp
 "dbo.users { tenant-filter: tenant_id }"
+":root { user-audit-key: user_id }"  // soft-delete-by and populate: *-by stamp this claim
 "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id }"
 "*.__* { visibility: hidden; }"  // Hide internal columns
 ```

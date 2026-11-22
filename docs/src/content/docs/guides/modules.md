@@ -114,6 +114,7 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 {
   "BifrostQL": {
     "Metadata": [
+      ":root { user-audit-key: user_id; }",
       "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; delete-type: soft; }"
     ]
   }
@@ -123,7 +124,7 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 ### What changes
 
 - **Queries**: A `WHERE deleted_at IS NULL` filter is added to every query against the table
-- **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @actor`, where the actor is the claim the model-level `user-audit-key` names. Without `user-audit-key`, `deleted_by_user_id` is left unset.
+- **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @actor`, where the actor is the claim the model-level `user-audit-key` names. Without `user-audit-key`, model load fails, because the column could never be stamped.
 - **Schema**: Soft-deleted tables expose extra query and mutation arguments for administrative access
 
 | Argument | Side | Effect |
@@ -189,6 +190,7 @@ The audit module auto-populates columns from the authenticated user context duri
 {
   "BifrostQL": {
     "Metadata": [
+      ":root { user-audit-key: user_id; }",
       "dbo.*.createdOn { populate: created-on; }",
       "dbo.*.updatedOn { populate: updated-on; }",
       "dbo.*.createdBy { populate: created-by; }",

@@ -170,6 +170,87 @@ public class ModelConfigValidatorSecurityTests
         act.Should().NotThrow();
     }
 
+    // ---- Actor columns need user-audit-key ----
+    // Without user-audit-key the actor stamp removes the column from the write, so an actor
+    // column would silently stay NULL (or its DB default) on every row.
+
+    private static IDbModel ActorColumnModel(string? auditKeyName, string? auditKey, Action<DbModelTestFixture.TableBuilder> actor)
+    {
+        var fixture = DbModelTestFixture.Create();
+        if (auditKeyName is not null)
+            fixture = fixture.WithModelMetadata(auditKeyName, auditKey);
+        return fixture
+            .WithTable("Orders", t =>
+            {
+                t.WithSchema("dbo").WithPrimaryKey("Id")
+                    .WithColumn("deleted_at", "datetime2", isNullable: true)
+                    .WithColumn("actor", "nvarchar", isNullable: true);
+                actor(t);
+            })
+            .Build();
+    }
+
+    private static void SoftDeleteBy(DbModelTestFixture.TableBuilder t)
+        => t.WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
+            .WithMetadata(MetadataKeys.SoftDelete.DeletedBy, "actor");
+
+    [Fact]
+    public void Validate_SoftDeleteByWithoutUserAuditKey_ThrowsNamingTheFix()
+    {
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(null, null, SoftDeleteBy));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Orders")
+            .And.Contain(MetadataKeys.SoftDelete.DeletedBy)
+            .And.Contain(":root { user-audit-key: user_id }");
+    }
+
+    [Theory]
+    [InlineData(MetadataKeys.AutoPopulate.CreatedBy)]
+    [InlineData(MetadataKeys.AutoPopulate.UpdatedBy)]
+    [InlineData(MetadataKeys.AutoPopulate.DeletedBy)]
+    public void Validate_ActorPopulatorWithoutUserAuditKey_ThrowsNamingTheFix(string populator)
+    {
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(null, null,
+            t => t.WithColumnMetadata("actor", MetadataKeys.AutoPopulate.Marker, populator)));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Orders.actor")
+            .And.Contain(populator)
+            .And.Contain(":root { user-audit-key: user_id }");
+    }
+
+    [Fact]
+    public void Validate_ActorColumnsWithOnlyTheLegacyAuditUserKey_ThrowsNamingTheRename()
+    {
+        // audit-user-key is accepted as a known key but never read, so it stamps nothing.
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(MetadataKeys.Audit.LegacyUserKey, "username",
+            t => SoftDeleteBy(t.WithColumnMetadata("actor", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy))));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("rename")
+            .And.Contain(MetadataKeys.Audit.LegacyUserKey);
+    }
+
+    [Fact]
+    public void Validate_ActorColumnsWithUserAuditKey_DoesNotThrow()
+    {
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(MetadataKeys.Audit.UserKey, "user_id",
+            t => SoftDeleteBy(t.WithColumnMetadata("actor", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy))));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Validate_TimestampPopulatorWithoutUserAuditKey_DoesNotThrow()
+    {
+        // created-on needs no actor, so it stays valid without a key.
+        var act = () => ModelConfigValidator.Validate(ActorColumnModel(null, null,
+            t => t.WithColumnMetadata("deleted_at", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedOn)));
+
+        act.Should().NotThrow();
+    }
+
     // ---- EAV configuration validation ----
 
     [Fact]

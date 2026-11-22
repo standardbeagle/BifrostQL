@@ -193,6 +193,7 @@ public class ModelConfigValidatorTests
         // Arrange: every validated config present and referencing real columns,
         // mixing DB names and GraphQL names to confirm both resolve.
         var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
             .WithTable("Orders", t => t
                 .WithSchema("dbo")
                 .WithPrimaryKey("Id")

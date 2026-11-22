@@ -31,7 +31,7 @@ Every authentication path (local login, OIDC, JWT) converges on the same provide
 | User ID | `user_id` | The explicit user identifier | Custom modules / app code |
 | Roles | `roles` | The caller's roles | `AutoFilterTransformer` (bypass-role check) |
 | Permissions | `permissions` | The caller's permissions (plural) | Custom modules / app code |
-| Audit user key | `user-audit-key` (model metadata; default `id`) | Which claim populates created-by / updated-by / deleted-by | `BasicAuditModule` |
+| Audit user key | `user-audit-key` (model metadata; required by any created-by / updated-by / deleted-by / `soft-delete-by` column) | Which claim populates created-by / updated-by / deleted-by | `BasicAuditModule` |
 
 `tenant_id` is the singular primary tenant; `tenant_ids` is the full membership set. The audit user key is configurable model-level metadata, not a fixed claim name — it names which claim the audit module reads.
 

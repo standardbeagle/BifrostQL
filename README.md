@@ -397,7 +397,7 @@ The most common properties:
 | `auto-filter` | `column:claim` list | Inject filters from user-context claims |
 | `auto-filter-bypass-role` | role name | Role that bypasses auto filters |
 | `soft-delete` | column name | Soft-delete timestamp column |
-| `soft-delete-by` | column name | Column to record who deleted: the claim `user-audit-key` names, as the audit columns get it (left unset without `user-audit-key`) |
+| `soft-delete-by` | column name | Column to record who deleted: the claim `user-audit-key` names, as the audit columns get it (model load fails without `user-audit-key`) |
 | `delete-type` | `soft` | Mark table for soft-delete behavior |
 | `populate` | `created-by`, `updated-by`, `created-on`, `updated-on`, `deleted-on`, `deleted-by` | Auto-populate from user context |
 | `visibility` | `hidden` | Hide from GraphQL schema |

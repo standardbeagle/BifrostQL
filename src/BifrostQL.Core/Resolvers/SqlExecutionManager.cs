@@ -31,7 +31,9 @@ namespace BifrostQL.Core.Resolvers
         /// isolation, soft-delete, policy row/column scope) as row queries constrain
         /// BOTH the distinct-value discovery and the pivot, so cross-tenant column
         /// headers and cell values can never leak. Returns the JSON payload
-        /// <c>{ pivotColumn, rowKeys, columns, rows }</c>.
+        /// <c>{ pivotColumn, rowKeys, columns, rows, truncated }</c>; <c>rows</c> holds at
+        /// most the model's max-query-rows, ordered by the row keys, and <c>truncated</c>
+        /// says more rows exist.
         /// </summary>
         public ValueTask<IReadOnlyDictionary<string, object?>> ResolvePivotAsync(IBifrostFieldContext context, IDbTable table, PivotRequest request);
 
@@ -602,9 +604,20 @@ namespace BifrostQL.Core.Resolvers
                     "(two pivot values sharing a label — e.g. a NULL and a literal null label — or a value matching a " +
                     "row-key column). Filter or rename one of the colliding values before pivoting.");
 
-            // (2) Cross-tabulate with those values under the same scope filter.
-            var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter);
+            // (2) Cross-tabulate with those values under the same scope filter. The
+            // cross-tab is a GROUP BY over the row keys, so `rowKeys: [id]` is one output
+            // row per table row: it obeys the same max-query-rows ceiling as a row read
+            // (the pivot takes no limit argument, so the window is the ceiling itself),
+            // ordered by the row keys so the window is deterministic. It fetches one row
+            // past the ceiling; that sentinel row is dropped and reported as `truncated`.
+            var rowCeiling = GqlObjectQuery.ResolveRowWindow(_dbModel, -1);
+            var rowKeyOrder = config.GroupByColumns.Select(dialect.EscapeIdentifier).ToList();
+            var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter)
+                .Append(dialect.Pagination(rowKeyOrder, offset: null, limit: rowCeiling + 1));
             var (pivotIndex, pivotRows) = await ExecuteRawAsync(connFactory, pivotSql, context.CancellationToken);
+            var truncated = pivotRows.Count > rowCeiling;
+            if (truncated)
+                pivotRows.RemoveAt(pivotRows.Count - 1);
 
             // Row-key cells are raw column values (a GROUP BY key), so they go out
             // through the same crypto projection every other read surface applies.
@@ -618,7 +631,7 @@ namespace BifrostQL.Core.Resolvers
             var readChain = await TableReadChain.ForAsync(
                 context.RequestServices, _dbModel, table, scopedContext, ReadProjection.Client);
 
-            return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows, readChain);
+            return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows, truncated, readChain);
         }
 
         /// <summary>
@@ -671,7 +684,7 @@ namespace BifrostQL.Core.Resolvers
         private static IReadOnlyDictionary<string, object?> BuildPivotPayload(
             PivotQueryConfig config, PivotRequest request,
             IReadOnlyList<string> labels,
-            IDictionary<string, int> index, IList<object?[]> rows,
+            IDictionary<string, int> index, IList<object?[]> rows, bool truncated,
             TableReadChain readChain)
         {
             var outRows = new List<object?>(rows.Count);
@@ -695,6 +708,7 @@ namespace BifrostQL.Core.Resolvers
                 ["rowKeys"] = request.RowKeyGraphQlNames,
                 ["columns"] = labels,
                 ["rows"] = outRows,
+                ["truncated"] = truncated,
             };
         }
 

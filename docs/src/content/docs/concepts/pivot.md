@@ -58,8 +58,17 @@ Cross-tab total order `amount` by `region` (rows) against `quarter` (columns):
 }
 ```
 
-The result is a `JSON!` scalar: a list of row objects, each carrying its row-key
-values plus one field per distinct pivot value.
+The result is a `JSON!` scalar: `{ pivotColumn, rowKeys, columns, rows, truncated }`.
+Each entry in `rows` carries its row-key values plus a `cells` object with one
+field per distinct pivot value.
+
+## Row ceiling
+
+The cross-tab is a `GROUP BY` over the row keys, so `rowKeys: [id]` yields one
+output row per table row. The pivot obeys the same `max-query-rows` ceiling as
+every other read: it returns at most that many rows, ordered by the row keys,
+and sets `truncated: true` when more rows exist. Narrow the scope with `filter`
+to see the rest.
 
 ## Security: distinct-value discovery is filtered
 

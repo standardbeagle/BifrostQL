@@ -247,7 +247,7 @@ namespace BifrostQL.Core.Schema
         /// <see cref="PivotSurface.AggregateEnumName"/> enum. The result is the
         /// <c>JSON</c> scalar because a pivot's output columns are discovered per request
         /// from the pivot column's distinct values and so cannot be a static GraphQL
-        /// object type — the payload is <c>{ pivotColumn, rowKeys, columns, rows:[{ &lt;rowKey&gt;…, cells }] }</c>.
+        /// object type — the payload is <c>{ pivotColumn, rowKeys, columns, rows:[{ &lt;rowKey&gt;…, cells }], truncated }</c>.
         /// </summary>
         public string GetPivotFieldDefinition() =>
             $"{PivotSurface.PivotFieldName(_table)}(rowKeys: [{_table.ColumnEnumTypeName}!]!, pivotColumn: {_table.ColumnEnumTypeName}!, valueColumn: {_table.ColumnEnumTypeName}!, aggregate: {PivotSurface.AggregateEnumName}! = count, filter: {_table.TableFilterTypeName}): JSON!";

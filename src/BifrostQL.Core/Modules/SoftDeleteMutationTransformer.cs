@@ -13,7 +13,7 @@ namespace BifrostQL.Core.Modules;
 /// On DELETE:
 ///   - Converts to UPDATE
 ///   - Sets deleted_at = current timestamp
-///   - Optionally sets deleted_by if configured
+///   - Optionally stamps deleted_by with the audit actor (see AuditMutationTransformer.StampActor)
 ///
 /// On UPDATE:
 ///   - Adds filter: deleted_at IS NULL (prevent updating deleted records)
@@ -25,7 +25,6 @@ public sealed class SoftDeleteMutationTransformer : SoftDeleteMutationTransforme
 {
     public const string MetadataKey = MetadataKeys.SoftDelete.Column;
     public const string DeletedByMetadataKey = MetadataKeys.SoftDelete.DeletedBy;
-    public const string UserIdContextKey = "user_id";
 
     public SoftDeleteMutationTransformer() : base(MetadataKey, priority: 100)
     {
@@ -46,16 +45,13 @@ public sealed class SoftDeleteMutationTransformer : SoftDeleteMutationTransforme
             [columnName] = DateTimeOffset.UtcNow
         };
 
-        // Optionally set deleted_by
+        // deleted_by names the same actor as the audit columns and the history trail.
         if (table.Metadata.TryGetValue(DeletedByMetadataKey, out var deletedByCol) &&
             deletedByCol is string deletedByColumn &&
             !string.IsNullOrWhiteSpace(deletedByColumn) &&
             table.ColumnLookup.ContainsKey(deletedByColumn))
         {
-            if (context.UserContext.TryGetValue(UserIdContextKey, out var userId))
-            {
-                transformedData[deletedByColumn] = userId;
-            }
+            AuditMutationTransformer.StampActor(context.Model, context.UserContext, transformedData, deletedByColumn);
         }
 
         return new MutationTransformResult

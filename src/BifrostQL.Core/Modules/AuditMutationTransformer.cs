@@ -69,26 +69,7 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         MutationTransformContext context)
     {
         var dateTime = DateTime.UtcNow;
-        var auditKey = context.Model.GetMetadataValue(MetadataKeys.Audit.UserKey);
-        var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
-        var auditValue = ResolveAuditUser(auditKey, context.UserContext, hasAuditKey);
-
-        // Audit user columns (created-by/updated-by/deleted-by) are server-owned and
-        // must never be settable by the client, or a caller could spoof audit data.
-        // When a user-audit-key is configured we overwrite the column with the
-        // resolved claim (server-controlled — it may be null when the claim is absent,
-        // which is still a value the client cannot influence). When NO user-audit-key
-        // is configured we have no trustworthy value, so instead of leaking a
-        // client-supplied value through we STRIP the key entirely, leaving the DB
-        // default / existing value to stand. Either way the client's value never
-        // reaches the row.
-        void StampUser(string columnName)
-        {
-            if (hasAuditKey)
-                data[columnName] = auditValue;
-            else
-                data.Remove(columnName);
-        }
+        void StampUser(string columnName) => StampActor(context.Model, context.UserContext, data, columnName);
 
         foreach (var column in table.Columns)
         {
@@ -149,5 +130,22 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
     {
         var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
         return ResolveAuditUser(auditKey, userContext, !string.IsNullOrWhiteSpace(auditKey));
+    }
+
+    /// <summary>
+    /// Stamps a server-owned actor column (created-by/updated-by/deleted-by, and the
+    /// soft-delete <c>soft-delete-by</c> column) so a client can never spoof it. With a
+    /// <c>user-audit-key</c> the column gets <see cref="ResolveActor"/> (null when the claim is
+    /// absent, still a value the client cannot influence). Without one there is no trustworthy
+    /// value, so the key is STRIPPED, leaving the DB default or existing value to stand. Either
+    /// way the client's value never reaches the row.
+    /// </summary>
+    internal static void StampActor(
+        IDbModel model, IDictionary<string, object?> userContext, IDictionary<string, object?> data, string column)
+    {
+        if (string.IsNullOrWhiteSpace(model.GetMetadataValue(MetadataKeys.Audit.UserKey)))
+            data.Remove(column);
+        else
+            data[column] = ResolveActor(model, userContext);
     }
 }

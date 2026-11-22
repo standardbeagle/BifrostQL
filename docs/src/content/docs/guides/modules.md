@@ -123,7 +123,7 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 ### What changes
 
 - **Queries**: A `WHERE deleted_at IS NULL` filter is added to every query against the table
-- **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @userId`
+- **DELETE mutations**: Transformed into `UPDATE ... SET deleted_at = NOW(), deleted_by_user_id = @actor`, where the actor is the claim the model-level `user-audit-key` names. Without `user-audit-key`, `deleted_by_user_id` is left unset.
 - **Schema**: Soft-deleted tables expose extra query and mutation arguments for administrative access
 
 | Argument | Side | Effect |

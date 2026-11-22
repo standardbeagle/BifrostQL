@@ -351,6 +351,55 @@ public class SqliteSoftDeleteIntegrationTests
         result.Data["deleted_by"].Should().Be(99);
     }
 
+    // soft-delete-by names the same actor as the audit columns and the history trail: the
+    // claim user-audit-key selects, never a hardcoded user_id.
+    [Fact]
+    public async Task SoftDeleteMutation_DeletedBy_StampsTheUserAuditKeyActor_NotUserId()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "email")
+            .WithTable("Users", t => t
+                .WithSchema("main")
+                .WithPrimaryKey("Id")
+                .WithColumn("deleted_at", "TEXT", isNullable: true)
+                .WithColumn("deleted_by", "TEXT", isNullable: true)
+                .WithMetadata("soft-delete", "deleted_at")
+                .WithMetadata("soft-delete-by", "deleted_by"))
+            .Build();
+        var userContext = new Dictionary<string, object?> { ["user_id"] = 99, ["email"] = "ann@x" };
+
+        var result = await new MutationTransformersWrap { Transformers = new IMutationTransformer[] { new SoftDeleteMutationTransformer() } }
+            .TransformAsync(model.GetTableFromDbName("Users"), MutationType.Delete, new Dictionary<string, object?> { ["Id"] = 1 },
+                new MutationTransformContext { Model = model, UserContext = userContext });
+
+        result.Data["deleted_by"].Should().Be("ann@x");
+        result.Data["deleted_by"].Should().Be(AuditMutationTransformer.ResolveActor(model, userContext));
+    }
+
+    // With no user-audit-key there is no trustworthy actor, exactly as the audit columns treat
+    // it: the column is left alone and a client value for it is dropped.
+    [Fact]
+    public async Task SoftDeleteMutation_DeletedBy_WithoutUserAuditKey_IsNotStampedFromUserId()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("main")
+                .WithPrimaryKey("Id")
+                .WithColumn("deleted_at", "TEXT", isNullable: true)
+                .WithColumn("deleted_by", "INTEGER", isNullable: true)
+                .WithMetadata("soft-delete", "deleted_at")
+                .WithMetadata("soft-delete-by", "deleted_by"))
+            .Build();
+
+        var result = await new MutationTransformersWrap { Transformers = new IMutationTransformer[] { new SoftDeleteMutationTransformer() } }
+            .TransformAsync(model.GetTableFromDbName("Users"), MutationType.Delete,
+                new Dictionary<string, object?> { ["Id"] = 1, ["deleted_by"] = 5 },
+                new MutationTransformContext { Model = model, UserContext = new Dictionary<string, object?> { ["user_id"] = 99 } });
+
+        result.Data.Should().ContainKey("deleted_at");
+        result.Data.Should().NotContainKey("deleted_by");
+    }
+
     [Fact]
     public async Task SoftDeleteMutation_DeleteWithoutUserContext_SkipsDeletedBy()
     {
@@ -373,8 +422,8 @@ public class SqliteSoftDeleteIntegrationTests
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
-        result.Data.Should().NotContainKey("deleted_by",
-            "deleted_by should not be set when user_id is missing from context");
+        result.Data.Should().ContainKey("deleted_by").WhoseValue.Should().BeNull(
+            "an absent actor claim stamps null, exactly as the audit deleted-by column does");
     }
 
     [Fact]
@@ -616,6 +665,7 @@ public class SqliteSoftDeleteIntegrationTests
     private static IDbModel CreateSoftDeleteWithDeletedByModel()
     {
         return DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
             .WithTable("Users", t => t
                 .WithSchema("main")
                 .WithPrimaryKey("Id")

@@ -166,7 +166,7 @@ The module system can transform mutations before they hit the database.
 "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; }"
 ```
 
-With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted_at = NOW()` and `deleted_by_user_id` to the current user.
+With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted_at = NOW()` and `deleted_by_user_id` to the current user: the claim the model-level `user-audit-key` names (`":root { user-audit-key: sub }"`). Without `user-audit-key` the by-column is left unset.
 
 **Audit columns** auto-populate fields like `created_by` and `updated_on` from the authenticated user context:
 

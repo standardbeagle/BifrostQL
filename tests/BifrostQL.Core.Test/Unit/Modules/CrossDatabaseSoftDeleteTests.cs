@@ -409,8 +409,8 @@ public class CrossDatabaseSoftDeleteTests
             $"{dbName}: DELETE must be converted to UPDATE even without user context");
         result.Data.Should().ContainKey("deleted_at",
             $"{dbName}: deleted_at must be set regardless of user context");
-        result.Data.Should().NotContainKey("deleted_by",
-            $"{dbName}: deleted_by must not be set when user_id is missing from context");
+        result.Data.Should().ContainKey("deleted_by").WhoseValue.Should().BeNull(
+            $"{dbName}: an absent actor claim stamps null, exactly as the audit deleted-by column does");
     }
 
     #endregion
@@ -757,6 +757,7 @@ public class CrossDatabaseSoftDeleteTests
     private static IDbModel CreateSoftDeleteWithDeletedByModel(string schema)
     {
         return DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
             .WithTable("Users", t => t
                 .WithSchema(schema)
                 .WithPrimaryKey("Id")

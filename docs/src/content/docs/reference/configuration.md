@@ -131,7 +131,7 @@ consistently.
 | `auto-filter-bypass-role` | role name | model | Role that bypasses `auto-filter` rules |
 | `policy-admin-role` | role name | model | Role that bypasses policy grants ([authorization](/BifrostQL/guides/authorization/#the-admin-role)). Absent: no role does. A table-level value that differs fails model load |
 | `soft-delete` | column name | table | Soft-delete timestamp column |
-| `soft-delete-by` | column name | table | Column recording who deleted |
+| `soft-delete-by` | column name | table | Column recording who deleted: the claim `user-audit-key` names, the same actor the audit columns and history trail record. Without `user-audit-key` it is left unset. |
 | `delete-type` | `soft` | table | Mark table for soft-delete behavior |
 | `populate` | see below | column | Auto-populate from user context |
 | `update` | `none` | column | Make column read-only for updates |

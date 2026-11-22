@@ -87,6 +87,7 @@ A successful login produces an `AppIdentity` whose `TenantId` comes from the use
     "Path": "/graphql",
     "Provider": "postgres",
     "Metadata": [
+      ":root { user-audit-key: user_id; }",
       "public.*|has(tenant_id) { tenant-filter: tenant_id; }",
 
       "public.jobs { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",

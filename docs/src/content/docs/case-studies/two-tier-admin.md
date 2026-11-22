@@ -54,6 +54,7 @@ server-side policy remains the enforcement boundary.
     "Playground": "/graphiql",
     "Provider": "sqlserver",
     "Metadata": [
+      ":root { user-audit-key: user_id; }",
       "dbo.bookings  { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",
       "dbo.customers { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",
 

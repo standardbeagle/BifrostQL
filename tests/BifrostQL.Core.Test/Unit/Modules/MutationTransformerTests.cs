@@ -88,6 +88,7 @@ public class MutationTransformerTests
                 .WithColumn("deleted_by", "int", isNullable: true)
                 .WithMetadata("soft-delete", "deleted_at")
                 .WithMetadata("soft-delete-by", "deleted_by"))
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
             .Build();
 
         var transformer = new SoftDeleteMutationTransformer();

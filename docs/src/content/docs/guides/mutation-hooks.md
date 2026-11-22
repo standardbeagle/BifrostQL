@@ -172,7 +172,7 @@ Its body no-ops on that same `EmitsEvents` check, then decides per operation.
 
 ## 3. Soft-delete rewrites DELETE to UPDATE inside the transformer chain
 
-On a table with `soft-delete` metadata, `SoftDeleteMutationTransformer` (priority **100**) turns a `Delete` into an `Update` that stamps the soft-delete column (and `soft-delete-by`, when configured) and adds a "not already deleted" filter. The one exception is a permitted `_hardDelete`, which stays a real `DELETE`.
+On a table with `soft-delete` metadata, `SoftDeleteMutationTransformer` (priority **100**) turns a `Delete` into an `Update` that stamps the soft-delete column (and `soft-delete-by`, when configured, with the `user-audit-key` actor) and adds a "not already deleted" filter. The one exception is a permitted `_hardDelete`, which stays a real `DELETE`.
 
 `MutationTransformersWrap.TransformAsync` runs transformers in ascending `Priority` order. Before each one it re-checks `AppliesTo(table, currentType, context)` against the **current** mutation type, and passes that type to `TransformAsync`. So after the soft-delete transformer:
 

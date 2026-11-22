@@ -373,8 +373,8 @@ public class MySqlSoftDeleteIntegrationTests
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
-        result.Data.Should().NotContainKey("deleted_by",
-            "deleted_by should not be set when user_id is missing from context");
+        result.Data.Should().ContainKey("deleted_by").WhoseValue.Should().BeNull(
+            "an absent actor claim stamps null, exactly as the audit deleted-by column does");
     }
 
     [Fact]
@@ -616,6 +616,7 @@ public class MySqlSoftDeleteIntegrationTests
     private static IDbModel CreateSoftDeleteWithDeletedByModel()
     {
         return DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Audit.UserKey, "user_id")
             .WithTable("Users", t => t
                 .WithSchema("mydb")
                 .WithPrimaryKey("Id")

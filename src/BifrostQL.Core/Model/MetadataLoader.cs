@@ -13,14 +13,6 @@ namespace BifrostQL.Core.Model
     {
         private readonly MetadataLoaderRule[] _metaRules;
 
-        public MetadataLoader(IConfiguration configuration, string key)
-        {
-            ArgumentNullException.ThrowIfNull(configuration, nameof(configuration));
-            ArgumentNullException.ThrowIfNull(key, nameof(key));
-
-            _metaRules = ReadMetadataRules(configuration.GetSection(key)).Select(r => new MetadataLoaderRule(r)).ToArray();
-        }
-
         /// <summary>
         /// Reads the metadata rule strings from a configuration section that holds an array of
         /// rule strings. Every reader of the <c>Metadata</c> config (the Host registration and

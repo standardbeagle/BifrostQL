@@ -20,7 +20,7 @@ using BifrostQL.Model;
 
 var connectionString = "Host=localhost;Database=mydb;Username=postgres;Password=secret";
 var factory = new PostgresDbConnFactory(connectionString);
-var metadataLoader = new MetadataLoader(/* configuration */);
+var metadataLoader = new MetadataLoader(MetadataLoader.ReadMetadataRules(configuration.GetSection("BifrostQL:Metadata")));
 var loader = new DbModelLoader(factory, metadataLoader);
 
 var model = await loader.LoadAsync();

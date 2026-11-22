@@ -1,25 +1,17 @@
 using BifrostQL.Core.Model;
-using Microsoft.Extensions.Configuration;
 
 namespace BifrostQL.Server
 {
     /// <summary>
-    /// Loads table metadata from appsettings.json configuration.
-    /// Wraps the existing MetadataLoader parsing logic and converts its rule-based
-    /// format into the IMetadataSource dictionary format.
+    /// Loads table metadata from rule strings, typically read from appsettings.json with
+    /// <see cref="MetadataLoader.ReadMetadataRules"/>, and converts the rule-based format
+    /// into the IMetadataSource dictionary format.
     /// </summary>
     public sealed class FileMetadataSource : IMetadataSource
     {
         private readonly IReadOnlyCollection<string> _rules;
 
         public int Priority => 0;
-
-        public FileMetadataSource(IConfigurationSection configSection, string key)
-        {
-            ArgumentNullException.ThrowIfNull(configSection, nameof(configSection));
-            ArgumentNullException.ThrowIfNull(key, nameof(key));
-            _rules = MetadataLoader.ReadMetadataRules(configSection.GetSection(key));
-        }
 
         public FileMetadataSource(IReadOnlyCollection<string> rules)
         {

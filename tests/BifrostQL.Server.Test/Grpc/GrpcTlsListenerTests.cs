@@ -129,9 +129,18 @@ namespace BifrostQL.Server.Test.Grpc
 
             var app = builder.Build();
             app.UseRouting();
-            await app.MapBifrostGrpcAsync();
-            await app.StartAsync();
-            return app;
+            try
+            {
+                await app.MapBifrostGrpcAsync();
+                await app.StartAsync();
+                return app;
+            }
+            catch
+            {
+                // A lost probe-then-bind race is retried on a fresh port; this host is not.
+                await app.DisposeAsync();
+                throw;
+            }
         }
 
         /// <summary>An HTTP/2 request with prior knowledge, so cleartext h2c is not negotiated away.</summary>

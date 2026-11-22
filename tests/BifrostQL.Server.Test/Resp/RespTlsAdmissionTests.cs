@@ -100,7 +100,18 @@ namespace BifrostQL.Server.Test.Resp
                 web.Configure(_ => { });
             });
 
-            return await builder.StartAsync();
+            var host = builder.Build();
+            try
+            {
+                await host.StartAsync();
+                return host;
+            }
+            catch
+            {
+                // A lost probe-then-bind race is retried on a fresh port; this host is not.
+                host.Dispose();
+                throw;
+            }
         }
 
         private static async Task WaitForCountAsync(RespConnectionLimiter limiter, int expected)

@@ -150,9 +150,18 @@ namespace BifrostQL.Server.Test.Grpc
                 }
                 await next(http);
             });
-            await app.MapBifrostGrpcAsync();
-            await app.StartAsync();
-            return app;
+            try
+            {
+                await app.MapBifrostGrpcAsync();
+                await app.StartAsync();
+                return app;
+            }
+            catch
+            {
+                // A lost probe-then-bind race is retried on a fresh port; this host is not.
+                await app.DisposeAsync();
+                throw;
+            }
         }
 
         private static HttpClient H2Client() => new(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5) })

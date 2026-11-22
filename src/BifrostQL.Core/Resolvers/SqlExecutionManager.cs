@@ -616,14 +616,16 @@ namespace BifrostQL.Core.Resolvers
             // cross-tab is a GROUP BY over the row keys, so `rowKeys: [id]` is one output
             // row per table row: it obeys the same max-query-rows ceiling as a row read
             // (the pivot takes no limit argument, so the window is the ceiling itself),
-            // ordered by the row keys so the window is deterministic. It fetches one row
-            // past the ceiling; that sentinel row is dropped and reported as `truncated`.
-            var rowCeiling = GqlObjectQuery.ResolveRowWindow(_dbModel, -1);
+            // ordered by the row keys so the window is deterministic. The window is a
+            // RowProbeWindow, as on every capped surface: the fetch stays within the ceiling
+            // (one row of it is the truncation sentinel), and a page past the ceiling is
+            // dropped and reported as `truncated`.
+            var window = RowProbeWindow.For(_dbModel, -1);
             var rowKeyOrder = config.GroupByColumns.Select(dialect.EscapeIdentifier).ToList();
             var pivotSql = PivotSqlGenerator.GeneratePivot(dialect, config, tableRef, pivotValues, filter)
-                .Append(dialect.Pagination(rowKeyOrder, offset: null, limit: rowCeiling + 1));
+                .Append(dialect.Pagination(rowKeyOrder, offset: null, limit: window.Fetch));
             var (pivotIndex, pivotRows) = await ExecuteRawAsync(connFactory, pivotSql, context.CancellationToken);
-            var truncated = pivotRows.Count > rowCeiling;
+            var truncated = window.HasMore(pivotRows.Count);
             if (truncated)
                 pivotRows.RemoveAt(pivotRows.Count - 1);
 

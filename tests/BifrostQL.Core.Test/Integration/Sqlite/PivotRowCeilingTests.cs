@@ -17,7 +17,10 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// <c>rowKeys: [id]</c> is one output row per table row. It was never paged: only the
 /// distinct pivot-value discovery was capped, and the cross-tab returned every row past
 /// <c>max-query-rows</c>. It now takes the ceiling as its row window (ordered by the row
-/// keys) and reports a cut with a cap+1 sentinel in its own payload's <c>truncated</c> key.
+/// keys) and reports a cut in its own payload's <c>truncated</c> key. The window is a
+/// <c>RowProbeWindow</c>, as on every capped surface: the fetch stays within the ceiling,
+/// so one row of it is the truncation sentinel and a page holds <c>Ceiling - 1</c> rows.
+/// (A <c>ceiling + 1</c> fetch overflowed at an <see cref="int.MaxValue"/> ceiling.)
 /// </summary>
 public sealed class PivotRowCeilingTests : IAsyncLifetime
 {
@@ -93,25 +96,36 @@ public sealed class PivotRowCeilingTests : IAsyncLifetime
         => pivot.GetProperty("rows").EnumerateArray().Select(r => r.GetProperty("id").GetInt32()).ToList();
 
     [Fact]
-    public async Task PivotByPrimaryKey_ReturnsCeilingRowsInKeyOrder_AndReportsTruncation()
+    public async Task PivotByPrimaryKey_ReturnsAPageInKeyOrder_AndReportsTruncation()
     {
         var pivot = await PivotAsync(
             "{ ordersPivot(rowKeys: [id], pivotColumn: status, valueColumn: amount, aggregate: sum) }");
 
-        RowIds(pivot).Should().Equal(new[] { 1, 2, 3, 4, 5 },
-            "rowKeys:[id] is one row per order; the cross-tab must stop at max-query-rows, ordered by the row keys");
+        RowIds(pivot).Should().Equal(new[] { 1, 2, 3, 4 },
+            "rowKeys:[id] is one row per order; the cross-tab must stop within max-query-rows, ordered by the row keys");
         pivot.GetProperty("truncated").GetBoolean().Should().BeTrue(
-            "the cap+1 sentinel row says more rows exist, so the payload must report the cut");
+            "the sentinel row says more rows exist, so the payload must report the cut");
     }
 
     [Fact]
-    public async Task PivotOfExactlyCeilingRows_IsNotTruncated()
+    public async Task PivotOfOneRowUnderTheCeiling_IsNotTruncated()
+    {
+        var pivot = await PivotAsync(
+            $"{{ ordersPivot(rowKeys: [id], pivotColumn: status, valueColumn: amount, aggregate: sum, filter: {{ id: {{ _lte: {Ceiling - 1} }} }}) }}");
+
+        RowIds(pivot).Should().Equal(1, 2, 3, 4);
+        pivot.GetProperty("truncated").GetBoolean().Should().BeFalse(
+            "a full page with no sentinel row behind it is every row");
+    }
+
+    [Fact]
+    public async Task PivotOfExactlyCeilingRows_ReturnsAPage_AndReportsTruncation()
     {
         var pivot = await PivotAsync(
             $"{{ ordersPivot(rowKeys: [id], pivotColumn: status, valueColumn: amount, aggregate: sum, filter: {{ id: {{ _lte: {Ceiling} }} }}) }}");
 
-        RowIds(pivot).Should().Equal(1, 2, 3, 4, 5);
-        pivot.GetProperty("truncated").GetBoolean().Should().BeFalse(
-            "exactly a ceiling of rows returns no sentinel row");
+        RowIds(pivot).Should().Equal(new[] { 1, 2, 3, 4 },
+            "the fetch never exceeds max-query-rows, so the ceiling's last row is the sentinel");
+        pivot.GetProperty("truncated").GetBoolean().Should().BeTrue();
     }
 }

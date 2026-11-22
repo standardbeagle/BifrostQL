@@ -66,9 +66,10 @@ field per distinct pivot value.
 
 The cross-tab is a `GROUP BY` over the row keys, so `rowKeys: [id]` yields one
 output row per table row. The pivot obeys the same `max-query-rows` ceiling as
-every other read: it returns at most that many rows, ordered by the row keys,
-and sets `truncated: true` when more rows exist. Narrow the scope with `filter`
-to see the rest.
+every other read: it fetches at most that many rows, ordered by the row keys.
+The last of them is a sentinel, so the pivot returns at most one row fewer than
+the ceiling and sets `truncated: true` when more rows exist. Narrow the scope
+with `filter` to see the rest.
 
 ## Security: distinct-value discovery is filtered
 

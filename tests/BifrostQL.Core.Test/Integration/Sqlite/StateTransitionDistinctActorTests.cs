@@ -42,7 +42,8 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
             "CREATE TABLE claims (id INTEGER PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, created_by TEXT NULL); " +
             "INSERT INTO claims (id, title, status, created_by) VALUES (1, 'by alice', 'submitted', 'alice'), " +
             "(2, 'legacy', 'submitted', NULL), (3, 'by a guid', 'submitted', '0f8fad5b-d9cb-469f-a165-70867728950e'), " +
-            "(4, 'by employee 42', 'submitted', '42'), (5, 'by employee 42.5', 'submitted', '42.5');",
+            "(4, 'by employee 42', 'submitted', '42'), (5, 'by employee 42.5', 'submitted', '42.5'), " +
+            "(6, 'by employee 1e17', 'submitted', '100000000000000000');",
             _keepAlive);
         await cmd.ExecuteNonQueryAsync();
     }
@@ -99,6 +100,22 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
         await asDecimal.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
         await asLong.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
         (await StatusAsync(4)).Should().Be("submitted");
+    }
+
+    [Fact]
+    public async Task Author_AsADoubleClaimInExponentForm_IsStillTheAuthor()
+    {
+        // A double at or above 1e17 formats as "1E+17" under the invariant culture. Parsed with
+        // NumberStyles.Number that text was no number, the compare fell to text, and the author
+        // approved their own row.
+        Convert.ToString(1e17d, CultureInfo.InvariantCulture).Should().Be("1E+17", "control: the actor's text is exponent form");
+        var byAuthor = () => Approve(6, 1e17d);
+
+        await byAuthor.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        (await StatusAsync(6)).Should().Be("submitted");
+
+        await Approve(6, 1.5e17d);
+        (await StatusAsync(6)).Should().Be("approved", "control: a different actor in exponent form may approve");
     }
 
     [Fact]

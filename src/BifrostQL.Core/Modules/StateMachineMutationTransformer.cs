@@ -153,7 +153,8 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
     /// <summary>
     /// Whether two actor spellings name one person. Uuids and numbers compare as values and
     /// everything else ignoring case: an IdP may issue the subject in another case than the
-    /// column reads back, a numeric claim may be 42.0 where the column reads back 42, and
+    /// column reads back, a numeric claim may be 42.0 where the column reads back 42 (or a double
+    /// 1E+17 where it reads back 100000000000000000), and
     /// erring toward "same" refuses a transition rather than allowing self-approval. Both sides
     /// are invariant-culture text, so numbers parse with the invariant culture.
     /// </summary>
@@ -161,8 +162,8 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
     {
         if (Guid.TryParse(author, out var authorId) && Guid.TryParse(actor, out var actorId))
             return authorId == actorId;
-        if (decimal.TryParse(author, NumberStyles.Number, CultureInfo.InvariantCulture, out var authorNumber)
-            && decimal.TryParse(actor, NumberStyles.Number, CultureInfo.InvariantCulture, out var actorNumber))
+        if (decimal.TryParse(author, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var authorNumber)
+            && decimal.TryParse(actor, NumberStyles.Number | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var actorNumber))
             return authorNumber == actorNumber;
         return string.Equals(author.Trim(), actor.Trim(), StringComparison.OrdinalIgnoreCase);
     }

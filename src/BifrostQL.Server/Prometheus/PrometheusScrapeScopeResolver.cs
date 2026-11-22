@@ -195,8 +195,10 @@ namespace BifrostQL.Server.Prometheus
             // A throwing host factory, or keys that differ only in case (an ordinal host
             // dictionary, which name two values for one context key), leave no scoping authority.
             // Refused like a null projection: the metric is excluded and the scrape goes on. The
-            // detail goes to the log only.
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // detail goes to the log only. Only the scrape's own cancellation propagates: a host
+            // factory's internal timeout throws OperationCanceledException with the scrape token
+            // live, and is refused like any other throw instead of faulting the whole scrape.
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 _logger.LogWarning(ex,
                     "Prometheus service identity projection refused; row-scoped metrics are excluded until the host auth factory projects it.");

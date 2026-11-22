@@ -321,12 +321,53 @@ namespace BifrostQL.Server.Test.Prometheus
                 && r.Exception.Message == ThrowingAuthContextFactory.Detail);
         }
 
+        [Fact]
+        public async Task A_host_factory_timing_out_internally_excludes_only_the_row_scoped_metric()
+        {
+            // The host factory's own timeout throws OperationCanceledException although the scrape
+            // token never fired. Only the scrape's own cancellation may fault the scrape; any
+            // other cancellation is a refused projection like any other throw.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-host-timeout", new[] { NonTenant, AggregateMode }, Seed);
+            var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<PrometheusScrapeScopeResolver>();
+            var resolver = new PrometheusScrapeScopeResolver(
+                new PrometheusScrapeSecurityOptions
+                {
+                    BusinessMetricsEnabled = true,
+                    ScrapeCredential = "token",
+                    ServiceIdentity = ServicePrincipal("tenant-a"),
+                },
+                new ThrowingAuthContextFactory(() => new TaskCanceledException("host factory timed out")),
+                logger);
+            var service = new PrometheusScrapeService(
+                harness.Reads,
+                resolver,
+                new PrometheusSeriesCollector(harness.Reads),
+                new PrometheusExpositionOptions { Endpoint = ODataRealDbHarness.EndpointPath, GlobalMaxCardinality = 1000 });
+
+            using var scrape = new CancellationTokenSource();
+            var text = await service.ScrapeAsync(scrape.Token);
+
+            scrape.IsCancellationRequested.Should().BeFalse("the scrape token never fired");
+            text.Should().Contain("sales_total{region=\"west\"} 1\n", "the unscoped metric is still served");
+            text.Should().NotContain("orders_total", "a timed-out projection is no scoping authority");
+            logger.Collector.GetSnapshot().Should().Contain(r =>
+                r.Level == Microsoft.Extensions.Logging.LogLevel.Warning && r.Exception is TaskCanceledException);
+        }
+
         private sealed class ThrowingAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory
         {
             public const string Detail = "host factory cannot project this principal";
+            private readonly Func<Exception> _exception;
+
+            public ThrowingAuthContextFactory() : this(() => new ArgumentException(Detail))
+            {
+            }
+
+            public ThrowingAuthContextFactory(Func<Exception> exception) => _exception = exception;
 
             public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext context) =>
-                throw new ArgumentException(Detail);
+                throw _exception();
         }
 
         private sealed class CaseTwinAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory

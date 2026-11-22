@@ -173,6 +173,13 @@ public sealed class SqlServerDialect : SqlDialectBase
         // parameter value.
         if (pivotAliases.Any(label => label.Length == 0 || label.Length > MaxIdentifierLength))
             return null;
+        // SQL Server compares identifiers with trailing spaces ignored, under the database's
+        // (commonly case-insensitive) collation, so two labels that differ only by trailing
+        // spaces name one output column twice (error 8156). Discovery's DISTINCT folds such
+        // values, but the null label is applied after it, so a literal "_null_ " beside a NULL
+        // still yields the pair. A whitespace-only label is a valid identifier and stays native.
+        if (pivotAliases.Select(label => label.TrimEnd(' ')).Distinct(StringComparer.OrdinalIgnoreCase).Count() < pivotAliases.Count)
+            return null;
 
         var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));
         // The PIVOT output columns carry the labels; the outer SELECT renames each to its

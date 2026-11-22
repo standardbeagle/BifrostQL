@@ -110,6 +110,75 @@ public sealed class SqlServerPivotLabelTests
         }
     }
 
+    /// <summary>
+    /// SQL Server compares identifiers with trailing spaces ignored, so two labels that
+    /// differ only by them name one PIVOT output column twice (error 8156) and the whole
+    /// pivot failed. Discovery's DISTINCT folds such values together, but a NULL takes the
+    /// null label <c>_null_</c> after discovery, so a literal <c>"_null_ "</c> beside a NULL
+    /// still yields the pair. A whitespace-only label is a valid identifier (<c>[   ]</c>
+    /// runs), and is the paired control that keeps the native PIVOT.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData("_null_ ", true)]
+    [InlineData("   ", false)]
+    public async Task Pivot_labels_that_differ_only_by_trailing_spaces_keep_their_cells(string literal, bool collides)
+    {
+        var connString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        Skip.If(string.IsNullOrEmpty(connString), "BIFROST_TEST_SQLSERVER not set");
+
+        var table = $"bq_pivot_{Guid.NewGuid():N}";
+        await using var conn = new SqlConnection(connString);
+        await conn.OpenAsync();
+        await ExecAsync(conn, $"""
+            CREATE TABLE [dbo].[{table}] (id int PRIMARY KEY, region nvarchar(20) NOT NULL, status nvarchar(20) NULL);
+            INSERT INTO [dbo].[{table}] VALUES (1, N'north', N'{literal}'), (2, N'north', NULL), (3, N'north', NULL);
+            """);
+        try
+        {
+            var pivotValues = new List<object?>();
+            await using (var distinct = new SqlCommand($"SELECT DISTINCT [status] FROM [dbo].[{table}]", conn))
+            await using (var reader = await distinct.ExecuteReaderAsync())
+                while (await reader.ReadAsync())
+                    pivotValues.Add(reader.IsDBNull(0) ? null : reader.GetString(0));
+            pivotValues.Should().HaveCount(2);
+
+            var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+            var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
+            (labels[0].TrimEnd() == labels[1].TrimEnd()).Should().Be(collides);
+            var pivot = PivotSqlGenerator.GeneratePivot(SqlServerDialect.Instance, config, $"[dbo].[{table}]", pivotValues);
+
+            await using var cmd = new SqlCommand(pivot.Sql, conn);
+            foreach (var p in pivot.Parameters)
+                cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value);
+            await using var rows = await cmd.ExecuteReaderAsync();
+            (await rows.ReadAsync()).Should().BeTrue();
+            for (var position = 0; position < pivotValues.Count; position++)
+                rows[PivotSqlGenerator.ColumnAlias(position)].Should().Be(
+                    pivotValues[position] == null ? 2 : 1, $"cell {position} counts the rows of its own value");
+        }
+        finally
+        {
+            await ExecAsync(conn, $"DROP TABLE [dbo].[{table}]");
+        }
+    }
+
+    /// <summary>
+    /// The native PIVOT is kept for labels that are valid, distinct identifiers: the
+    /// trailing-space route must not send every pivot to CASE WHEN.
+    /// </summary>
+    [Fact]
+    public void Distinct_labels_keep_the_native_pivot_and_trailing_space_twins_do_not()
+    {
+        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+
+        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { "a", "   ", null })
+            .Should().NotBeNull();
+        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { "a", "a  " })
+            .Should().BeNull();
+        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { null, "_null_ " })
+            .Should().BeNull();
+    }
+
     private static async Task ExecAsync(SqlConnection conn, string sql)
     {
         await using var cmd = new SqlCommand(sql, conn);

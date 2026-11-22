@@ -84,7 +84,8 @@ null label are parameterized. Pivot *values* are data, not schema: the portable
 cross-tab binds each as a parameter, but SQL Server's native `PIVOT` writes each
 string value into its `IN` list as an escaped, bracket-quoted identifier. A value
 that cannot be an identifier (empty, or longer than 128 characters) takes the
-portable cross-tab instead.
+portable cross-tab instead, as do labels that SQL Server would read as one
+identifier (equal once trailing spaces and case are ignored).
 
 ## Cardinality cap
 

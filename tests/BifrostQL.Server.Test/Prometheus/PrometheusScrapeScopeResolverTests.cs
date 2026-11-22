@@ -100,7 +100,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Sales");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
+            var scope = await Resolver(serviceIdentity: null).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeTrue();
             scope.UserContext.Should().BeEmpty();
@@ -115,7 +115,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+            var scope = await Resolver(ServicePrincipal("tenant-a")).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeTrue();
             scope.UserContext!.Should().ContainKey("tenant_id").WhoseValue.Should().Be("tenant-a");
@@ -130,7 +130,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var config = PrometheusMetricConfig.FromTable(table);
             var collector = new PrometheusSeriesCollector(harness.Reads);
 
-            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+            var scope = await Resolver(ServicePrincipal("tenant-a")).ResolveScopeAsync(config, table);
             var series = await collector.CollectAsync(config, table, ODataRealDbHarness.EndpointPath, scope.UserContext!);
 
             // Only tenant-a's rows: open(2/150) + closed(1/25). tenant-b's 999/888 MUST be absent —
@@ -150,7 +150,7 @@ namespace BifrostQL.Server.Test.Prometheus
 
             // A service identity scoped to tenant-b sees ONLY tenant-b — proving the fixed identity
             // is the scoping authority, not an ambient global view.
-            var scope = Resolver(ServicePrincipal("tenant-b")).ResolveScope(config, table);
+            var scope = await Resolver(ServicePrincipal("tenant-b")).ResolveScopeAsync(config, table);
             var series = await collector.CollectAsync(config, table, ODataRealDbHarness.EndpointPath, scope.UserContext!);
 
             series.Samples.Sum(s => s.Count!.Value).Should().Be(2);
@@ -168,7 +168,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var config = PrometheusMetricConfig.FromTable(table);
             var collector = new PrometheusSeriesCollector(harness.Reads);
 
-            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+            var scope = await Resolver(ServicePrincipal("tenant-a")).ResolveScopeAsync(config, table);
             scope.IsIncluded.Should().BeTrue();
 
             var series = await collector.CollectAsync(config, table, ODataRealDbHarness.EndpointPath, scope.UserContext!);
@@ -189,7 +189,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(ServicePrincipal("tenant-a")).ResolveScope(config, table);
+            var scope = await Resolver(ServicePrincipal("tenant-a")).ResolveScopeAsync(config, table);
 
             // Not partitionable → EXCLUDED, never silently aggregated cross-tenant.
             scope.IsIncluded.Should().BeFalse();
@@ -208,7 +208,7 @@ namespace BifrostQL.Server.Test.Prometheus
 
             // Enabled surface, credential configured, but NO service identity → excluded, NOT run
             // under an empty/anonymous context that would leak global data.
-            var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
+            var scope = await Resolver(serviceIdentity: null).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeFalse();
             scope.UserContext.Should().BeNull();
@@ -232,7 +232,7 @@ namespace BifrostQL.Server.Test.Prometheus
 
             // No projection is no scoping authority: excluded like a missing service identity,
             // never an escaping ArgumentNullException that faults the whole scrape.
-            var scope = resolver.ResolveScope(config, table);
+            var scope = await resolver.ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeFalse();
             scope.UserContext.Should().BeNull();
@@ -249,7 +249,7 @@ namespace BifrostQL.Server.Test.Prometheus
         {
             // An ordinal-keyed projection whose keys differ only in case is no single scoping
             // authority: the copy into the case-insensitive context refuses it. That refusal
-            // escaped ResolveScope and faulted the whole scrape. It must exclude the row-scoped
+            // escaped the scope decision and faulted the whole scrape. It must exclude the row-scoped
             // metric, as a null projection does, and leave the unscoped metric served.
             await using var harness = await ODataRealDbHarness.StartAsync(
                 "scope-casetwin", new[] { NonTenant, AggregateMode }, Seed);
@@ -275,7 +275,7 @@ namespace BifrostQL.Server.Test.Prometheus
             text.Should().NotContain("orders_total", "the row-scoped metric has no single scoping authority");
 
             var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
-            var scope = resolver.ResolveScope(PrometheusMetricConfig.FromTable(table), table);
+            var scope = await resolver.ResolveScopeAsync(PrometheusMetricConfig.FromTable(table), table);
             scope.IsIncluded.Should().BeFalse();
             scope.UserContext.Should().BeNull();
             scope.Reason.Should().Contain("service identity").And.NotContain("tenant_id");
@@ -285,6 +285,48 @@ namespace BifrostQL.Server.Test.Prometheus
                 r.Level == Microsoft.Extensions.Logging.LogLevel.Warning
                 && r.Exception is InvalidOperationException
                 && r.Exception.Message.Contains("TENANT_ID"));
+        }
+
+        [Fact]
+        public async Task A_throwing_host_factory_excludes_only_the_row_scoped_metric()
+        {
+            // A host factory that throws for the service identity is no scoping authority. The
+            // throw escaped the scope decision and faulted the whole scrape; it must exclude the
+            // row-scoped metric and leave the unscoped metric served.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-throwing", new[] { NonTenant, AggregateMode }, Seed);
+            var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<PrometheusScrapeScopeResolver>();
+            var resolver = new PrometheusScrapeScopeResolver(
+                new PrometheusScrapeSecurityOptions
+                {
+                    BusinessMetricsEnabled = true,
+                    ScrapeCredential = "token",
+                    ServiceIdentity = ServicePrincipal("tenant-a"),
+                },
+                new ThrowingAuthContextFactory(),
+                logger);
+            var service = new PrometheusScrapeService(
+                harness.Reads,
+                resolver,
+                new PrometheusSeriesCollector(harness.Reads),
+                new PrometheusExpositionOptions { Endpoint = ODataRealDbHarness.EndpointPath, GlobalMaxCardinality = 1000 });
+
+            var text = await service.ScrapeAsync();
+
+            text.Should().Contain("sales_total{region=\"west\"} 1\n", "the unscoped metric is still served");
+            text.Should().NotContain("orders_total", "a throwing projection is no scoping authority");
+            logger.Collector.GetSnapshot().Should().Contain(r =>
+                r.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                && r.Exception is ArgumentException
+                && r.Exception.Message == ThrowingAuthContextFactory.Detail);
+        }
+
+        private sealed class ThrowingAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory
+        {
+            public const string Detail = "host factory cannot project this principal";
+
+            public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext context) =>
+                throw new ArgumentException(Detail);
         }
 
         private sealed class CaseTwinAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory
@@ -304,7 +346,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
+            var scope = await Resolver(serviceIdentity: null).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeFalse();
         }
@@ -371,7 +413,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(serviceIdentity: null).ResolveScope(config, table);
+            var scope = await Resolver(serviceIdentity: null).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeFalse();
             scope.UserContext.Should().BeNull();
@@ -391,7 +433,7 @@ namespace BifrostQL.Server.Test.Prometheus
             // Operator declared a mode AND a service identity that the table's own row-scope
             // policy narrows (a `member` whose user id is alice). The metric then exposes
             // alice's partition only — bob's 700/300 must never appear.
-            var scope = Resolver(ScopedServicePrincipal("alice", "member")).ResolveScope(config, table);
+            var scope = await Resolver(ScopedServicePrincipal("alice", "member")).ResolveScopeAsync(config, table);
             scope.IsIncluded.Should().BeTrue();
 
             var series = await collector.CollectAsync(
@@ -414,7 +456,7 @@ namespace BifrostQL.Server.Test.Prometheus
             var table = (await harness.ModelAsync()).GetTableFromDbName("Notes");
             var config = PrometheusMetricConfig.FromTable(table);
 
-            var scope = Resolver(ScopedServicePrincipal("alice", "member")).ResolveScope(config, table);
+            var scope = await Resolver(ScopedServicePrincipal("alice", "member")).ResolveScopeAsync(config, table);
 
             scope.IsIncluded.Should().BeFalse();
             scope.Reason.Should().Contain("tenant-filter");

@@ -93,7 +93,7 @@ namespace BifrostQL.Server.Prometheus
                 cancellationToken.ThrowIfCancellationRequested();
                 var metricLabel = MetricLabels(config.ExportedName!);
 
-                var scope = _scopeResolver.ResolveScope(config, table);
+                var scope = await _scopeResolver.ResolveScopeAsync(config, table, cancellationToken);
                 if (!scope.IsIncluded)
                 {
                     // A misconfiguration/opt-out fails closed to NO metric; the reason is server-side

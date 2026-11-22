@@ -58,9 +58,11 @@ namespace BifrostQL.Server.Prometheus
         /// <summary>
         /// Resolves the scope for a single metric. Assumes the scrape credential has already been
         /// accepted by <see cref="PrometheusScrapeGate"/>; this decides ONLY how the metric's
-        /// aggregate is scoped.
+        /// aggregate is scoped. Asynchronous because a row-scoped metric awaits the auth factory's
+        /// projection of the service identity.
         /// </summary>
-        public PrometheusMetricScope ResolveScope(PrometheusMetricConfig config, IDbTable table)
+        public async ValueTask<PrometheusMetricScope> ResolveScopeAsync(
+            PrometheusMetricConfig config, IDbTable table, CancellationToken cancellationToken = default)
         {
             if (config is null) throw new ArgumentNullException(nameof(config));
             if (table is null) throw new ArgumentNullException(nameof(table));
@@ -83,7 +85,7 @@ namespace BifrostQL.Server.Prometheus
                 return PrometheusMetricScope.Excluded(
                     "row-scoped metric declares no metric-security-mode");
 
-            var serviceContext = ProjectServiceIdentity();
+            var serviceContext = await ProjectServiceIdentityAsync(cancellationToken);
             if (serviceContext is null || serviceContext.Count == 0)
                 // No fixed service identity → no scoping authority. Fail closed to NO metric rather
                 // than running the aggregate under an anonymous/global context.
@@ -171,32 +173,33 @@ namespace BifrostQL.Server.Prometheus
 
         /// <summary>
         /// Projects the configured fixed service principal through the shared auth seam. Returns
-        /// null when no service identity is configured, or when the host factory's projection is
-        /// null or holds keys that differ only in case; an authenticated principal otherwise yields
-        /// its full claim projection (tenant/roles/policy keys).
+        /// null when no service identity is configured, or when the host factory's projection
+        /// throws, is null, or holds keys that differ only in case; an authenticated principal
+        /// otherwise yields its full claim projection (tenant/roles/policy keys).
         /// </summary>
-        private IDictionary<string, object?>? ProjectServiceIdentity()
+        private async ValueTask<IDictionary<string, object?>?> ProjectServiceIdentityAsync(
+            CancellationToken cancellationToken)
         {
             var principal = _options.ServiceIdentity;
             if (principal?.Identity?.IsAuthenticated != true)
                 return null;
 
-            // A null projection is no scoping authority, refused like a missing service identity.
             var carrier = new DefaultHttpContext { User = principal };
-            var projected = _authFactory.CreateUserContext(carrier);
-            if (projected is null)
-                return null;
             try
             {
-                return UserContexts.Copy(projected);
+                var projected = await _authFactory.CreateUserContextAsync(
+                    carrier, carrier.RequestServices, cancellationToken);
+                // A null projection is no scoping authority, refused like a missing service identity.
+                return projected is null ? null : UserContexts.Copy(projected);
             }
-            // Keys that differ only in case (an ordinal host dictionary) name two values for one
-            // context key, so neither is the scoping authority. Refused like a null projection:
-            // the metric is excluded and the scrape goes on. The key name goes to the log only.
-            catch (InvalidOperationException ex)
+            // A throwing host factory, or keys that differ only in case (an ordinal host
+            // dictionary, which name two values for one context key), leave no scoping authority.
+            // Refused like a null projection: the metric is excluded and the scrape goes on. The
+            // detail goes to the log only.
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex,
-                    "Prometheus service identity projection refused; row-scoped metrics are excluded until the host auth factory returns one key per name.");
+                    "Prometheus service identity projection refused; row-scoped metrics are excluded until the host auth factory projects it.");
                 return null;
             }
         }

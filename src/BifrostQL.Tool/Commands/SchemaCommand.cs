@@ -21,15 +21,11 @@ public sealed class SchemaCommand : ICommand
         var resolved = await CommandConnection.ResolveAsync(config, output);
         if (resolved is null)
             return 1;
-        var connectionString = resolved.Value.ConnectionString;
 
         try
         {
-            var metadataLoader = new MetadataLoader(Array.Empty<string>());
-            var loader = new DbModelLoader(connectionString, metadataLoader);
-            var model = await loader.LoadAsync();
-
-            var schema = DbSchema.FromModel(model);
+            // serve's own build, with the config file's metadata rules: the schema serve serves.
+            var (model, schema) = await ServeModel.BuildAsync(resolved.Value);
 #pragma warning disable CS0618 // SchemaPrinter is the available printer API in this target package set.
             var sdl = new SchemaPrinter(schema).Print();
 #pragma warning restore CS0618

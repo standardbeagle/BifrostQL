@@ -30,7 +30,7 @@ public sealed class ServeCommand : ICommand
         // announced with a warning — never an ambient 0.0.0.0 default.
         var host = config.Host;
         var url = $"http://{host}:{port}";
-        var endpointPath = configSection?.Path ?? "/graphql";
+        var endpointPath = configSection?.Path ?? ServeModel.DefaultEndpointPath;
         var playgroundPath = configSection?.Playground ?? "/graphiql";
 
         if (!IsLoopback(host))

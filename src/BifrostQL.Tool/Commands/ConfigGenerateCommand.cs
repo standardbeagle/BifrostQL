@@ -20,13 +20,11 @@ public sealed class ConfigGenerateCommand : ICommand
         var resolved = await CommandConnection.ResolveAsync(config, output);
         if (resolved is null)
             return 1;
-        var connectionString = resolved.Value.ConnectionString;
 
         try
         {
-            var metadataLoader = new MetadataLoader(Array.Empty<string>());
-            var loader = new DbModelLoader(connectionString, metadataLoader);
-            var model = await loader.LoadAsync();
+            // serve's own build, with the config file's metadata rules: the model serve serves.
+            var (model, _) = await ServeModel.BuildAsync(resolved.Value);
 
             var detector = new ConfigPatternDetector();
             var results = detector.Detect(model);

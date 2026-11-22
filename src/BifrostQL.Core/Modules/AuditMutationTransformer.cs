@@ -36,7 +36,7 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
 {
     public string ModuleName => "audit";
 
-    // Runs after security gating (Policy=1, StateMachine=2) but BEFORE the
+    // Runs after security gating (Policy=0, Tenant=1, StateMachine=2) but BEFORE the
     // soft-delete transformer (100). Soft delete rewrites DELETE into UPDATE; if
     // audit ran after that rewrite it would only ever see Update and never stamp
     // the deleted-on/deleted-by columns on a soft delete. Running at 50 means audit

@@ -62,7 +62,7 @@ public class BifrostProfileFailClosedTests
     {
         Transformers = new IMutationTransformer[]
         {
-            new TenantMutationTransformer(),      // priority 0   (security)
+            new TenantMutationTransformer(),      // priority 1   (security)
             new SoftDeleteMutationTransformer(),  // priority 100 (data-integrity)
             new AppMutationTransformer(),         // priority 200 (application)
         },

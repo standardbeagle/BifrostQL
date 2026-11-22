@@ -96,6 +96,55 @@ public class PolicyMutationTransformerTests
         new PolicyMutationTransformer().Priority.Should().BeInRange(0, 99);
     }
 
+    // ---- Column refusals judge the client's columns, not server-stamped ones ----
+
+    // The tenant pin stamps tenant_id into every insert/update. When it ran before the policy
+    // check, a write-denied tenant column refused every non-admin write: the table was unwritable.
+    private static IDbModel TenantPinnedWriteDeniedModel() => ModelWithPolicy(
+        (TenantMutationTransformer.MetadataKey, "tenant_id"),
+        (MetadataKeys.Policy.Actions, "create,update"),
+        (MetadataKeys.Policy.WriteDeny, "tenant_id"));
+
+    private static MutationTransformersWrap TenantAndPolicyChain() => new()
+    {
+        Transformers = new IMutationTransformer[] { new TenantMutationTransformer(), new PolicyMutationTransformer() },
+    };
+
+    private static IDictionary<string, object?> ClerkInTenant(long tenant) => new Dictionary<string, object?>
+    {
+        ["user_id"] = "user-1",
+        ["roles"] = new[] { "clerk" },
+        [MetadataKeys.Auth.DefaultTenantContextKey] = tenant,
+    };
+
+    [Theory]
+    [InlineData(MutationType.Insert)]
+    [InlineData(MutationType.Update)]
+    public async Task ServerPinnedTenantColumn_IsNotRefusedByItsWriteDeny(MutationType mutationType)
+    {
+        var model = TenantPinnedWriteDeniedModel();
+        var data = new Dictionary<string, object?> { ["Total"] = 5m };
+        if (mutationType == MutationType.Update)
+            data["Id"] = 1;
+
+        var result = await TenantAndPolicyChain().TransformAsync(Orders(model), mutationType, data, Context(model, ClerkInTenant(7)));
+
+        result.Errors.Should().BeEmpty("the tenant column carries the server's value, not the client's");
+        result.Data["tenant_id"].Should().Be(7, "the tenant pin still stamps the caller's tenant");
+    }
+
+    [Fact]
+    public async Task ClientSuppliedWriteDeniedTenantColumn_IsStillRefused()
+    {
+        var model = TenantPinnedWriteDeniedModel();
+
+        var result = await TenantAndPolicyChain().TransformAsync(Orders(model), MutationType.Insert,
+            new Dictionary<string, object?> { ["Total"] = 5m, ["tenant_id"] = 9 }, Context(model, ClerkInTenant(7)));
+
+        result.Errors.Should().ContainSingle().Which.Should().Contain("not permitted");
+        result.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
     // ---- Table action deny: create / update / delete ----
 
     [Theory]

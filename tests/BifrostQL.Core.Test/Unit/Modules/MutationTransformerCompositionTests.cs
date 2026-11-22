@@ -276,7 +276,8 @@ public sealed class MutationTransformerCompositionTests
 
     [Theory]
     [InlineData(typeof(TenantFilterTransformer), 0)]
-    [InlineData(typeof(TenantMutationTransformer), 0)]
+    [InlineData(typeof(PolicyMutationTransformer), 0)]
+    [InlineData(typeof(TenantMutationTransformer), 1)]
     [InlineData(typeof(AuditMutationTransformer), 50)]
     [InlineData(typeof(SoftDeleteMutationTransformer), 100)]
     [InlineData(typeof(SoftDeleteFilterTransformer), 100)]

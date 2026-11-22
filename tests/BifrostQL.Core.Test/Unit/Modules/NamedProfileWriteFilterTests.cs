@@ -35,7 +35,7 @@ public class NamedProfileWriteFilterTests
     {
         Transformers = new IMutationTransformer[]
         {
-            new TenantMutationTransformer(),            // priority 0   (security)
+            new TenantMutationTransformer(),            // priority 1   (security)
             new SoftDeleteMutationTransformer(),        // priority 100 (data-integrity)
             new ExtendedServerValidationTransformer(),  // priority 199 (data-integrity, default-on)
             new AppMutationTransformer(),               // priority 200 (application, opt-in)

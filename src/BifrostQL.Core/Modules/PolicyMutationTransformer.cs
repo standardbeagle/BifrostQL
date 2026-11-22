@@ -24,9 +24,15 @@ namespace BifrostQL.Core.Modules;
 ///     ANDs it alongside the tenant filter rather than replacing it. Row scope
 ///     is not applied to create — an insert has no existing row to scope.
 ///
-/// Priority 1 — within the 0-99 security range, matching
-/// <see cref="PolicyFilterTransformer"/> and immediately after a tenant-scoped
-/// mutation transformer at priority 0.
+/// Priority 0 — first in the mutation chain, so the action and column refusals judge
+/// the columns the CLIENT wrote, before any transformer stamps a server-owned value.
+/// The tenant pin (<see cref="TenantMutationTransformer"/>, priority 1) writes the
+/// tenant column into every insert and update; judged after it, a write-denied or
+/// write-requires tenant column refused every non-admin write and made the table
+/// unwritable. An operation-id replay asks <see cref="Refuse"/> on the client's data
+/// too, so both paths judge the same columns. (On the read side the order is the
+/// reverse: <see cref="PolicyFilterTransformer"/> runs after the tenant filter, which
+/// stamps no columns.)
 ///
 /// Every rejection message is generic: it never names the table, column, or
 /// action, so error output cannot be used to probe the schema. Identity is
@@ -50,7 +56,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     public string ModuleName => "policy";
 
     // Security range, matching PolicyFilterTransformer on the query path.
-    public int Priority => 1;
+    public int Priority => 0;
 
     public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context)
     {

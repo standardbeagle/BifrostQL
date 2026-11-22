@@ -352,8 +352,12 @@ transition syntax.
 
 ## Where enforcement happens, and your own endpoints
 
-Two transformers carry the policy, both at priority 1 — immediately after tenant isolation
-at priority 0, and ahead of every application-level module:
+Two transformers carry the policy, both in the security band ahead of every
+application-level module. The read transformer runs at priority 1, after the tenant filter
+at priority 0. The write transformer runs first, at priority 0, before the tenant pin at
+priority 1, so its column checks judge the columns the client wrote, never the tenant value
+the server stamps. A table with `tenant-filter: tenant_id` and `policy-write-deny: tenant_id`
+stays writable; a client that sends `tenant_id` itself is refused.
 
 - The **read** transformer refuses a denied table, injects the row-scope filter, and
   asserts every requested column is readable.

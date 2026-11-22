@@ -38,7 +38,9 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
     public const string TenantContextKeyMetadata = MetadataKeys.Security.TenantContextKey;
     public const string DefaultTenantContextKey = "tenant_id";
 
-    public TenantMutationTransformer() : base(MetadataKey, priority: 0)
+    // Right after the policy check (priority 0): the pin stamps the tenant column, a
+    // server-owned value the policy's column refusals must not judge as the client's.
+    public TenantMutationTransformer() : base(MetadataKey, priority: 1)
     {
     }
 

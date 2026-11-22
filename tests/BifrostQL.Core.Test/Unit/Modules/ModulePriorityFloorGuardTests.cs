@@ -74,7 +74,7 @@ public class ModulePriorityFloorGuardTests
     [Fact]
     public void BuiltInTransformerBelowFloor_IsExempt()
     {
-        // TenantMutationTransformer (priority 0) and PolicyMutationTransformer (priority 1)
+        // PolicyMutationTransformer (priority 0) and TenantMutationTransformer (priority 1)
         // are shipped in the BifrostQL.Core assembly, so the guard must never reject them.
         var act = () => Guard(new IMutationTransformer[]
         {

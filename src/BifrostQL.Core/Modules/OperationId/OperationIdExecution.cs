@@ -113,12 +113,19 @@ namespace BifrostQL.Core.Modules.OperationId
         /// or hook runs. A record with a different fingerprint is refused with
         /// <see cref="ReusedCode"/>.</para>
         ///
+        /// <para>An attempt claims before it reads: a claim that succeeds proves no committed
+        /// record exists, so a new write reads nothing. A claim that fails on the store's unique
+        /// key means a record is committed; that attempt rolls back and runs once more in a fresh
+        /// transaction, which reads the record and answers (replay or <see cref="ReusedCode"/>).
+        /// So every request reads its record at most once. A read cannot go first and serve the
+        /// waiter below: Postgres never makes a read, locking or not, wait on another
+        /// transaction's uncommitted insert, so it returns nothing and the waiter must read again.</para>
+        ///
         /// <para>Two requests claiming one id at once: the second's claim waits on the first's
         /// uncommitted record. If the first rolls back, the waiting claim succeeds in place and the
-        /// second writes. If the first commits, the claim fails; that attempt rolls back and runs
-        /// once more in a fresh transaction, which sees the committed record and answers as a
-        /// retry would (replay or <see cref="ReusedCode"/>). A claim that conflicts again (only
-        /// when the store carries an extra unique key, or a record vanished) is refused as a
+        /// second writes. If the first commits, the claim fails and the second answers from the
+        /// committed record as above. A claim that conflicts again after the read found no record
+        /// (only when the store carries an extra unique key, or a record vanished) is refused as a
         /// plain <see cref="BifrostExecutionError.ConflictCode"/> that names no store constraint.</para>
         ///
         /// <para>Three requests claiming one id while the first rolls back: the two waiting claims
@@ -150,9 +157,9 @@ namespace BifrostQL.Core.Modules.OperationId
                 }
                 catch (BifrostExecutionError) when (claimLost)
                 {
-                    // A concurrent request claimed the same id first and committed while this claim
-                    // waited on it. This transaction is spent (Postgres has aborted it), so a fresh
-                    // one reads the committed record: replayed, or refused as reused.
+                    // The id holds a committed record: an earlier request's, or a concurrent one's
+                    // this claim waited on. This transaction is spent (Postgres has aborted it), so
+                    // a fresh one reads the record: replayed, or refused as reused.
                     lastAttempt = true;
                 }
                 catch (BifrostExecutionError) when (claimDeadlocked)
@@ -167,9 +174,10 @@ namespace BifrostQL.Core.Modules.OperationId
 
             Task<object?> RunOnceAsync(bool lastAttempt) => OperationWriteScope.RunAsync(connFactory, async scope =>
             {
-                var recorded = await OperationIdStore.FindAsync(
-                    store, dialect, scope.Connection, scope.Transaction, key, cancellationToken);
-                if (recorded is not null)
+                // Only the attempt after a lost claim reads: it knows a record was committed.
+                if (lastAttempt
+                    && await OperationIdStore.FindAsync(
+                        store, dialect, scope.Connection, scope.Transaction, key, cancellationToken) is { } recorded)
                 {
                     // Authorization first: a caller the policy now refuses gets the live refusal
                     // for this request, never OPERATION_ID_REUSED, so a refused caller cannot

@@ -38,11 +38,13 @@ namespace BifrostQL.Core.Modules.OperationId
 
         /// <summary>
         /// Inserts the record under <paramref name="key"/> before the write runs, with no
-        /// result yet. The store's unique key over (tenant, caller, operation id, field) makes a
-        /// second transaction claiming the same id for the same field wait for the first. If the first commits, the
-        /// waiting claim fails with a unique violation; <see cref="OperationIdExecution.ExecuteAsync"/>
-        /// then reads the committed outcome in a fresh transaction. If the first rolls back,
-        /// the waiting claim succeeds and the second transaction runs the write.
+        /// result yet; <see cref="OperationIdExecution.ExecuteAsync"/> claims before it reads.
+        /// The store's unique key over (tenant, caller, operation id, field) refuses a claim on a
+        /// committed record and makes a second transaction claiming the same id for the same field
+        /// wait for the first. If the first commits, the waiting claim fails with a unique
+        /// violation; either failure sends <see cref="OperationIdExecution.ExecuteAsync"/> to read
+        /// the committed outcome in a fresh transaction. If the first rolls back, the waiting claim
+        /// succeeds and the second transaction runs the write.
         /// </summary>
         public static async Task ClaimAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,

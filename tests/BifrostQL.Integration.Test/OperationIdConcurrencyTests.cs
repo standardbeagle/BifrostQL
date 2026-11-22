@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using BifrostQL.Integration.Test.Infrastructure;
 using FluentAssertions;
@@ -124,11 +126,32 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
             .Which.Should().Equal(new Dictionary<string, string?> { ["operation_id"] = "op-race", ["result"] = key });
     }
 
+    [SkippableFact]
+    public async Task Concurrent_duplicate_reads_the_record_once()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+        const string mutation = """mutation { notes(insert: { title: "read-once" }, _operationId: "op-race") }""";
+        using var store = StoreStatementRecorder.Start(new NpgsqlConnectionStringBuilder(_host!.ConnectionString).Database!);
+        var firstTrace = ActivityTraceId.CreateRandom();
+        var secondTrace = ActivityTraceId.CreateRandom();
+
+        var (first, second) = await RaceAsync(mutation, mutation, firstTrace, secondTrace);
+
+        PostgresGraphQlHost.AssertNoErrors(first);
+        PostgresGraphQlHost.AssertNoErrors(second);
+        second.RootElement.GetRawText().Should().Be(first.RootElement.GetRawText());
+        // The waiter's claim waits on the writer's, fails once it commits, and one read answers
+        // the waiter with the committed record. The writer claims and records, reading nothing.
+        store.StatementsOf(secondTrace).Should().Equal("INSERT", "SELECT");
+        store.StatementsOf(firstTrace).Should().Equal("INSERT", "UPDATE");
+    }
+
     /// <summary>
     /// Sends <paramref name="firstQuery"/> and, once it is blocked inside its transaction,
     /// <paramref name="secondQuery"/>; releases both once the second is blocked too.
     /// </summary>
-    private async Task<(JsonDocument First, JsonDocument Second)> RaceAsync(string firstQuery, string secondQuery)
+    private async Task<(JsonDocument First, JsonDocument Second)> RaceAsync(
+        string firstQuery, string secondQuery, ActivityTraceId? firstTrace = null, ActivityTraceId? secondTrace = null)
     {
         // The schema loads on the first request; load it now, so the only backends that can
         // wait on the gate's lock are the two writes.
@@ -146,15 +169,24 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
         await using var observer = new NpgsqlConnection(_host.ConnectionString);
         await observer.OpenAsync();
 
-        var first = _host.SendAsync(firstQuery, ("X-Test-User", "u-1"));
+        var first = _host.SendAsync(firstQuery, RequestHeaders(firstTrace));
         await WaitForBlockedBackendsAsync(observer, 1, first);
-        var second = _host.SendAsync(secondQuery, ("X-Test-User", "u-1"));
+        var second = _host.SendAsync(secondQuery, RequestHeaders(secondTrace));
         await WaitForBlockedBackendsAsync(observer, 2, first, second);
 
         await hold.CommitAsync();
         var replies = await Task.WhenAll(first, second);
         return (replies[0].Body, replies[1].Body);
     }
+
+    /// <summary>
+    /// The race's caller, and a W3C <c>traceparent</c> under <paramref name="trace"/> when given, so
+    /// every statement the request sends carries that trace id (<see cref="StoreStatementRecorder"/>).
+    /// </summary>
+    private static (string Name, string Value)[] RequestHeaders(ActivityTraceId? trace)
+        => trace is { } id
+            ? [("X-Test-User", "u-1"), ("traceparent", $"00-{id.ToHexString()}-{ActivitySpanId.CreateRandom().ToHexString()}-01")]
+            : [("X-Test-User", "u-1")];
 
     /// <summary>
     /// Waits until <paramref name="count"/> backends in this database, other than
@@ -194,4 +226,43 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
             lines.Add(string.Join(" | ", Enumerable.Range(0, reader.FieldCount).Select(i => reader.IsDBNull(i) ? "-" : reader.GetValue(i).ToString())));
         return string.Join("\n", lines);
     }
+}
+
+/// <summary>
+/// Records, per trace id, the statements Npgsql runs against the operation-id store in one
+/// database. A request's statements are a child of its ASP.NET Core request activity, which takes
+/// its trace id from the request's <c>traceparent</c>, so parallel tests and the other request of a
+/// race never mix in.
+/// </summary>
+internal sealed class StoreStatementRecorder : IDisposable
+{
+    private readonly ActivityListener _listener;
+    private readonly ConcurrentQueue<(ActivityTraceId Trace, DateTime Start, string Verb)> _statements = new();
+
+    private StoreStatementRecorder(string database)
+    {
+        _listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Npgsql" or "Microsoft.AspNetCore",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (activity.Source.Name != "Npgsql"
+                    || activity.GetTagItem("db.namespace") as string != database
+                    || activity.GetTagItem("db.query.text") is not string sql
+                    || !sql.Contains("operation_ids", StringComparison.Ordinal))
+                    return;
+                _statements.Enqueue((activity.TraceId, activity.StartTimeUtc, sql.TrimStart().Split(' ', 2)[0].ToUpperInvariant()));
+            },
+        };
+        ActivitySource.AddActivityListener(_listener);
+    }
+
+    public static StoreStatementRecorder Start(string database) => new(database);
+
+    /// <summary>The leading verb of each store statement under <paramref name="trace"/>, in start order.</summary>
+    public IReadOnlyList<string> StatementsOf(ActivityTraceId trace)
+        => _statements.Where(s => s.Trace == trace).OrderBy(s => s.Start).Select(s => s.Verb).ToList();
+
+    public void Dispose() => _listener.Dispose();
 }

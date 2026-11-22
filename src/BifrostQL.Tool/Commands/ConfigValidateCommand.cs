@@ -188,25 +188,27 @@ internal static class ConfigFileReader
         AllowTrailingCommas = true,
     };
 
-    /// <summary>Parses a config file's text with the configuration provider's JSON grammar.</summary>
-    public static System.Text.Json.JsonDocument ParseJson(string json)
-        => System.Text.Json.JsonDocument.Parse(json, ConfigurationJsonOptions);
-
     /// <summary>
-    /// Reads the metadata rules the server would read from this file: the JSON is bound into
-    /// an <see cref="IConfiguration"/> the way the Host's <c>AddJsonFile</c> binds it, and the
-    /// rules come from the runtime reader <see cref="MetadataLoader.ReadMetadataRules"/>.
+    /// Everything <c>bifrost serve</c> reads from a config file, through every shape and kind
+    /// check it applies. This is the reader's only entry: serve, config-validate and doctor all
+    /// read through here, so each refuses exactly the files serve refuses. A missing connection
+    /// string is not a shape fault: it comes back null for the caller to judge.
     /// </summary>
-    public static IReadOnlyList<string> ReadMetadataRules(string json)
-        => ReadMetadataRules(BifrostSection(ReadConfigFile(json)));
+    public static (string? ConnectionString, BifrostConfigSection Section) ReadServeConfig(string json)
+    {
+        var file = ReadConfigFile(json);
+        return (ReadConnectionString(file), ReadBifrostSection(file));
+    }
+
+    private static System.Text.Json.JsonDocument ParseJson(string json)
+        => System.Text.Json.JsonDocument.Parse(json, ConfigurationJsonOptions);
 
     /// <summary>
     /// The connection string the server's <c>GetConnectionString(key)</c> reads from this file.
     /// Keys match case-insensitively, as on the server.
     /// </summary>
-    public static string? ReadConnectionString(string json, string key = "bifrost")
+    private static string? ReadConnectionString(ConfigFile file, string key = "bifrost")
     {
-        var file = ReadConfigFile(json);
         foreach (var kind in file.KindsAt("ConnectionStrings"))
         {
             if (kind is not (System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Null))
@@ -220,18 +222,11 @@ internal static class ConfigFileReader
         return file.Configuration.GetConnectionString(key);
     }
 
-    /// <summary>
-    /// Everything <c>bifrost serve</c> reads from a config file, through every shape and kind
-    /// check it applies. Serve and config-validate both read through here, so validate refuses
-    /// exactly the files serve refuses. A missing connection string is not a shape fault: it
-    /// comes back null for the caller to judge.
-    /// </summary>
-    public static (string? ConnectionString, BifrostConfigSection Section) ReadServeConfig(string json)
-        => (ReadConnectionString(json), ReadBifrostSection(json));
-
-    public static BifrostConfigSection ReadBifrostSection(string json)
+    // The BifrostQL section's values, with the kind checks the configuration binder skips
+    // (it reads a number or bool as its text). The metadata rules come from the runtime reader
+    // MetadataLoader.ReadMetadataRules.
+    private static BifrostConfigSection ReadBifrostSection(ConfigFile file)
     {
-        var file = ReadConfigFile(json);
         var section = BifrostSection(file);
         if (section is null)
             return new BifrostConfigSection();

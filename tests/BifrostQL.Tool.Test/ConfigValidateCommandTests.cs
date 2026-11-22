@@ -132,8 +132,8 @@ public sealed class ConfigValidateCommandTests : IDisposable
     [Fact]
     public void CommentedConfig_ServeAndDoctorReadersAcceptIt()
     {
-        ConfigFileReader.ReadConnectionString(CommentedConfig).Should().Be("Data Source=commented.db");
-        var section = ConfigFileReader.ReadBifrostSection(CommentedConfig.Replace("\"dbo.items { tenant-filter }\",", ""));
+        ConfigFileReader.ReadServeConfig(CommentedConfig).ConnectionString.Should().Be("Data Source=commented.db");
+        var section = ConfigFileReader.ReadServeConfig(CommentedConfig.Replace("\"dbo.items { tenant-filter }\",", "")).Section;
         section.Path.Should().Be("/gql");
         section.Metadata.Should().Equal("dbo.orders { soft-delete: deleted_at }");
     }
@@ -155,8 +155,8 @@ public sealed class ConfigValidateCommandTests : IDisposable
             }
             """;
 
-        ConfigFileReader.ReadConnectionString(config).Should().Be("Data Source=lower.db");
-        var section = ConfigFileReader.ReadBifrostSection(config);
+        ConfigFileReader.ReadServeConfig(config).ConnectionString.Should().Be("Data Source=lower.db");
+        var section = ConfigFileReader.ReadServeConfig(config).Section;
         section.Path.Should().Be("/gql");
         section.Playground.Should().Be("/pg");
         section.DisableAuth.Should().BeFalse();
@@ -169,7 +169,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
     public void DuplicateCaseKeys_AreRefusedAsTheServerRefusesThem(string config)
     {
         // The configuration provider refuses keys that differ only in case; the CLI picked one.
-        FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+        FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage("*duplicate key*")
             .Which.Message.Should().NotContain("a.db").And.NotContain("b.db");
     }
@@ -177,7 +177,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
     [Fact]
     public void DuplicateCaseKeysInTheBifrostSection_AreRefused()
     {
-        FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection("""{ "BifrostQL": { "Path": "/a", "path": "/b" } }"""))
+        FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig("""{ "BifrostQL": { "Path": "/a", "path": "/b" } }"""))
             .Should().Throw<ConfigFileShapeException>().WithMessage("*duplicate key*");
     }
 
@@ -187,7 +187,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
     [InlineData("""{ "ConnectionStrings": { "bifrost": [ "a" ] } }""", "connectionStrings.bifrost must be a string, found Array")]
     [InlineData("""{ "ConnectionStrings": { "other": "x" }, "connectionStrings": { "Bifrost": 5 } }""", "connectionStrings.bifrost must be a string, found Number")]
     public void MisShapedConnectionStrings_AreReportedAsShapeErrors(string config, string expected)
-        => FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+        => FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
     // Configuration splits a property name on ':', so a colon-keyed property is the same key as
@@ -197,7 +197,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
     [InlineData("""{ "ConnectionStrings:bifrost": 42 }""", "connectionStrings.bifrost must be a string, found Number")]
     [InlineData("""{ "connectionstrings:BIFROST": true }""", "connectionStrings.bifrost must be a string, found True")]
     public void ColonKeyedNonStringConnectionString_IsAShapeError(string config, string expected)
-        => FluentActions.Invoking(() => ConfigFileReader.ReadConnectionString(config))
+        => FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
     [Theory]
@@ -206,7 +206,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
     [InlineData("""{ "BifrostQL": { "Path": 5 } }""", "BifrostQL:Path must be a string, found Number")]
     [InlineData("""{ "BifrostQL:Playground": true }""", "BifrostQL:Playground must be a string, found True")]
     public void NonStringPaths_AreShapeErrors(string config, string expected)
-        => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection(config))
+        => FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig(config))
             .Should().Throw<ConfigFileShapeException>().WithMessage($"*{expected}*");
 
     public static TheoryData<string> ShapesServeRefuses() => new()
@@ -219,12 +219,18 @@ public sealed class ConfigValidateCommandTests : IDisposable
         """{ "connectionStrings": 5 }""",
     };
 
+    // A second public reader would let a command read the file without serve's full check set.
+    [Fact]
+    public void ConfigFileReader_ExposesOnlyReadServeConfig()
+        => typeof(ConfigFileReader)
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly)
+            .Where(m => !m.IsPrivate)
+            .Select(m => m.Name)
+            .Should().Equal(nameof(ConfigFileReader.ReadServeConfig));
+
     private static string ServeRefusal(string config)
-        => FluentActions.Invoking(() =>
-            {
-                ConfigFileReader.ReadConnectionString(config);
-                ConfigFileReader.ReadBifrostSection(config);
-            })
+        => FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig(config))
             .Should().Throw<ConfigFileShapeException>().Which.Message;
 
     // config-validate read only the metadata rules, so a file serve refuses at its shape check
@@ -301,15 +307,15 @@ public sealed class ConfigValidateCommandTests : IDisposable
             { "ConnectionStrings:bifrost": "Data Source=colon.db", "BifrostQL:Path": "/gql", "bifrostql:playground": "/pg" }
             """;
 
-        ConfigFileReader.ReadConnectionString(config).Should().Be("Data Source=colon.db");
-        var section = ConfigFileReader.ReadBifrostSection(config);
+        ConfigFileReader.ReadServeConfig(config).ConnectionString.Should().Be("Data Source=colon.db");
+        var section = ConfigFileReader.ReadServeConfig(config).Section;
         section.Path.Should().Be("/gql");
         section.Playground.Should().Be("/pg");
     }
 
     [Fact]
     public void NonBooleanDisableAuth_IsAShapeError_ThatDoesNotQuoteTheValue()
-        => FluentActions.Invoking(() => ConfigFileReader.ReadBifrostSection("""{ "BifrostQL": { "DisableAuth": "maybe-secret" } }"""))
+        => FluentActions.Invoking(() => ConfigFileReader.ReadServeConfig("""{ "BifrostQL": { "DisableAuth": "maybe-secret" } }"""))
             .Should().Throw<ConfigFileShapeException>().WithMessage("*BifrostQL:DisableAuth*")
             .Which.Message.Should().NotContain("maybe-secret");
 

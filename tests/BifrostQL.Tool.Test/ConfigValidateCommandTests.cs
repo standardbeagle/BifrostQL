@@ -91,6 +91,69 @@ public sealed class ConfigValidateCommandTests : IDisposable
         json.GetProperty("modelValidated").GetBoolean().Should().BeTrue();
     }
 
+    [Fact]
+    public async Task MalformedConfigJson_IsReportedAsJson()
+    {
+        var (exit, json) = await RunRawAsync(null, "{ \"BifrostQL\": { \"Metadata\": [ ");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().StartWith("Config file is not valid JSON:");
+    }
+
+    [Fact]
+    public async Task NonStringMetadataRule_IsReportedAsJson()
+    {
+        var (exit, json) = await RunRawAsync(null, "{ \"BifrostQL\": { \"Metadata\": [ 42 ] } }");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().Contain("Number");
+    }
+
+    [Fact]
+    public async Task MalformedConnectionString_IsReportedWithoutEchoingIt()
+    {
+        DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
+        var connectionString = $"Data Source={Path.Combine(_dir, "model.db")};Password=hunter2-secret;Bogus Keyword=1";
+
+        var (exit, json, text) = await RunWithTextAsync(connectionString, "main.orders { soft-delete: deleted_at }");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("modelValidated").GetBoolean().Should().BeFalse();
+        Messages(json).Should().ContainSingle().Which.Should().Contain("bogus keyword");
+        text.Should().NotContain("hunter2-secret").And.NotContain(_dir);
+    }
+
+    [Fact]
+    public async Task ParseErrors_SayTheModelWasNotValidated()
+    {
+        var connectionString = await CreateDatabaseAsync();
+
+        var (exit, json) = await RunAsync(connectionString, "main.orders { tenant-filter }");
+
+        exit.Should().Be(1);
+        json.GetProperty("modelValidated").GetBoolean().Should().BeFalse();
+        json.GetProperty("modelNotValidatedReason").GetString().Should().Contain("model not validated");
+    }
+
+    [Fact]
+    public async Task ParseErrors_TextOutputSaysTheModelWasNotValidated()
+    {
+        var connectionString = await CreateDatabaseAsync();
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new { BifrostQL = new { Metadata = new[] { "main.orders { tenant-filter }" } } }));
+
+        var writer = new StringWriter();
+        var exit = await new ConfigValidateCommand().ExecuteAsync(
+            ToolConfig.Parse(new[] { "config-validate", "--config", configPath, "--connection-string", connectionString }),
+            new OutputFormatter(writer, jsonMode: false, supportsAnsi: false));
+
+        exit.Should().Be(1);
+        writer.ToString().Should().Contain("model not validated");
+    }
+
     private async Task<string> CreateDatabaseAsync()
     {
         DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
@@ -103,10 +166,22 @@ public sealed class ConfigValidateCommandTests : IDisposable
         return connectionString;
     }
 
-    private async Task<(int Exit, JsonElement Json)> RunAsync(string? connectionString, params string[] rules)
+    private Task<(int Exit, JsonElement Json)> RunAsync(string? connectionString, params string[] rules)
+        => RunRawAsync(connectionString, JsonSerializer.Serialize(new { BifrostQL = new { Metadata = rules } }));
+
+    private async Task<(int Exit, JsonElement Json)> RunRawAsync(string? connectionString, string configJson)
+    {
+        var (exit, json, _) = await RunConfigAsync(connectionString, configJson);
+        return (exit, json);
+    }
+
+    private Task<(int Exit, JsonElement Json, string Text)> RunWithTextAsync(string? connectionString, params string[] rules)
+        => RunConfigAsync(connectionString, JsonSerializer.Serialize(new { BifrostQL = new { Metadata = rules } }));
+
+    private async Task<(int Exit, JsonElement Json, string Text)> RunConfigAsync(string? connectionString, string configJson)
     {
         var configPath = Path.Combine(_dir, "bifrostql.json");
-        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new { BifrostQL = new { Metadata = rules } }));
+        await File.WriteAllTextAsync(configPath, configJson);
 
         var args = new List<string> { "config-validate", "--config", configPath, "--json" };
         if (connectionString != null)
@@ -114,7 +189,8 @@ public sealed class ConfigValidateCommandTests : IDisposable
 
         var writer = new StringWriter();
         var exit = await new ConfigValidateCommand().ExecuteAsync(ToolConfig.Parse(args.ToArray()), new OutputFormatter(writer, jsonMode: true));
-        return (exit, JsonDocument.Parse(writer.ToString()).RootElement.Clone());
+        var text = writer.ToString();
+        return (exit, JsonDocument.Parse(text).RootElement.Clone(), text);
     }
 
     private static IReadOnlyList<string> Messages(JsonElement json)

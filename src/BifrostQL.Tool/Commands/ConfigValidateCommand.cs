@@ -32,18 +32,44 @@ public sealed class ConfigValidateCommand : ICommand
         }
 
         var configJson = await File.ReadAllTextAsync(configPath);
-        var rules = ConfigFileReader.ReadMetadataRules(configJson);
+        IReadOnlyList<string> rules;
+        try
+        {
+            rules = ConfigFileReader.ReadMetadataRules(configJson);
+        }
+        // JsonException: malformed JSON. InvalidOperationException: a metadata entry that is
+        // not a string. Neither message quotes the file's content.
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+        {
+            var error = $"Config file is not valid JSON: {ex.Message}";
+            if (output.IsJsonMode)
+            {
+                output.WriteJson(new { success = false, error });
+                return 1;
+            }
+            output.WriteError(error);
+            return 1;
+        }
         var issues = ParseRules(rules);
 
         var modelValidated = false;
-        if (issues.Count == 0 && !string.IsNullOrWhiteSpace(config.ConnectionString))
+        string? modelNotValidatedReason = null;
+        if (issues.Count > 0)
+            modelNotValidatedReason = "model not validated: fix the rule parse errors first";
+        else if (string.IsNullOrWhiteSpace(config.ConnectionString))
+            modelNotValidatedReason = "model not validated: no --connection-string";
+        else
         {
             try
             {
                 await new DbModelLoader(config.ConnectionString, new MetadataLoader(rules)).LoadAsync();
                 modelValidated = true;
             }
-            catch (InvalidOperationException ex)
+            // InvalidOperationException: ModelConfigValidator. ArgumentException (and its
+            // ArgumentOutOfRangeException subtype): a malformed connection string or a failed
+            // model lookup. Provider messages name the offending keyword, never the connection
+            // string or its values, so ex.Message is safe to print.
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
             {
                 issues.Add(new ConfigIssue(null, ex.Message));
             }
@@ -67,6 +93,7 @@ public sealed class ConfigValidateCommand : ICommand
                 ruleCount = rules.Count,
                 errorCount = issues.Count,
                 modelValidated,
+                modelNotValidatedReason,
                 issues = issues.Select(i => new { rule = i.Rule, message = i.Message }),
             });
             return issues.Count > 0 ? 1 : 0;
@@ -85,6 +112,8 @@ public sealed class ConfigValidateCommand : ICommand
         {
             output.WriteInfo("");
             output.WriteInfo($"  {issues.Count} error(s)");
+            if (modelNotValidatedReason != null)
+                output.WriteInfo($"  {modelNotValidatedReason}");
             return 1;
         }
 

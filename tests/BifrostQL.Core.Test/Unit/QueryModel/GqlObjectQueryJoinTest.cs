@@ -271,6 +271,7 @@ public sealed class GqlObjectQueryJoinTest
         var tableJoin = new TableJoin
         {
             Name = "orders",
+            FromTable = new GqlObjectQuery { DbTable = dbModel.GetTableFromDbName("Users"), TableName = "Users" },
             FromColumn = "Id",
             ConnectedColumn = "UserId",
             Operator = "_eq",
@@ -314,6 +315,7 @@ public sealed class GqlObjectQueryJoinTest
         var tableJoin = new TableJoin
         {
             Name = "user",
+            FromTable = new GqlObjectQuery { DbTable = dbModel.GetTableFromDbName("Orders"), TableName = "Orders" },
             FromColumn = "UserId",
             ConnectedColumn = "Id",
             Operator = "_eq",
@@ -366,6 +368,7 @@ public sealed class GqlObjectQueryJoinTest
         var tableJoin = new TableJoin
         {
             Name = "orders",
+            FromTable = new GqlObjectQuery { DbTable = dbModel.GetTableFromDbName("Users"), TableName = "Users" },
             FromColumn = "Id",
             ConnectedColumn = "UserId",
             Operator = "_eq",

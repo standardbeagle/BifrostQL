@@ -468,7 +468,7 @@ namespace BifrostQL.Core.QueryModel
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, parameters, "b", useAsKeyword: true)));
 
-            var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
+            var srcProjection = tableJoin.EmitSrcProjection(dbModel, dialect, "a");
             // The connected table may contribute no columns of its own (e.g. a
             // polymorphic/child collection selected with only the relationship,
             // no scalar fields). Appending ", {empty}" produced "src_id, FROM"

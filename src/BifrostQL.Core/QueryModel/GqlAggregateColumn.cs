@@ -114,6 +114,14 @@ namespace BifrostQL.Core.QueryModel
             var firstHop = parent.PagedRowWindowSql(model, dialect, firstHopProjection, parentFilter);
             var sql = firstHop.Sql;
 
+            // The reader matches srcId against the parent row's ParentKeyColumnDbName value, so
+            // srcId is read the way the parent row reads that column (ColumnReadProjection). It
+            // stays raw below the final SELECT: the joins and GROUP BY compare it as stored.
+            var readSrcId = parent.DbTable.ColumnLookup.TryGetValue(ParentKeyColumnDbName, out var parentKeyColumn)
+                && ColumnReadProjection.ReadsAsText(model, dialect, parentKeyColumn)
+                ? $"{dialect.TextCast($"{src}.{srcId}", parentKeyColumn.DataType)} {srcId}"
+                : $"{src}.{srcId}";
+
             var linkFilterParams = new List<SqlParameterInfo>();
             for (var i = 0; i < Links.Count; ++i)
             {
@@ -121,7 +129,7 @@ namespace BifrostQL.Core.QueryModel
                 var fromSql = $" FROM ({sql}) {src} INNER JOIN {TableLinkSql.DestTableRef(link, dialect, direction)} {next} ON {src}.{joinId} = {next}.{dialect.EscapeIdentifier(TableLinkSql.DestJoinColumn(link, direction))}";
                 var selectSql = (i, Links.Count - i) switch
                 {
-                    (_, 1) => $"SELECT {src}.{srcId}, {AggregateType}({next}.{dialect.EscapeIdentifier(FinalColumnName)}) {dialect.EscapeIdentifier(FinalColumnGraphQlName)}",
+                    (_, 1) => $"SELECT {readSrcId}, {AggregateType}({next}.{dialect.EscapeIdentifier(FinalColumnName)}) {dialect.EscapeIdentifier(FinalColumnGraphQlName)}",
                     _ => $"SELECT {TableLinkSql.SourceColumns(link, dialect, direction, columnName: "joinId", tableName: "next")}, {src}.{srcId}",
                 };
                 sql = selectSql + fromSql;

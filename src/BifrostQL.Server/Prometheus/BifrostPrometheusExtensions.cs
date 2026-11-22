@@ -64,7 +64,8 @@ namespace BifrostQL.Server.Prometheus
             services.TryAddSingleton(sp => new PrometheusScrapeGate(
                 options.Security, sp.GetService<ILogger<PrometheusScrapeGate>>()));
             services.TryAddSingleton(sp => new PrometheusScrapeScopeResolver(
-                options.Security, sp.GetService<IBifrostAuthContextFactory>()));
+                options.Security, sp.GetService<IBifrostAuthContextFactory>(),
+                sp.GetService<ILogger<PrometheusScrapeScopeResolver>>()));
             services.TryAddSingleton(sp => new PrometheusSeriesCollector(
                 sp.GetRequiredService<IQueryIntentExecutor>(), options.Collection));
 

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
@@ -41,13 +43,16 @@ namespace BifrostQL.Server.Prometheus
     {
         private readonly PrometheusScrapeSecurityOptions _options;
         private readonly IBifrostAuthContextFactory _authFactory;
+        private readonly ILogger _logger;
 
         public PrometheusScrapeScopeResolver(
             PrometheusScrapeSecurityOptions options,
-            IBifrostAuthContextFactory? authFactory = null)
+            IBifrostAuthContextFactory? authFactory = null,
+            ILogger<PrometheusScrapeScopeResolver>? logger = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _authFactory = authFactory ?? BifrostAuthContextFactory.Instance;
+            _logger = logger ?? (ILogger)NullLogger.Instance;
         }
 
         /// <summary>
@@ -166,8 +171,9 @@ namespace BifrostQL.Server.Prometheus
 
         /// <summary>
         /// Projects the configured fixed service principal through the shared auth seam. Returns
-        /// null when no service identity is configured; an authenticated principal yields its full
-        /// claim projection (tenant/roles/policy keys).
+        /// null when no service identity is configured, or when the host factory's projection is
+        /// null or holds keys that differ only in case; an authenticated principal otherwise yields
+        /// its full claim projection (tenant/roles/policy keys).
         /// </summary>
         private IDictionary<string, object?>? ProjectServiceIdentity()
         {
@@ -178,7 +184,21 @@ namespace BifrostQL.Server.Prometheus
             // A null projection is no scoping authority, refused like a missing service identity.
             var carrier = new DefaultHttpContext { User = principal };
             var projected = _authFactory.CreateUserContext(carrier);
-            return projected is null ? null : UserContexts.Copy(projected);
+            if (projected is null)
+                return null;
+            try
+            {
+                return UserContexts.Copy(projected);
+            }
+            // Keys that differ only in case (an ordinal host dictionary) name two values for one
+            // context key, so neither is the scoping authority. Refused like a null projection:
+            // the metric is excluded and the scrape goes on. The key name goes to the log only.
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex,
+                    "Prometheus service identity projection refused; row-scoped metrics are excluded until the host auth factory returns one key per name.");
+                return null;
+            }
         }
     }
 }

@@ -245,6 +245,59 @@ namespace BifrostQL.Server.Test.Prometheus
         }
 
         [Fact]
+        public async Task A_case_twin_service_projection_excludes_only_the_row_scoped_metric()
+        {
+            // An ordinal-keyed projection whose keys differ only in case is no single scoping
+            // authority: the copy into the case-insensitive context refuses it. That refusal
+            // escaped ResolveScope and faulted the whole scrape. It must exclude the row-scoped
+            // metric, as a null projection does, and leave the unscoped metric served.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "scope-casetwin", new[] { NonTenant, AggregateMode }, Seed);
+            var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<PrometheusScrapeScopeResolver>();
+            var resolver = new PrometheusScrapeScopeResolver(
+                new PrometheusScrapeSecurityOptions
+                {
+                    BusinessMetricsEnabled = true,
+                    ScrapeCredential = "token",
+                    ServiceIdentity = ServicePrincipal("tenant-a"),
+                },
+                new CaseTwinAuthContextFactory(),
+                logger);
+            var service = new PrometheusScrapeService(
+                harness.Reads,
+                resolver,
+                new PrometheusSeriesCollector(harness.Reads),
+                new PrometheusExpositionOptions { Endpoint = ODataRealDbHarness.EndpointPath, GlobalMaxCardinality = 1000 });
+
+            var text = await service.ScrapeAsync();
+
+            text.Should().Contain("sales_total{region=\"west\"} 1\n", "the unscoped metric is still served");
+            text.Should().NotContain("orders_total", "the row-scoped metric has no single scoping authority");
+
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Orders");
+            var scope = resolver.ResolveScope(PrometheusMetricConfig.FromTable(table), table);
+            scope.IsIncluded.Should().BeFalse();
+            scope.UserContext.Should().BeNull();
+            scope.Reason.Should().Contain("service identity").And.NotContain("tenant_id");
+
+            // The detail (which key collided) is logged server-side, never put in the reason.
+            logger.Collector.GetSnapshot().Should().Contain(r =>
+                r.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                && r.Exception is InvalidOperationException
+                && r.Exception.Message.Contains("TENANT_ID"));
+        }
+
+        private sealed class CaseTwinAuthContextFactory : BifrostQL.Server.IBifrostAuthContextFactory
+        {
+            public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext context) =>
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["tenant_id"] = "tenant-a",
+                    ["TENANT_ID"] = "tenant-b",
+                };
+        }
+
+        [Fact]
         public async Task Per_tenant_mode_with_no_service_identity_fails_closed()
         {
             await using var harness = await ODataRealDbHarness.StartAsync("scope-pt-noid", new[] { PerTenantMode }, Seed);

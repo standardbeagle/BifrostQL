@@ -114,7 +114,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
     }
 
     [Fact]
-    public void AddSqlParameterized_ZeroLimit_GeneratesFetchZero()
+    public void AddSqlParameterized_ZeroLimit_GeneratesAnEmptyStatement()
     {
         // Arrange
         var dbModel = StandardTestFixtures.SimpleUsers();
@@ -132,7 +132,8 @@ public sealed class GqlObjectQueryEdgeCaseTest
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
         // Assert
-        sqls["Users"].Sql.Should().Contain("FETCH NEXT 0 ROWS ONLY");
+        // SQL Server refuses FETCH NEXT 0 ROWS (error 10744): a zero window is a false predicate.
+        sqls["Users"].Sql.Should().Be("SELECT [Id] [Id] FROM [Users] WHERE 1=0");
     }
 
     [Fact]

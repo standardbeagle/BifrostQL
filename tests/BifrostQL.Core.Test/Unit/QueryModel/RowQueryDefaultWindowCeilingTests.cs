@@ -110,7 +110,10 @@ public sealed class RowQueryDefaultWindowCeilingTests
         var sql = RootSql(BuildSqls(BuildModel(), dialect, rootLimit: 0));
 
         SqlSyntax.AssertValid(sql, flavor, "empty-bounded root row SQL");
-        sql.Should().Contain(Bound(flavor, 0), "limit: 0 is an empty page, not the default window");
+        // A false predicate on every dialect: SQL Server refuses FETCH NEXT 0 ROWS (error 10744).
+        sql.Should().EndWith(" WHERE 1=0", "limit: 0 is an empty page, not the default window");
+        sql.Should().NotContain(Bound(flavor, 0));
+        sql.Should().NotContain(Bound(flavor, GqlObjectQuery.DefaultRowWindow));
     }
 
     [Theory]

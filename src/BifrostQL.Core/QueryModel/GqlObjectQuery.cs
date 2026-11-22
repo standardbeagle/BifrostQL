@@ -229,6 +229,16 @@ namespace BifrostQL.Core.QueryModel
         }
 
         /// <summary>
+        /// The WHERE of a statement whose resolved row window is zero (<c>limit: 0</c>): no
+        /// row passes it on any engine, and it needs no window. A zero window never reaches
+        /// <see cref="ISqlDialect.Pagination"/>, because SQL Server refuses
+        /// <c>FETCH NEXT 0 ROWS ONLY</c> (error 10744). It replaces the node's filter (no row
+        /// passes either way), keeps the projection so the reader still finds the result set,
+        /// and leaves the count statement its real filter, so the total stays correct.
+        /// </summary>
+        private static readonly ParameterizedSql EmptyWindowFilter = new(" WHERE 1=0", Array.Empty<SqlParameterInfo>());
+
+        /// <summary>
         /// ORDER BY expressions for a query that is about to be PAGED: the caller's
         /// sort, then the table's primary key ascending as a tie-break.
         ///
@@ -274,14 +284,18 @@ namespace BifrostQL.Core.QueryModel
         internal ParameterizedSql PagedRowWindowSql(IDbModel dbModel, ISqlDialect dialect, string projection, ParameterizedSql filter)
         {
             var tableRef = dialect.TableReference(SchemaName, TableName);
+            var select = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>());
+            // A whole-set read keeps the ORDER BY and takes no window (the dialects' -1).
+            var window = ReadsWholeSet ? -1 : ResolveRowWindow(dbModel, Limit);
+            if (window == 0)
+                return select.Append(EmptyWindowFilter);
             var sortCols = ObjectKeyRange != null
                 ? new[] { $"{ObjectKeySql(dbModel, dialect)} asc" }
                 : RenderPagedSortColumns(dialect, DbTable, Sort);
-            // A whole-set read keeps the ORDER BY and takes no window (the dialects' -1).
             var pagination = ReadsWholeSet
                 ? dialect.Pagination(sortCols, null, -1)
-                : dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
-            return new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
+                : dialect.Pagination(sortCols, Offset, window);
+            return select
                 .Append(filter)
                 .Append(pagination);
         }
@@ -348,23 +362,26 @@ namespace BifrostQL.Core.QueryModel
             {
                 var aggFilter = GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var aggTableRef = dialect.TableReference(SchemaName, TableName);
-                var aggSql = grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter);
 
                 // The group window obeys the SAME server ceiling as a row read:
                 // `groupBy: [id]` is one group per row, so an unpaged grouped
                 // aggregate is an unbounded table read wearing an aggregate's
                 // clothes. A whole-table aggregate (no group keys) is one row by
                 // construction and needs no window.
-                if (grouped.GroupColumns.Count > 0)
+                if (grouped.GroupColumns.Count == 0)
                 {
-                    // An unspecified limit resolves to the default window INSIDE the
-                    // resolver, then clamps: an operator who caps reads at 5 rows must
-                    // not receive 100 groups.
-                    var groupLimit = ResolveRowWindow(dbModel, Limit);
-                    aggSql = aggSql.Append(dialect.Pagination(grouped.OrderColumns(dialect), Offset, groupLimit));
+                    sqls[KeyName] = grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter);
+                    return;
                 }
 
-                sqls[KeyName] = aggSql;
+                // An unspecified limit resolves to the default window INSIDE the
+                // resolver, then clamps: an operator who caps reads at 5 rows must
+                // not receive 100 groups.
+                var groupLimit = ResolveRowWindow(dbModel, Limit);
+                sqls[KeyName] = groupLimit == 0
+                    ? grouped.ToSqlParameterized(dialect, aggTableRef, EmptyWindowFilter)
+                    : grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter)
+                        .Append(dialect.Pagination(grouped.OrderColumns(dialect), Offset, groupLimit));
                 return;
             }
 
@@ -585,13 +602,16 @@ namespace BifrostQL.Core.QueryModel
         private static ParameterizedSql BuildFlatCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string wrap, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams)
         {
             var dialect = ctx.Dialect;
-            var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
+            var window = ResolveRowWindow(ctx.Model, tableJoin.ConnectedTable.Limit ?? -1);
+            var rows = new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList());
+            if (window == 0)
+                return rows.Append(EmptyWindowFilter);
             // Qualified with the connected table's alias: a bridge's junction table may
             // carry a same-named key column, and the key tie-break is added unrequested.
             var sortCols = RenderPagedSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
-            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, ResolveRowWindow(ctx.Model, effectiveLimit));
+            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, window);
 
-            return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
+            return rows
                 .Append(filter)
                 .Append(pagination);
         }

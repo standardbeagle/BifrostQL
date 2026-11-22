@@ -116,10 +116,13 @@ public sealed class DefaultPageJoinAlignmentTests
         var (parent, restricted) = BuildUnlimitedQuery(
             StandardTestFixtures.UsersWithOrders(), SqlServer, "Users", "orders", limit: 0);
 
-        // Assert
-        parent.Should().Contain("FETCH NEXT 0 ROWS ONLY");
-        restricted.Should().Contain("FETCH NEXT 0 ROWS ONLY",
+        // Assert — a zero window is a provably empty statement, never FETCH NEXT 0
+        // (SQL Server error 10744).
+        parent.Should().EndWith(" WHERE 1=0");
+        parent.Should().NotContain("FETCH");
+        restricted.Should().Contain(" WHERE 1=0)",
             "limit: 0 must bound the child join-id query to the same empty window");
+        restricted.Should().NotContain("FETCH");
     }
 
     [Fact]

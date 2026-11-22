@@ -131,6 +131,8 @@ dotnet tool uninstall --global BifrostQL.Tool
 | `bifrost config-generate` | Auto-generate config rules |
 | `bifrost init` | Create default config file |
 
+`serve`, `test`, `schema`, `watch`, `export` and `config-generate` take the connection string from `--connection-string`, or else from `connectionStrings.bifrost` in the config file (`--config <path>`, or `bifrostql.json` in the working directory). Either way, a config file that exists must pass the checks `serve` applies, and an explicit `--config` path that names no file is refused.
+
 ### Debugging CLI Commands
 
 In VS Code, use the "BifrostQL.Tool (CLI)" launch configuration. Modify the `args` array in `launch.json` to test different commands:

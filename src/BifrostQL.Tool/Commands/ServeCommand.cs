@@ -114,31 +114,15 @@ public sealed class ServeCommand : ICommand
             && System.Net.IPAddress.IsLoopback(ip);
     }
 
-    internal static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
-    {
-        try
-        {
-            return await ResolveConnectionStringFromSources(config, output);
-        }
-        // JsonException: malformed config file. ConfigFileShapeException: well-formed JSON of
-        // the wrong shape. Neither message quotes the file's content.
-        catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
-        {
-            var error = ex is ConfigFileShapeException ? ex.Message : $"Config file is not valid JSON: {ex.Message}";
-            if (output.IsJsonMode)
-                output.WriteJson(new { success = false, error });
-            else
-                output.WriteError(error);
-            return null;
-        }
-    }
+    internal static Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)
+        => CommandConnection.RefusingConfigFileFaultsAsync(output, () => ResolveConnectionStringFromSources(config, output));
 
     private static async Task<ResolvedConnection?> ResolveConnectionStringFromSources(ToolConfig config, OutputFormatter output)
     {
         // Priority 1: Explicit --connection-string flag
         if (!string.IsNullOrWhiteSpace(config.ConnectionString))
         {
-            return new ResolvedConnection(config.ConnectionString, await LoadConfigFile(config.ConfigPath));
+            return await CommandConnection.WithConnectionStringAsync(config.ConnectionString, config.ConfigPath, output);
         }
 
         // Priority 2: Positional args (server + database)
@@ -158,7 +142,7 @@ public sealed class ServeCommand : ICommand
 
             var connStr = SqlServerCertificateTrust.Build(
                 server, database, config.User, password, config.TrustServerCertificate);
-            return new ResolvedConnection(connStr, await LoadConfigFile(config.ConfigPath));
+            return await CommandConnection.WithConnectionStringAsync(connStr, config.ConfigPath, output);
         }
 
         // Priority 2b: Single positional arg — disambiguate file vs error
@@ -167,7 +151,7 @@ public sealed class ServeCommand : ICommand
             var arg = config.CommandArgs[0];
             if (File.Exists(arg))
             {
-                return await LoadFromConfigFile(arg, output);
+                return await CommandConnection.FromConfigFileAsync(arg, output);
             }
 
             WriteConnectionError(output, $"'{arg}' is not a recognized file.");
@@ -175,65 +159,14 @@ public sealed class ServeCommand : ICommand
         }
 
         // Priority 3: Config file (explicit --config or auto-discovered bifrostql.json)
-        var configPath = config.ConfigPath ?? FindLocalConfigFile();
+        var configPath = config.ConfigPath ?? CommandConnection.FindLocalConfigFile();
         if (configPath != null)
         {
-            return await LoadFromConfigFile(configPath, output);
+            return await CommandConnection.FromConfigFileAsync(configPath, output);
         }
 
         WriteConnectionError(output);
         return null;
-    }
-
-    private static async Task<ResolvedConnection?> LoadFromConfigFile(string path, OutputFormatter output)
-    {
-        if (!File.Exists(path))
-        {
-            if (output.IsJsonMode)
-            {
-                output.WriteJson(new { success = false, error = $"Config file not found: {path}" });
-                return null;
-            }
-            output.WriteError($"Config file not found: {path}");
-            return null;
-        }
-
-        var json = await File.ReadAllTextAsync(path);
-        var (connStr, section) = ConfigFileReader.ReadServeConfig(json);
-        if (string.IsNullOrWhiteSpace(connStr))
-        {
-            var refusal = CliErrorText.NoConnectionStringInConfigFile(path);
-            if (output.IsJsonMode)
-            {
-                output.WriteJson(new { success = false, error = refusal });
-                return null;
-            }
-            output.WriteError(refusal);
-            return null;
-        }
-
-        section.ConfigFilePath = Path.GetFullPath(path);
-        return new ResolvedConnection(connStr, section);
-    }
-
-    private static async Task<BifrostConfigSection?> LoadConfigFile(string? configPath)
-    {
-        var path = configPath ?? FindLocalConfigFile();
-        if (path == null || !File.Exists(path))
-            return null;
-
-        var json = await File.ReadAllTextAsync(path);
-        // The connection string comes from the caller (flag or positional args), but the file is
-        // still served, so it passes every check config-validate applies, connectionStrings too.
-        var section = ConfigFileReader.ReadServeConfig(json).Section;
-        section.ConfigFilePath = Path.GetFullPath(path);
-        return section;
-    }
-
-    private static string? FindLocalConfigFile()
-    {
-        var path = Path.Combine(Directory.GetCurrentDirectory(), "bifrostql.json");
-        return File.Exists(path) ? path : null;
     }
 
     private static void WriteConnectionError(OutputFormatter output, string? detail = null)
@@ -258,6 +191,4 @@ public sealed class ServeCommand : ICommand
         output.WriteInfo("");
         output.WriteInfo("  Or create a bifrostql.json with 'bifrost init'");
     }
-
-    internal readonly record struct ResolvedConnection(string ConnectionString, BifrostConfigSection? ConfigSection);
 }

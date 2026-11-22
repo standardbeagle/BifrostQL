@@ -15,17 +15,12 @@ public sealed class WatchCommand : ICommand
 
     public async Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
     {
-        var connectionString = config.ConnectionString;
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            if (output.IsJsonMode)
-            {
-                output.WriteJson(new { success = false, error = "Connection string is required. Use --connection-string." });
-                return 1;
-            }
-            output.WriteError("Connection string is required. Use --connection-string.");
+        // --connection-string wins; otherwise the config file supplies it. A config file that
+        // exists is refused here when serve would refuse it.
+        var resolved = await CommandConnection.ResolveAsync(config, output);
+        if (resolved is null)
             return 1;
-        }
+        var connectionString = resolved.Value.ConnectionString;
 
         var interval = 5000; // 5 seconds default
         if (config.CommandArgs.Length > 0 && int.TryParse(config.CommandArgs[0], out var customInterval))

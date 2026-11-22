@@ -75,6 +75,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **A raw `tenant_id` token claim no longer supplies the tenant when the identity has none.** It filled the key the OIDC mapper had chosen not to project. Project the tenant through an `IOidcClaimMapper`, or name the claim with `tenant-context-key`.
 - **`bifrost config-validate` reports a malformed connection string with constant text instead of naming the rejected keyword.**
 - **`MetadataLoader(IConfiguration, string)` and `FileMetadataSource(IConfigurationSection, string)` are removed.** Use `new MetadataLoader(MetadataLoader.ReadMetadataRules(section))` or `new FileMetadataSource(MetadataLoader.ReadMetadataRules(section))`.
+- **No thread blocks on the grant resolver or the policy gate's model load.** `IPolicyGate` is no longer injectable: inject `IPolicyGateAccessor` and `await GetAsync(ct)`; the model loads only for requests that use the gate, so health checks and static routes never trigger a schema load. `HttpContext.GetBifrostUserContext()` is now `GetBifrostUserContextAsync()`. While an `IGrantResolver` is registered, the synchronous `IBifrostAuthContextFactory.CreateUserContext` refuses an authenticated principal instead of blocking; every shipped transport awaits the resolver.
+- **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
 
 ### Fixed — fifth review pass
 
@@ -124,6 +126,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`bifrost serve`, `doctor` and `config-validate` refuse a non-string connection string, `BifrostQL:Path` or `:Playground` in a config file, including colon-keyed properties such as `"ConnectionStrings:bifrost": 42`.** `"Path": 5` served the endpoint at `5`.
 - **A host `IBifrostAuthContextFactory` that returns null gets the constant MCP authentication refusal,** and the affected Prometheus metric is excluded instead of the scrape faulting.
 - **Docs: `AppIdentity.Claims` handed to `IGrantResolver` is the raw principal,** which can differ from the value the tenant filter scopes by; the guide names that value.
+- **`bifrost config-validate` refuses every config file `serve` refuses** (for example `"Path": 5`, a non-boolean `DisableAuth`, a non-string connection string); both read through one function.
+- **A host auth factory returning keys that differ only in case no longer fails the whole Prometheus scrape;** the affected row-scoped metrics are excluded and the detail is logged.
 
 ### Security — silent fallbacks
 

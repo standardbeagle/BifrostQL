@@ -53,6 +53,18 @@ namespace BifrostQL.Core.Auth;
 /// claim type, keyed case-insensitively (<c>identity.Claims["org_id"]</c>). The resolver is
 /// handed no principal, and pgwire, RESP and LDAP have no <c>IHttpContextAccessor</c>.
 ///
+/// <see cref="AppIdentity.Claims"/> is the raw principal, not the scoped user context. It
+/// includes claim types the user context deliberately drops: a raw claim named after a key the
+/// identity mapper owns (<c>tenant_id</c>, <c>tenant_ids</c>, <c>roles</c>, <c>user_id</c>,
+/// <c>id</c>, <c>permissions</c>) never reaches the context. The tenant filter reads the user
+/// context under <c>tenant-context-key</c>. For the default <c>tenant_id</c> that is the identity
+/// mapper's value, which <c>TenantId</c> already carries. For an OIDC principal it is what the
+/// issuer's claim mapper produced, so <c>Claims["tenant_id"]</c> may be absent or differ from
+/// it. Only for a key naming a raw claim the mapper does not own (<c>org_id</c>) does the filter
+/// read that claim, and only as a single value: a multi-valued claim is refused. Key grants on
+/// <c>TenantId</c> under the default key, and on a single-valued
+/// <c>Claims[tenant-context-key]</c> only when that key names such a raw claim.
+///
 /// <c>permissions</c> is an owned key (<see cref="IdentityContextMapper.OwnedKeyNames"/>),
 /// so a wire-supplied value can never add to it; the resolver is the only way grants
 /// enter beyond the authenticated identity itself.

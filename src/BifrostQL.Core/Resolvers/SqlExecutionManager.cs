@@ -329,7 +329,11 @@ namespace BifrostQL.Core.Resolvers
                     };
                 }
 
-                forced = TableFilter.CombineAnd(forced, TableFilterFactory.Equals(target, scopeColumn, tenant));
+                // A raw principal claim lands as a one-element string[]: coerce it to the scope
+                // column's type exactly as TenantFilterTransformer.BuildFilter does, refusing a
+                // multi-valued claim rather than binding an array the provider cannot map.
+                forced = TableFilter.CombineAnd(forced, TableFilterFactory.Equals(target, scopeColumn,
+                    ContextValueCoercer.Coerce(_dbModel.TypeMapper, target, scopeColumn, tenant)));
             }
 
             // Same fail-closed transformer pass as row queries over the TARGET table

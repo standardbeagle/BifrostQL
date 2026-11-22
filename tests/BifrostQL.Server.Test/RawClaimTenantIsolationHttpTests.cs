@@ -110,6 +110,36 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
         (await ScalarAsync("SELECT tenant FROM pending_changes")).Should().Be("acme");
     }
 
+    [Fact]
+    public async Task HistoryTrail_IsScopedToTheRawClaimOrg()
+    {
+        await ExecAsync(
+            "INSERT INTO __history (entity, entity_id, op, org, changed_at) VALUES " +
+            "('main.widgets', '1', 'update', 'acme', '2026-01-01'), ('main.widgets', '2', 'update', 'globex', '2026-01-01');");
+
+        using var acme = await SendGraphQlAsync("{ widgetsHistory { data { entity_id org } } }", Member("a-1", "acme"));
+
+        Errors(acme).Should().BeEmpty();
+        acme.RootElement.GetProperty("data").GetProperty("widgetsHistory").GetProperty("data").EnumerateArray()
+            .Select(row => row.GetProperty("org").GetString()).Should().Equal("acme");
+    }
+
+    [Fact]
+    public async Task HistoryTrail_RefusesAMultiValuedOrgClaim()
+    {
+        await ExecAsync(
+            "INSERT INTO __history (entity, entity_id, op, org, changed_at) VALUES " +
+            "('main.widgets', '1', 'update', 'acme', '2026-01-01'), ('main.widgets', '2', 'update', 'globex', '2026-01-01');");
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, "x-1"), new Claim("org_id", "acme"), new Claim("org_id", "globex") },
+            authenticationType: "test"));
+
+        using var reply = await SendGraphQlAsync("{ widgetsHistory { data { entity_id org } } }", principal);
+
+        Errors(reply).Should().ContainSingle().Which.Should().Be("Tenant context value is invalid for the target column.");
+        reply.RootElement.GetProperty("data").GetProperty("widgetsHistory").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     private async Task<long> AcmeEditsItsWidgetAsync()
     {
         using var reply = await SendGraphQlAsync(

@@ -108,7 +108,30 @@ public sealed class ConfigValidateCommandTests : IDisposable
 
         exit.Should().Be(1);
         json.GetProperty("success").GetBoolean().Should().BeFalse();
-        json.GetProperty("error").GetString().Should().Contain("Number");
+        json.GetProperty("error").GetString().Should().NotContain("not valid JSON")
+            .And.Contain("Metadata entry 0 must be a string").And.Contain("Number");
+    }
+
+    [Fact]
+    public async Task NonObjectRoot_IsReportedAsAShapeError()
+    {
+        var (exit, json) = await RunRawAsync(null, "[ \"dbo.orders { soft-delete: deleted_at }\" ]");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().NotContain("not valid JSON")
+            .And.Contain("root must be a JSON object").And.Contain("Array");
+    }
+
+    [Fact]
+    public async Task NonObjectBifrostSection_IsReportedAsAShapeError()
+    {
+        var (exit, json) = await RunRawAsync(null, "{ \"BifrostQL\": 5 }");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().NotContain("not valid JSON")
+            .And.Contain("BifrostQL section must be a JSON object").And.Contain("Number");
     }
 
     [Fact]

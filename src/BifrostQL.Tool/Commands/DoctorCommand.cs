@@ -223,6 +223,16 @@ public sealed class DoctorCommand : ICommand
                     new[] { "Check for syntax errors in the JSON file", "Validate the JSON using a JSON linter" }
                 ));
             }
+            catch (ConfigFileShapeException ex)
+            {
+                checks.Add(new DoctorCheck("Config File", DoctorStatus.Fail, ex.Message));
+                issues.Add(new DoctorIssue(
+                    DoctorSeverity.Error,
+                    "Invalid Config File",
+                    ex.Message,
+                    new[] { "Run 'bifrost init' to see the expected bifrostql.json layout" }
+                ));
+            }
         }
 
         // Output results

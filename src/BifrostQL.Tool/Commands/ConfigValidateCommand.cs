@@ -37,11 +37,11 @@ public sealed class ConfigValidateCommand : ICommand
         {
             rules = ConfigFileReader.ReadMetadataRules(configJson);
         }
-        // JsonException: malformed JSON. InvalidOperationException: a metadata entry that is
-        // not a string. Neither message quotes the file's content.
-        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+        // JsonException: malformed JSON. ConfigFileShapeException: well-formed JSON of the
+        // wrong shape. Neither message quotes the file's content.
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or ConfigFileShapeException)
         {
-            var error = $"Config file is not valid JSON: {ex.Message}";
+            var error = ex is ConfigFileShapeException ? ex.Message : $"Config file is not valid JSON: {ex.Message}";
             if (output.IsJsonMode)
             {
                 output.WriteJson(new { success = false, error });
@@ -195,8 +195,12 @@ internal static class ConfigFileReader
             return Array.Empty<string>();
 
         var rules = new List<string>();
+        var index = 0;
         foreach (var element in metadataArray.EnumerateArray())
         {
+            if (element.ValueKind != System.Text.Json.JsonValueKind.String)
+                throw new ConfigFileShapeException($"Config file BifrostQL Metadata entry {index} must be a string, found {element.ValueKind}.");
+            index++;
             var value = element.GetString();
             if (!string.IsNullOrWhiteSpace(value))
                 rules.Add(value);
@@ -208,6 +212,8 @@ internal static class ConfigFileReader
     {
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         var root = doc.RootElement;
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+            throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
 
         if (!root.TryGetProperty("connectionStrings", out var connSection) &&
             !root.TryGetProperty("ConnectionStrings", out connSection))
@@ -251,14 +257,24 @@ internal static class ConfigFileReader
 
     private static System.Text.Json.JsonElement? GetBifrostSection(System.Text.Json.JsonElement root)
     {
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+            throw new ConfigFileShapeException($"Config file root must be a JSON object, found {root.ValueKind}.");
         if (root.TryGetProperty("bifrostQL", out var section) ||
             root.TryGetProperty("BifrostQL", out section))
         {
+            if (section.ValueKind != System.Text.Json.JsonValueKind.Object)
+                throw new ConfigFileShapeException($"Config file BifrostQL section must be a JSON object, found {section.ValueKind}.");
             return section;
         }
         return null;
     }
 }
+
+/// <summary>
+/// A config file that is well-formed JSON but not the shape bifrostql.json requires. The
+/// message names the offending element's position and JSON kind, never its content.
+/// </summary>
+internal sealed class ConfigFileShapeException(string message) : Exception(message);
 
 internal sealed class BifrostConfigSection
 {

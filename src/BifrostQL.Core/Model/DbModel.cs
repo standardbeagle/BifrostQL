@@ -428,20 +428,34 @@ namespace BifrostQL.Core.Model
         /// Format: "wp_=wp, wp2_=wp2"
         /// </summary>
         internal static List<PrefixGroup> ParsePrefixGroups(string value, IReadOnlyCollection<IDbTable> tables)
+            => ParsePrefixGroups(value, tables, out _);
+
+        /// <summary>
+        /// The one reading of <c>prefix-groups</c>: model build links with the groups, and
+        /// <c>ModelConfigValidator</c> reports <paramref name="problems"/> — entries that are not
+        /// <c>prefix=group</c>, or whose prefix matches no table — so a typo fails model load
+        /// instead of silently dropping the group.
+        /// </summary>
+        internal static List<PrefixGroup> ParsePrefixGroups(
+            string value, IReadOnlyCollection<IDbTable> tables, out IReadOnlyList<Relationships.RelationshipMetadataProblem> problems)
         {
             var result = new List<PrefixGroup>();
+            var found = new List<Relationships.RelationshipMetadataProblem>();
+            problems = found;
             var entries = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
             foreach (var entry in entries)
             {
                 var eqIdx = entry.IndexOf('=');
-                if (eqIdx <= 0) continue;
+                var prefix = eqIdx < 0 ? "" : entry.Substring(0, eqIdx).Trim();
+                var groupName = eqIdx < 0 ? "" : entry.Substring(eqIdx + 1).Trim();
 
-                var prefix = entry.Substring(0, eqIdx).Trim();
-                var groupName = entry.Substring(eqIdx + 1).Trim();
-
-                if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(groupName))
+                if (prefix.Length == 0 || groupName.Length == 0)
+                {
+                    found.Add(new Relationships.RelationshipMetadataProblem(MetadataKeys.AppSchema.PrefixGroups, entry,
+                        "entries must have the form 'prefix=group'"));
                     continue;
+                }
 
                 // Ensure prefix ends with '_'
                 if (!prefix.EndsWith('_'))
@@ -454,8 +468,14 @@ namespace BifrostQL.Core.Model
                         tableNames.Add(table.DbName);
                 }
 
-                if (tableNames.Count > 0)
-                    result.Add(new PrefixGroup(prefix, groupName, tableNames));
+                if (tableNames.Count == 0)
+                {
+                    found.Add(new Relationships.RelationshipMetadataProblem(MetadataKeys.AppSchema.PrefixGroups, entry,
+                        $"prefix '{prefix}' matches no table"));
+                    continue;
+                }
+
+                result.Add(new PrefixGroup(prefix, groupName, tableNames));
             }
 
             return result;

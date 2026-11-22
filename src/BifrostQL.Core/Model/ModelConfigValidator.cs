@@ -55,6 +55,7 @@ namespace BifrostQL.Core.Model
                     errors.Add($"  :root [{MetadataKeys.Policy.Default}]: value must be 'allow' or 'deny'");
                 ValidateMaxQueryRows(model, errors);
                 ValidateMutationForms(model, errors);
+                ValidatePrefixGroups(model, errors);
             }
 
             var rootAdminRole = Auth.PolicyConfigCollector.NormalizeAdminRole(
@@ -193,6 +194,19 @@ namespace BifrostQL.Core.Model
             {
                 errors.Add($"  :root [{MetadataKeys.Model.MutationForms}]: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// <c>prefix-groups</c>, read by <see cref="DbModel.ParsePrefixGroups(string, IReadOnlyCollection{IDbTable}, out IReadOnlyList{Relationships.RelationshipMetadataProblem})"/>
+        /// (the parse model build links with), reports each entry the build would drop.
+        /// </summary>
+        private static void ValidatePrefixGroups(IDbModel model, List<string> errors)
+        {
+            if (model.GetMetadataValue(MetadataKeys.AppSchema.PrefixGroups) is not { Length: > 0 } raw)
+                return;
+            DbModel.ParsePrefixGroups(raw, model.Tables, out var problems);
+            foreach (var problem in problems)
+                errors.Add($"  :root [{problem.Key}]: '{problem.Value}' - {problem.Message}");
         }
 
         private static void ValidateMaxQueryRows(IDbModel model, List<string> errors)

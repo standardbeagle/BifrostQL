@@ -177,6 +177,38 @@ public class PrefixGroupTests
         groups[0].GroupName.Should().Be("wordpress");
     }
 
+    // prefix-groups entries that ParsePrefixGroups drops used to vanish silently; model load
+    // now reports each one through the same parse.
+    private static IDbModel PrefixGroupModel(string prefixGroups) =>
+        DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.AppSchema.PrefixGroups, prefixGroups)
+            .WithTable("wp_users", t => t.WithSchema("dbo").WithPrimaryKey("ID", "int"))
+            .WithTable("wp_posts", t => t.WithSchema("dbo").WithPrimaryKey("ID", "int"))
+            .Build();
+
+    [Theory]
+    [InlineData("wp_=wp")]
+    [InlineData("wp=wordpress")]
+    public void Validate_WellFormedPrefixGroups_DoesNotThrow(string prefixGroups)
+    {
+        var act = () => ModelConfigValidator.Validate(PrefixGroupModel(prefixGroups));
+
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData("wp_=wp, broken", "'broken'")]
+    [InlineData("wp_=wp, =orphan", "'=orphan'")]
+    [InlineData("wp_=wp, wp2_=", "'wp2_='")]
+    [InlineData("wp_=wp, zz_=zz", "matches no table")]
+    public void Validate_PrefixGroupEntryThatIsDropped_Throws(string prefixGroups, string offender)
+    {
+        var act = () => ModelConfigValidator.Validate(PrefixGroupModel(prefixGroups));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.AppSchema.PrefixGroups).And.Contain(offender);
+    }
+
     private static IDbModel CreateWordPressModel()
     {
         return DbModelTestFixture.Create()

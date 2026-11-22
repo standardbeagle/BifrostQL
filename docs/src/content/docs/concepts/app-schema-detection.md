@@ -78,6 +78,8 @@ prefix-groups: myapp_=myapp, v2_=v2
 
 This tells BifrostQL to scope auto-linking so that `myapp_users` and `myapp_orders` link to each other, but not to `v2_users`.
 
+Model load checks every entry: one that is not `prefix=group`, or whose prefix matches no table, fails startup with the offending entry.
+
 ### Read-only detection result
 
 After detection runs, the result is available as read-only metadata:

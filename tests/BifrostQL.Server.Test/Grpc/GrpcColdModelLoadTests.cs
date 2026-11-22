@@ -64,6 +64,36 @@ namespace BifrostQL.Server.Test.Grpc
                 .And.Contain("/bifrostql.BifrostQuery/StreamWidgets");
         }
 
+        [Fact]
+        public async Task A_faulted_model_load_is_retried_by_the_next_mapping()
+        {
+            // The first load faults (the database is down at startup); the second succeeds. The
+            // contract build must not keep the faulted task: a later MapBifrostGrpcAsync retries.
+            // Built first: Model() configures substitutes, which would steal Returns' last call.
+            var model = Model();
+            var executor = Substitute.For<IQueryIntentExecutor>();
+            executor.GetModelAsync(Arg.Any<string?>()).Returns(
+                Task.FromException<IDbModel>(new InvalidOperationException("model load failed")),
+                Task.FromResult(model));
+
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddSingleton(executor);
+            builder.Services.AddSingleton(Substitute.For<IMutationIntentExecutor>());
+            builder.Services.AddBifrostGrpc(_ => { });
+            await using var app = builder.Build();
+            app.UseRouting();
+
+            var first = () => app.MapBifrostGrpcAsync();
+            await first.Should().ThrowAsync<InvalidOperationException>().WithMessage("model load failed");
+            RpcRoutes(app).Should().BeEmpty("a failed build maps nothing");
+
+            await app.MapBifrostGrpcAsync();
+
+            RpcRoutes(app).Should().Contain("/bifrostql.BifrostQuery/GetWidgets");
+            await executor.Received(2).GetModelAsync(Arg.Any<string?>());
+        }
+
         private static IEnumerable<string?> RpcRoutes(WebApplication app) =>
             ((IEndpointRouteBuilder)app).DataSources
                 .SelectMany(source => source.Endpoints)

@@ -21,14 +21,13 @@ namespace BifrostQL.Server.Grpc
     {
         private readonly IQueryIntentExecutor _executor;
         private readonly GrpcWireOptions _options;
-        private readonly Lazy<Task<Built>> _build;
+        private Task<Built>? _build;
         private volatile Built? _built;
 
         public GrpcContractProvider(IQueryIntentExecutor executor, GrpcWireOptions options)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _options = options ?? throw new ArgumentNullException(nameof(options));
-            _build = new Lazy<Task<Built>>(BuildAsync, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
         private sealed record Built(IDbModel Model, GrpcFieldNumberManifest FullManifest, GrpcContract FullContract);
@@ -37,11 +36,36 @@ namespace BifrostQL.Server.Grpc
         /// Resolves the endpoint model, reconciles the full manifest, and builds the full dispatch
         /// contract. Idempotent: every caller awaits the one shared build. Throws
         /// <see cref="GrpcSchemaException"/> on any schema fault (e.g. a table with no primary key),
-        /// so startup fails fast rather than serving a broken contract. The token abandons only this
-        /// caller's wait, never the shared build.
+        /// so startup fails fast rather than serving a broken contract. A faulted or canceled build
+        /// is not kept: the next caller starts a fresh one, so a model load that failed while the
+        /// database was down is retried. The token abandons only this caller's wait, never the
+        /// shared build.
         /// </summary>
         public Task EnsureBuiltAsync(CancellationToken cancellationToken)
-            => _build.Value.WaitAsync(cancellationToken);
+            => CurrentBuild().WaitAsync(cancellationToken);
+
+        /// <summary>
+        /// The shared build, starting one when none exists or the last one faulted or was canceled.
+        /// Lock-free: a candidate build is created unstarted and published by compare-exchange, and
+        /// only the caller whose candidate won starts it, so concurrent callers share one build.
+        /// </summary>
+        private Task<Built> CurrentBuild()
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _build);
+                if (current is { IsFaulted: false, IsCanceled: false })
+                    return current;
+
+                var start = new Task<Task<Built>>(BuildAsync);
+                var candidate = start.Unwrap();
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _build, candidate, current), current))
+                {
+                    start.RunSynchronously();
+                    return candidate;
+                }
+            }
+        }
 
         private async Task<Built> BuildAsync()
         {

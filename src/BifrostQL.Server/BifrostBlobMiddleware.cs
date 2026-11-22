@@ -342,35 +342,22 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Single-range parsing only (<c>bytes=a-b</c>, <c>bytes=a-</c>, <c>bytes=-n</c>).
-        /// A multi-range or malformed header is served as the FULL body (RFC 9110
-        /// permits ignoring Range); only a syntactically valid but unsatisfiable
-        /// range is a 416.
+        /// Single-range parsing only (<c>bytes=a-b</c>, <c>bytes=a-</c>, <c>bytes=-n</c>), through
+        /// the S3 adapter's <see cref="S3.S3RangeParser"/> so both binary surfaces share one Range
+        /// grammar: every bound is digits only, parsed with <c>NumberStyles.None</c> and the
+        /// invariant culture (invariant 5). A multi-range or malformed header is served as the
+        /// FULL body (RFC 9110 permits ignoring Range); only a syntactically valid but
+        /// unsatisfiable range (including a zero-length suffix) is a 416.
         /// </summary>
         internal static (long Start, long Length, bool Satisfiable, bool IsPartial) ResolveRange(string? header, long totalLength)
         {
-            var full = (0L, totalLength, true, false);
-            if (string.IsNullOrEmpty(header) || !header.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase)) return full;
-            var spec = header["bytes=".Length..];
-            if (spec.Contains(',')) return full;
-            var dash = spec.IndexOf('-');
-            if (dash < 0) return full;
-            var fromText = spec[..dash].Trim();
-            var toText = spec[(dash + 1)..].Trim();
-
-            if (fromText.Length == 0)
+            var range = S3.S3RangeParser.Parse(header, totalLength);
+            return range.Kind switch
             {
-                // suffix range: last N bytes
-                if (!long.TryParse(toText, out var suffix) || suffix <= 0) return full;
-                if (totalLength == 0) return (0, 0, false, false);
-                var length = Math.Min(suffix, totalLength);
-                return (totalLength - length, length, true, true);
-            }
-            if (!long.TryParse(fromText, out var start) || start < 0) return full;
-            if (start >= totalLength) return (0, 0, false, false);
-            if (toText.Length == 0) return (start, totalLength - start, true, true);
-            if (!long.TryParse(toText, out var end) || end < start) return full;
-            return (start, Math.Min(end, totalLength - 1) - start + 1, true, true);
+                S3.S3RangeKind.Satisfiable => (range.Start, range.Length, true, true),
+                S3.S3RangeKind.Unsatisfiable => (0, 0, false, false),
+                _ => (0, totalLength, true, false),
+            };
         }
 
         /// <summary>Magic-byte sniffing — never a column name or a stored mime string,
@@ -403,8 +390,10 @@ namespace BifrostQL.Server
             value = null;
             switch (BaseType(dataType).ToLowerInvariant())
             {
+                // Explicit style and invariant culture (invariant 5), the same grammar the pgwire,
+                // RESP and LDAP adapters decode integer keys with.
                 case "int" or "integer" or "bigint" or "smallint" or "tinyint":
-                    if (!long.TryParse(raw, out var l)) return false;
+                    if (!long.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l)) return false;
                     value = l; return true;
                 case "decimal" or "numeric" or "money" or "smallmoney":
                     if (!decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d)) return false;

@@ -143,6 +143,57 @@ namespace BifrostQL.Server.Test
             return (context.Response.StatusCode, buffer.ToArray(), context.Response.Headers);
         }
 
+        // Invariant 5: Range bounds are digits only. long.TryParse's default style admits a sign
+        // and surrounding whitespace, so "bytes=+0-" was served as a 206 window from byte 0.
+        [Theory]
+        [InlineData("bytes=+0-")]
+        [InlineData("bytes=0-+5")]
+        [InlineData("bytes=-+4")]
+        [InlineData("bytes= 0-5")]
+        public async Task A_Range_bound_that_is_not_all_digits_is_ignored_and_serves_the_full_body(string range)
+        {
+            var (status, body, headers) = await RequestWithHeaderAsync(range);
+
+            status.Should().Be(200, "a malformed Range is ignored (RFC 9110), never honoured");
+            body.Should().Equal(Png);
+            headers.ContentRange.ToString().Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task A_zero_length_suffix_Range_is_unsatisfiable()
+        {
+            var (status, _, headers) = await RequestWithHeaderAsync("bytes=-0");
+
+            status.Should().Be(416);
+            headers.ContentRange.ToString().Should().Be($"bytes */{Png.Length}");
+        }
+
+        // Invariant 5: the key grammar is invariant. Under a culture whose positive sign is "PLUS",
+        // the culture-default parse read k.id=PLUS0 as 0 and served the row.
+        [Fact]
+        public async Task An_integer_key_is_parsed_with_the_invariant_culture()
+        {
+            var culture = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.InvariantCulture.Clone();
+            culture.NumberFormat.PositiveSign = "PLUS";
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+            try
+            {
+                var (status, body, _) = await RequestAsync("/_blob/files/data", "?k.id=PLUS0");
+                status.Should().Be(404);
+                System.Text.Encoding.UTF8.GetString(body).Should().Be("Not found.");
+
+                // Control: the invariant grammar still addresses the row, sign included.
+                var (okStatus, okBody, _) = await RequestAsync("/_blob/files/data", "?k.id=%2B0");
+                okStatus.Should().Be(200);
+                okBody.Should().Equal(Png);
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
         [Fact]
         public async Task Head_ReturnsHeadersAndLength_WithoutABody()
         {

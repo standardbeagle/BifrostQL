@@ -48,7 +48,7 @@ Or apply to all tables that have a `tenant_id` column:
 
 ### How it works
 
-1. BifrostQL reads `tenant_id` from the authenticated user's JWT claims via `BifrostContext`
+1. BifrostQL reads `tenant_id` from the user context, where the identity mapper writes the identity's tenant (the local-auth `bifrost:tenant` claim, or the tenant an OIDC claim mapper projects). A raw `tenant_id` claim on the token is not read
 2. Every query to a tenant-filtered table gets `WHERE tenant_id = @tenantId` appended
 3. If the tenant ID is missing from the user context, the query is aborted with an error
 

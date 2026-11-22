@@ -47,11 +47,15 @@ namespace BifrostQL.Server
                 this[kv.Key] = kv.Value;
 
             // Preserve the raw principal and the legacy per-claim-type arrays so existing
-            // consumers that read claims directly keep working.
+            // consumers that read claims directly keep working. A key the mapper owns is never
+            // taken from a raw claim, even when the mapper left it empty: the mapper omits
+            // tenant_id for an identity with no tenant, and a raw tenant_id claim filling that
+            // slot would scope the caller to a tenant the identity projection never asserted.
             this["user"] = User;
+            var ownedKeys = mapper.OwnedKeyNames;
             foreach (var g in User.Claims.GroupBy(c => c.Type))
             {
-                if (!ContainsKey(g.Key))
+                if (!ContainsKey(g.Key) && !ownedKeys.Contains(g.Key))
                     this[g.Key] = g.Select(c => c.Value).ToArray();
             }
         }

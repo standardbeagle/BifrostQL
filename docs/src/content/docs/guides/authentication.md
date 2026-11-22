@@ -39,7 +39,7 @@ No matter how a user signs in, the authentication layer produces an `AppIdentity
 
 Provider claims (`AppIdentity.Claims`) are copied into the dictionary first, so the mapped identity keys above always take precedence over a same-named provider claim.
 
-For an HTTP caller the user context also carries every claim of the authenticated principal that no key above already holds, under its claim type, as a **string array**. `tenant-context-key` and `user-audit-key` name a key in this dictionary; they do not rename the mapper's keys (see [Changing claim keys](#changing-claim-keys)).
+For an HTTP caller the user context also carries every other claim of the authenticated principal, under its claim type, as a **string array**. A claim whose type is one of the keys above is never copied, even when the mapper left that key empty: a token's raw `tenant_id` claim does not give a tenant-less identity a tenant, and the tenant filter refuses that caller. `tenant-context-key` and `user-audit-key` name a key in this dictionary; they do not rename the mapper's keys (see [Changing claim keys](#changing-claim-keys)).
 
 ## Local-user login
 

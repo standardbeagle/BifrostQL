@@ -67,6 +67,22 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DefaultTenantKey_IsNotFilledFromARawPrincipalClaim_AndDenies()
+    {
+        // tenant_id is a key the identity mapper owns. When the identity has no tenant the mapper
+        // omits it, and a raw principal claim of the same type used to fill the slot (as a
+        // one-element array the tenant coercion unwraps), scoping the caller to a tenant the
+        // identity projection never asserted. The slot stays empty and the filter refuses.
+        await StartAsync("main.notes { tenant-filter: org }");
+
+        using var reply = await SendGraphQlAsync("{ notes { data { body } } }",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1"), new Claim("tenant_id", "acme")));
+
+        reply.RootElement.GetRawText().Should().NotContain("-note");
+        Errors(reply).Should().ContainSingle().Which.Should().Contain("Tenant context required");
+    }
+
+    [Fact]
     public async Task ConfiguredTenantKey_IsNotFilledFromTheMappedIdentityTenant_AndDenies()
     {
         // The mapper writes the identity's tenant under tenant_id only; it does not rename it

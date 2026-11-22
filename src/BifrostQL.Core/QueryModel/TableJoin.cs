@@ -74,12 +74,24 @@ namespace BifrostQL.Core.QueryModel
         /// Emits the <c>a.JoinId src_id</c> projection (single column) or
         /// the suffixed multi-column projection used by the outer wrap
         /// <c>SELECT</c> in <see cref="GqlObjectQuery.ToConnectedSqlParameterized"/>.
+        /// Each key is read the way the parent row reads its source column
+        /// (<see cref="ColumnReadProjection"/>): the reader matches <c>src_id</c> against that
+        /// column's value with <see cref="object.Equals(object, object)"/>, so a parent key
+        /// cast to text (a PostgreSQL <c>uuid</c>) must meet a <c>src_id</c> cast the same way.
+        /// <c>JoinId</c> itself stays raw: the ON clauses compare it with the connected column.
         /// </summary>
-        public string EmitSrcProjection(ISqlDialect dialect, string innerAlias)
+        public string EmitSrcProjection(IDbModel model, ISqlDialect dialect, string innerAlias)
         {
             var ea = dialect.EscapeIdentifier(innerAlias);
-            return string.Join(", ", Enumerable.Range(0, FromColumns.Count).Select(i =>
-                $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, FromColumns.Count))} {dialect.EscapeIdentifier(JoinKeyNames.SrcIdAt(i, FromColumns.Count))}"));
+            var fromTable = FromTable.DbTable;
+            return string.Join(", ", FromColumns.Select((column, i) =>
+            {
+                var joinId = $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, FromColumns.Count))}";
+                var read = fromTable.ColumnLookup.TryGetValue(column, out var dto)
+                    ? ColumnReadProjection.Render(model, dialect, dto, joinId)
+                    : joinId;
+                return $"{read} {dialect.EscapeIdentifier(JoinKeyNames.SrcIdAt(i, FromColumns.Count))}";
+            }));
         }
 
         /// <summary>

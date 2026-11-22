@@ -27,10 +27,10 @@ public sealed record ObjectKeySegmentColumn(
 {
     /// <summary>
     /// <paramref name="table"/>'s key columns in declared order, each qualified with
-    /// <paramref name="tableReference"/> and carrying the read projection the SELECT applies:
-    /// decided by the same <see cref="ISqlDialect.RequiresTextCast(string, string)"/> test
-    /// <see cref="GqlObjectColumn"/> uses, so a column the SELECT casts to text is keyed by that
-    /// very text. <paramref name="readTypes"/> holds observed CLR read types (null: unknown).
+    /// <paramref name="tableReference"/> and carrying the read projection the SELECT applies
+    /// (<see cref="ColumnReadProjection"/>, as <see cref="GqlObjectColumn"/> renders it), so a
+    /// column the SELECT casts to text is keyed by that very text. <paramref name="readTypes"/>
+    /// holds observed CLR read types (null: unknown).
     /// </summary>
     public static IReadOnlyList<ObjectKeySegmentColumn> For(
         IDbTable table, string tableReference, IDbModel model, ISqlDialect dialect, IReadOnlyList<Type?>? readTypes)
@@ -38,11 +38,10 @@ public sealed record ObjectKeySegmentColumn(
             .Select((c, i) =>
             {
                 var column = $"{tableReference}.{dialect.EscapeIdentifier(c.DbName)}";
-                var readsAsText = dialect.RequiresTextCast(c.DataType, model.TypeMapper.GetGraphQlType(c.EffectiveDataType));
                 return new ObjectKeySegmentColumn(
                     column,
-                    readsAsText ? dialect.TextCast(column, c.DataType) : column,
-                    readsAsText,
+                    ColumnReadProjection.Render(model, dialect, c, column),
+                    ColumnReadProjection.ReadsAsText(model, dialect, c),
                     c,
                     readTypes != null && i < readTypes.Count ? readTypes[i] : null);
             })

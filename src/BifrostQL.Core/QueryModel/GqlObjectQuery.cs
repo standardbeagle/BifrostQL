@@ -98,7 +98,9 @@ namespace BifrostQL.Core.QueryModel
             .Concat(ScalarColumns
                 .Where(c => c.IsProviderComputed)
                 .SelectMany(c => ProviderDependencies(c).Select(d => new GqlObjectColumn(d))))
-            .Concat(Joins.Select(j => new GqlObjectColumn(j.FromColumn)))
+            // Every key column of every join: the reader keys a link by all of them
+            // (JoinKeyValues.FromParentRow), selected or not.
+            .Concat(Joins.SelectMany(j => j.FromColumns).Select(c => new GqlObjectColumn(c)))
             .DistinctBy(c => c.GraphQlDbName, SqlNameComparer.Instance);
 
         private IEnumerable<string> ProviderDependencies(GqlObjectColumn column)
@@ -466,7 +468,7 @@ namespace BifrostQL.Core.QueryModel
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, parameters, "b", useAsKeyword: true)));
 
-            var srcProjection = tableJoin.EmitSrcProjection(dialect, "a");
+            var srcProjection = tableJoin.EmitSrcProjection(dbModel, dialect, "a");
             // The connected table may contribute no columns of its own (e.g. a
             // polymorphic/child collection selected with only the relationship,
             // no scalar fields). Appending ", {empty}" produced "src_id, FROM"
@@ -885,10 +887,9 @@ namespace BifrostQL.Core.QueryModel
         /// <summary>
         /// This node's object-key suffix as SQL text (<see cref="ISqlDialect.ObjectKeyExpression"/>),
         /// over the key columns in declared order, each qualified with the table reference. Each
-        /// segment carries the column's read projection, decided by the same
-        /// <see cref="ISqlDialect.RequiresTextCast(string, string)"/> test
-        /// <see cref="GqlObjectColumn"/> applies, so a column the SELECT casts to text is keyed by
-        /// that very text.
+        /// segment carries the column's read projection (<see cref="ColumnReadProjection"/>, as
+        /// <see cref="GqlObjectColumn"/> renders it), so a column the SELECT casts to text is keyed
+        /// by that very text.
         /// </summary>
         private string ObjectKeySql(IDbModel dbModel, ISqlDialect dialect)
             => dialect.ObjectKeyExpression(ObjectKeySegmentColumn.For(

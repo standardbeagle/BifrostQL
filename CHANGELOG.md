@@ -39,6 +39,12 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — link keys and operation-id reads
+
+- **Links over a `uuid` key resolve on PostgreSQL.** A to-one link read null, and to-many and many-to-many links read empty with `total: 0`, over every key PostgreSQL reads as text: `uuid`, date and timestamp types, `bytea`, `money`, `inet` and enums. Row aggregates over such a key did not reach their rows either. A link's key is now read the way its parent row reads it.
+- **A link over a composite key resolves when the query selects none of its key columns.** Every row failed with "join column not found."
+- **A request repeating an operation id that another request is writing reads the record once.** It read it before and after waiting on the first request. A write now claims its id before it reads, so a new write reads nothing. A repeat of an already-committed id costs a refused claim plus one read, and on PostgreSQL the refused claim logs a unique-violation error.
+
 ### Security — fifth review pass
 
 - **`bifrostui` on its loopback bind refuses requests whose Host header is not `localhost`, `127.0.0.1` or `[::1]`.** The desktop host had no Host filtering, so a DNS-rebinding page became same-origin and could reach `/api/sqlite/connect`, `/api/vault/*`, `/graphql` (auth disabled) and `/_bridge`. `--expose` keeps accepting any host.

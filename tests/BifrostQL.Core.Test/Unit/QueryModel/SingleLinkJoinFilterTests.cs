@@ -42,6 +42,7 @@ public sealed class SingleLinkJoinFilterTests
         var tableJoin = new TableJoin
         {
             Name = "user",
+            FromTable = new GqlObjectQuery { DbTable = dbModel.GetTableFromDbName("Orders"), TableName = "Orders" },
             FromColumn = "UserId",
             ConnectedColumn = "Id",
             Operator = "_eq",
@@ -84,6 +85,7 @@ public sealed class SingleLinkJoinFilterTests
         var tableJoin = new TableJoin
         {
             Name = "user",
+            FromTable = new GqlObjectQuery { DbTable = dbModel.GetTableFromDbName("Orders"), TableName = "Orders" },
             FromColumn = "UserId",
             ConnectedColumn = "Id",
             Operator = "_eq",

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Model;
+using Microsoft.Extensions.Configuration;
 
 namespace BifrostQL.Tool.Commands;
 
@@ -176,36 +177,39 @@ public sealed class ConfigValidateCommand : ICommand
 /// </summary>
 internal static class ConfigFileReader
 {
+    /// <summary>
+    /// Reads the metadata rules the server would read from this file: the JSON is bound into
+    /// an <see cref="IConfiguration"/> the way the Host's <c>AddJsonFile</c> binds it, and the
+    /// rules come from the runtime reader <see cref="MetadataLoader.ReadMetadataRules"/>.
+    /// </summary>
     public static IReadOnlyList<string> ReadMetadataRules(string json)
     {
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        var root = doc.RootElement;
+        using (var doc = System.Text.Json.JsonDocument.Parse(json))
+            GetBifrostSection(doc.RootElement);
 
-        var bifrostSection = GetBifrostSection(root);
-        if (bifrostSection == null)
-            return Array.Empty<string>();
-
-        if (!bifrostSection.Value.TryGetProperty("metadata", out var metadataArray) &&
-            !bifrostSection.Value.TryGetProperty("Metadata", out metadataArray))
+        IConfigurationRoot configuration;
+        try
         {
-            return Array.Empty<string>();
+            configuration = new ConfigurationBuilder()
+                .AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
+                .Build();
+        }
+        // The JSON parsed above, so this is a binding refusal such as a duplicate key. Its
+        // message names the key, never a value.
+        catch (FormatException ex)
+        {
+            throw new ConfigFileShapeException($"Config file cannot be bound as configuration: {ex.Message}");
         }
 
-        if (metadataArray.ValueKind != System.Text.Json.JsonValueKind.Array)
-            return Array.Empty<string>();
-
-        var rules = new List<string>();
-        var index = 0;
-        foreach (var element in metadataArray.EnumerateArray())
+        try
         {
-            if (element.ValueKind != System.Text.Json.JsonValueKind.String)
-                throw new ConfigFileShapeException($"Config file BifrostQL Metadata entry {index} must be a string, found {element.ValueKind}.");
-            index++;
-            var value = element.GetString();
-            if (!string.IsNullOrWhiteSpace(value))
-                rules.Add(value);
+            return MetadataLoader.ReadMetadataRules(configuration.GetSection("BifrostQL:Metadata"));
         }
-        return rules;
+        // The runtime reader's shape refusal; its message names the configuration path only.
+        catch (InvalidOperationException ex)
+        {
+            throw new ConfigFileShapeException(ex.Message);
+        }
     }
 
     public static string? ReadConnectionString(string json, string key = "bifrost")

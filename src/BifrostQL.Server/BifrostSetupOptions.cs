@@ -349,13 +349,11 @@ namespace BifrostQL.Server
 
             var path = EndpointPath;
             var metadataSources = _metadataSources;
-            // Base metadata rule strings — the same rules MetadataLoader(_bifrostConfig, "Metadata")
-            // would consume. Captured once so the ProfileModelCache can compose them with each
-            // profile's own metadata without re-reading config.
-            var configMetadataRules = _bifrostConfig.GetSection("Metadata").GetChildren()
-                .Where(c => c.Value != null)
-                .Select(c => c.Value!)
-                .ToArray();
+            // Base metadata rule strings, read by the shared reader so a scalar or object-shaped
+            // Metadata fails startup instead of being dropped. Captured once so the
+            // ProfileModelCache can compose them with each profile's own metadata without
+            // re-reading config.
+            var configMetadataRules = MetadataLoader.ReadMetadataRules(_bifrostConfig.GetSection("Metadata")).ToArray();
             // Always pass the registry to the profile cache so a runtime ReplaceAll
             // (desktop per-connection rebind) is picked up on the next schema rebuild,
             // even when the registry started empty. An empty registry resolves to the

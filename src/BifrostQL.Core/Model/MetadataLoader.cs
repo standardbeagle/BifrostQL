@@ -18,9 +18,37 @@ namespace BifrostQL.Core.Model
             ArgumentNullException.ThrowIfNull(configuration, nameof(configuration));
             ArgumentNullException.ThrowIfNull(key, nameof(key));
 
-            var section = configuration.GetSection(key);
-            var rules = section.GetChildren().Where(c => c.Value != null).Select(c => c.Value!).ToArray();
-            _metaRules = rules.Select(r => new MetadataLoaderRule(r)).ToArray();
+            _metaRules = ReadMetadataRules(configuration.GetSection(key)).Select(r => new MetadataLoaderRule(r)).ToArray();
+        }
+
+        /// <summary>
+        /// Reads the metadata rule strings from a configuration section that holds an array of
+        /// rule strings. Every reader of the <c>Metadata</c> config (the Host registration and
+        /// <c>bifrost config-validate</c>) goes through here, so they agree on what a rule is.
+        /// A scalar section, or an entry that is an object or array, is refused rather than
+        /// skipped: skipping it would drop the rule, and a dropped tenant-filter rule means no
+        /// tenant scoping. The message names the configuration path, never the value.
+        /// An absent, empty-array or empty-string section yields no rules.
+        /// </summary>
+        public static IReadOnlyList<string> ReadMetadataRules(IConfigurationSection section)
+        {
+            ArgumentNullException.ThrowIfNull(section, nameof(section));
+            // Non-empty, not non-null: a layered host configuration can carry an empty Value
+            // on a section that also has the array's children (seen under WebApplicationFactory).
+            if (!string.IsNullOrEmpty(section.Value))
+                throw new InvalidOperationException(
+                    $"Configuration '{section.Path}' must be an array of rule strings, found a single value.");
+
+            var rules = new List<string>();
+            foreach (var entry in section.GetChildren())
+            {
+                // An empty object or array entry binds as a valueless key with no children.
+                if (entry.Value == null || entry.GetChildren().Any())
+                    throw new InvalidOperationException(
+                        $"Configuration '{entry.Path}' must be a rule string, found an object or array.");
+                rules.Add(entry.Value);
+            }
+            return rules;
         }
 
         public MetadataLoader(IReadOnlyCollection<string> rules)

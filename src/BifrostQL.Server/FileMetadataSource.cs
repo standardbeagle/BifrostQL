@@ -18,11 +18,7 @@ namespace BifrostQL.Server
         {
             ArgumentNullException.ThrowIfNull(configSection, nameof(configSection));
             ArgumentNullException.ThrowIfNull(key, nameof(key));
-            var section = configSection.GetSection(key);
-            _rules = section.GetChildren()
-                .Where(c => c.Value != null)
-                .Select(c => c.Value!)
-                .ToArray();
+            _rules = MetadataLoader.ReadMetadataRules(configSection.GetSection(key));
         }
 
         public FileMetadataSource(IReadOnlyCollection<string> rules)

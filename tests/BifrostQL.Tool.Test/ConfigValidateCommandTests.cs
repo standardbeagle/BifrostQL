@@ -102,14 +102,40 @@ public sealed class ConfigValidateCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task NonStringMetadataRule_IsReportedAsJson()
+    public async Task NumberMetadataRule_IsReportedAsTheServerReportsIt()
     {
+        // Configuration binds a JSON number as its text, so the server reads "42" as a rule and
+        // refuses it at parse; config-validate reports the same refusal.
         var (exit, json) = await RunRawAsync(null, "{ \"BifrostQL\": { \"Metadata\": [ 42 ] } }");
 
         exit.Should().Be(1);
         json.GetProperty("success").GetBoolean().Should().BeFalse();
-        json.GetProperty("error").GetString().Should().NotContain("not valid JSON")
-            .And.Contain("Metadata entry 0 must be a string").And.Contain("Number");
+        Messages(json).Should().ContainSingle().Which.Should().Contain("Invalid metadata rule '42'");
+    }
+
+    [Fact]
+    public async Task ScalarMetadata_IsReportedAsAShapeError()
+    {
+        // The server refuses this at startup (BifrostSetupOptions); before, config-validate
+        // read no rules from it and called the file valid.
+        var (exit, json) = await RunRawAsync(null, "{ \"BifrostQL\": { \"Metadata\": \"dbo.orders { tenant-filter: tenant_id }\" } }");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().Contain("BifrostQL:Metadata").And.Contain("array of rule strings")
+            .And.NotContain("tenant_id");
+    }
+
+    [Fact]
+    public async Task ObjectEntryInMetadata_IsReportedAsAShapeError()
+    {
+        var (exit, json) = await RunRawAsync(null,
+            "{ \"BifrostQL\": { \"Metadata\": [ \"dbo.orders { soft-delete: deleted_at }\", { \"rule\": \"dbo.items { tenant-filter: tenant_id }\" } ] } }");
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().Contain("BifrostQL:Metadata:1").And.Contain("rule string")
+            .And.NotContain("tenant_id");
     }
 
     [Fact]

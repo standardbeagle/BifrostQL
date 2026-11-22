@@ -59,6 +59,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **State transitions and workflow triggers identify the row by its full key and the table by `schema.name`.** Transitions carried only the first key column, so composite-key rows were indistinguishable, and triggers matched the bare table name, so a workflow for `employee` fired for every schema. Triggers accept `schema.name`; a bare name matches only when it is unique. Trigger inputs replace `entityId` with `entityKey`, `entity` and `table` are schema-qualified, and the transition `audit_log` row's `entity_id` is the key as JSON. `StateTransitionInfo` carries the resolved table and `EntityKey`.
 - **Model load fails when `soft-delete-by` or `populate: created-by`/`updated-by`/`deleted-by` is declared without a model-level `user-audit-key`.** Those columns were silently never stamped. The legacy `audit-user-key` was accepted but never read; the error names it and asks for the rename. The shipped Host `appsettings.json` used it and is fixed.
 - **`<table>Pivot` returns at most `max-query-rows - 1` rows; the last row fetched is the truncation check, as on every other capped surface.** It fetched one row past the ceiling, and a ceiling of `int.MaxValue` overflowed into a negative FETCH/LIMIT.
+- **Model load refuses the retired `audit-user-key` and names its replacement, `user-audit-key`.** It was accepted and never read, so a model setting only it recorded a null actor in audit columns, history and state transitions.
+- **`bifrost config-validate` parses with the server's metadata loader and, given `--connection-string`, runs model-load validation.** Its own parser disagreed with the runtime (comma selectors, `;` inside backticks, duplicate keys, malformed segments, `:auth`) and never ran model-load checks. The connection string is now optional. `ConfigValidator`, `ConfigValidationIssue` and `ConfigIssueSeverity` are removed with no public replacement; use `new MetadataLoader(rules)` and `DbModelLoader.LoadAsync`.
 
 ### Fixed — fifth review pass
 
@@ -79,6 +81,13 @@ On `main` after v0.4.28; not yet on NuGet.
 - **SQL Server pivots on an empty label or one longer than 128 characters use the portable CASE WHEN path.** The native PIVOT named each label as an identifier and failed (errors 1038, 103).
 - **History `entity_id`, outbox payload keys and the CloudEvents `subject` use one canonical form per key column type.** The first history key fix converted every unmodelled type through `string`, which rolled back writes on `datetimeoffset`/`time` keys and dropped fractional seconds from `DateTime` keys; the outbox recorded `_primaryKey` text as sent (`"05"`, `"5.0"`). Trail rows written before this release keep their old `entity_id` spelling and are not migrated, so an erasure by the canonical key does not reach them; purge those by their recorded spelling.
 - **A workflow whose bare trigger table name exists in more than one schema is skipped with a warning.** The ambiguity threw inside the trigger loop and stopped the other workflows matching the same write.
+- **A response key selected more than once (written twice, or inline plus a fragment spread, at the root or nested) returns the union of the selections.** The later occurrence's fields were dropped or failed with "Unable to find queryField".
+- **A nested paged collection with `limit: 0`, or an offset past a parent's rows, reports that parent's real `total` with empty `data`.** It reported `total: 0`.
+- **A SQL Server pivot whose labels differ only by trailing spaces uses the portable CASE WHEN path.** The native PIVOT failed with error 8156.
+- **`bifrost config-generate` output with created-by/updated-by/deleted-by populators loads.** It now emits `:root { user-audit-key: id }` and asks you to confirm the claim.
+- **The shipped Host config stamps actor columns from the `id` the identity mapper writes.** It named `username`, which no mapper writes, so every actor was NULL.
+- **The ambiguous workflow trigger-table warning is logged once per workflow per model, not on every write.**
+- **`pnpm test:js` builds the tested packages' workspace dependencies first,** so a stale `dist` no longer produces false failures.
 
 ### Security — silent fallbacks
 

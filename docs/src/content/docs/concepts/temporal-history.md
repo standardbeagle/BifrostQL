@@ -80,7 +80,7 @@ Shared or per-table, it must expose this column contract (validated at model loa
 |--------|---------|
 | `id` | Surrogate primary key, monotonic — defines trail order. |
 | `entity` | Qualified source table, e.g. `dbo.orders`. Constant in a per-table history table; the discriminator in a shared one. |
-| `entity_id` | JSON object of the changed row's primary-key columns — an object, not a scalar, so composite keys record losslessly. |
+| `entity_id` | JSON object of the changed row's primary-key columns — an object, not a scalar, so composite keys record losslessly. Each value is converted to its column's type first, so a write addressed by the string-typed `_primaryKey` argument records `{"id":5}`, the same `entity_id` as the insert, and an erasure reaches every trail row of the entity. |
 | `op` | `insert` / `update` / `delete`. |
 | `actor` | User id from the audit user-context (`user-audit-key`). Nullable: system and unauthenticated writes have no actor. |
 | `changed_at` | Write timestamp. |

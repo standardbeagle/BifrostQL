@@ -215,8 +215,22 @@ public sealed class RetentionErasureHistoryTests : IAsyncLifetime
         }, provider);
 
         var engine = new RetentionPurgeEngine(reader, writer, pathCache, clock: () => Now);
+        _writer = writer;
         return (engine, reader);
     }
+
+    private MutationIntentExecutor _writer = null!;
+
+    private Task<MutationIntentResult> WriteAsTenantOneAsync(MutationIntentAction action, Dictionary<string, object?> data, IReadOnlyList<object?>? primaryKey = null)
+        => _writer.ExecuteAsync(new MutationIntent
+        {
+            Table = "people",
+            Action = action,
+            Data = data,
+            PrimaryKey = primaryKey,
+            UserContext = new Dictionary<string, object?> { [MetadataKeys.Auth.DefaultTenantContextKey] = 1L },
+            Endpoint = EndpointPath,
+        });
 
     private async Task<int> SweepTenantOneAsync(RetentionPurgeEngine engine, QueryIntentExecutor reader,
         RetentionPurgeEngine.PurgeFailures? failures = null)
@@ -258,6 +272,30 @@ public sealed class RetentionErasureHistoryTests : IAsyncLifetime
         var otherTrail = await TrailAsync("{\"id\":2}");
         otherTrail.Should().ContainSingle();
         otherTrail[0].Op.Should().Be("insert", "another tenant's trail rows survive the erasure");
+    }
+
+    // The positional _primaryKey arrives as strings (GraphQL `[String]`). A trail written
+    // with {"id":"3"} next to the insert's {"id":3} is a second entity to an erasure keyed by
+    // the typed row, so its PII before-images survived the purge.
+    [Fact]
+    public async Task TrailWrittenThroughAStringPrimaryKey_SharesTheTypedEntityId_AndIsErased()
+    {
+        var (engine, reader) = Build();
+        await WriteAsTenantOneAsync(MutationIntentAction.Insert, new() { ["name"] = "carol", ["email"] = "carol@x" });
+        await WriteAsTenantOneAsync(MutationIntentAction.Update, new() { ["name"] = "caroline" }, primaryKey: new object?[] { "3" });
+        await WriteAsTenantOneAsync(MutationIntentAction.Delete, new(), primaryKey: new object?[] { "3" });
+
+        // The soft delete moves only deleted_at, which history-columns does not track, so it records nothing.
+        (await TrailAsync("{\"id\":3}")).Select(r => r.Op).Should().Equal("insert", "update");
+        (await CountAsync("SELECT COUNT(*) FROM __history WHERE entity_id = '{\"id\":\"3\"}'"))
+            .Should().Be(0, "a string-typed key must not open a second trail for the same row");
+
+        await Exec($"UPDATE people SET deleted_at = '{Expired}' WHERE id = 3");
+        (await SweepTenantOneAsync(engine, reader)).Should().Be(2);
+
+        (await TrailAsync("{\"id\":3}")).Select(r => r.Op).Should().Equal("erase");
+        (await CountAsync("SELECT COUNT(*) FROM __history WHERE before LIKE '%carol%' OR after LIKE '%carol%'"))
+            .Should().Be(0, "every trail row of the erased person is purged");
     }
 
     [Fact]

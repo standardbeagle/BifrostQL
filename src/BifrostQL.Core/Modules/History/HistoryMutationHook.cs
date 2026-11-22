@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -188,7 +189,7 @@ namespace BifrostQL.Core.Modules.History
                 var erasedKey = ResolveKeyData(context.Table, context.Data, context.Result, MutationType.Delete);
                 var erasureScopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
                 await ResolveWriter(context.Model, context.Table).EraseAsync(new HistoryRecord(
-                    context.Table, erasedKey, MutationType.Delete,
+                    context.Table, RecordedKey(context.Model!.TypeMapper, context.Table, erasedKey), MutationType.Delete,
                     AuditMutationTransformer.ResolveActor(context.Model, context.UserContext),
                     DateTime.UtcNow, Before: null, After: null, Array.Empty<string>(),
                     erasureScopeColumn,
@@ -280,7 +281,7 @@ namespace BifrostQL.Core.Modules.History
 
             await writer.WriteAsync(new HistoryRecord(
                 context.Table,
-                keyData,
+                RecordedKey(context.Model!.TypeMapper, context.Table, keyData),
                 operation,
                 AuditMutationTransformer.ResolveActor(context.Model, context.UserContext),
                 DateTime.UtcNow,
@@ -444,6 +445,36 @@ namespace BifrostQL.Core.Modules.History
             }
 
             return keyData;
+        }
+
+        /// <summary>
+        /// The key as the trail records it: each value converted to its column's CLR type, so
+        /// the serialized <c>entity_id</c> names the row the same way whichever surface wrote
+        /// it. The positional <c>_primaryKey</c> argument arrives as strings, and without this
+        /// one row's trail held both <c>{"id":5}</c> and <c>{"id":"5"}</c>; an erasure keyed by
+        /// the typed row then missed the string-keyed rows and left their PII images behind.
+        /// Only the recorded copy is converted: the row reads keep the values the write bound.
+        /// </summary>
+        private static Dictionary<string, object?> RecordedKey(
+            ITypeMapper typeMapper, IDbTable table, Dictionary<string, object?> keyData)
+        {
+            var recorded = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var column in table.KeyColumns)
+            {
+                var value = keyData[column.ColumnName];
+                try
+                {
+                    recorded[column.ColumnName] = ContextValueCoercer.ConvertToClrType(typeMapper, value!, column);
+                }
+                catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
+                {
+                    throw new BifrostExecutionError(
+                        $"The change-history writer could not convert primary-key column '{column.ColumnName}' of " +
+                        $"'{Qualify(table)}' to its column type. Refusing to record a change that cannot name its row.");
+                }
+            }
+
+            return recorded;
         }
 
         /// <summary>

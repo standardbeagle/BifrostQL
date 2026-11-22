@@ -35,7 +35,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - **A history row's `entity_id` stores key values as their column type.** A write addressed by `_primaryKey: ["5"]` recorded `{"id":"5"}` while the insert recorded `{"id":5}`, so a right-to-erasure purge by the typed key left the string-keyed rows, and their before-images, behind. Rows already written with string keys are not migrated.
 - **A frontend that forwards client context can no longer set the model's `user-audit-key` and author a write.** The tenant key was identity-owned; the configured actor key was not, so a caller whose identity lacked it could name any author.
 - **Wire context can no longer set `tenant_id` when `tenant-context-key` names another key, or suppress the state-transition audit row with a key that differs only in case (`User`).** The case twin made the audit observer's copy throw; the error was swallowed, so the transition committed unaudited.
-- **CLI commands never print a provider's connection-string parse error.** A password containing an unquoted `;` was quoted back (`Keyword not supported: 'cd'`) by `config-validate`, `test`, `doctor` and `watch` (every poll). Unhandled CLI exceptions are reported by type only, and Postgres/MySQL failures in `schema`, `export` and `config-generate` no longer crash.
+- **CLI commands never print a provider's connection-string parse error.** A password containing an unquoted `;` was quoted back (`Keyword not supported: 'cd'`) by `config-validate`, `test`, `doctor` and `watch` (every poll). An unhandled CLI exception that is or wraps an `ArgumentException` or `DbException` is reported by type only; others print their message. Postgres/MySQL failures in `schema`, `export` and `config-generate` no longer crash.
+- **A raw-claim tenant (`tenant-context-key` fed by a raw principal claim) is read as its single value everywhere.** Deferred change sets, pending changes, approvals and outbox rows recorded it as `"System.String[]"`, which merged every tenant: one org's review queue listed another's change sets, undo crossed tenants, and `pending_changes` reads returned other tenants' rows. A multi-valued tenant claim is refused.
+- **`transition-not-by` compares actors as values.** A numeric actor claim (`42.0` against a stored `42`) or a non-invariant culture made the author look like a different actor, so the author could approve their own row. JSON-number actors that are not integers are refused.
 
 ### Breaking — fifth review pass
 
@@ -90,6 +92,11 @@ On `main` after v0.4.28; not yet on NuGet.
 - **The state-transition audit row records the tenant from the model's `tenant-context-key`.** It read a hard-coded `tenant_id`.
 - **SQL Server pivots with non-ASCII labels no longer fail with error 8156 under invariant globalization.** Culture-aware folding is unavailable there, so a label set that may collide under some collation uses the CASE WHEN form.
 - **`config-validate` and `doctor` name a wrong-shaped config file (non-object root or section, non-string metadata entry)** instead of calling it invalid JSON; `doctor` crashed on it.
+- **`IGrantResolver` receives the identity's `TenantId` again.** An earlier fix in this pass made it always null.
+- **The deferred review queue fails fast on a blank `tenant-context-key`** instead of scoping by `tenant_id`, matching the tenant filter.
+- **Claim types that differ only in case no longer suppress the state-transition audit row or workflow triggers.** The HTTP user context is case-insensitive and merges such claims.
+- **A scalar or object-shaped `BifrostQL:Metadata` fails startup and `config-validate`.** It was dropped silently, taking any tenant-filter rule with it. The Host, file metadata source and `config-validate` share one reader.
+- **`doctor` and `serve` report a malformed or wrong-shaped config file** (including a non-object `connectionStrings` or non-string `bifrost` value) instead of crashing.
 
 ### Security — silent fallbacks
 

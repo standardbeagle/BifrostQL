@@ -29,9 +29,20 @@ namespace BifrostQL.Server.Test.OData
             var binding = Binding();
             var token = ODataContinuationToken.Issue(50, T0, binding, Secret);
 
-            var offset = ODataContinuationToken.Decode(token, binding, Secret, T0.AddMinutes(1), Ttl);
+            var position = ODataContinuationToken.Decode(token, binding, Secret, T0.AddMinutes(1), Ttl);
 
-            offset.Should().Be(50);
+            position.Should().Be(new ODataPagePosition(50, null));
+        }
+
+        [Fact]
+        public void Round_trips_the_top_bounded_row_end_under_the_identical_binding()
+        {
+            var binding = Binding();
+            var token = ODataContinuationToken.Issue(50, T0, binding, Secret, rowEnd: 75);
+
+            var position = ODataContinuationToken.Decode(token, binding, Secret, T0.AddMinutes(1), Ttl);
+
+            position.Should().Be(new ODataPagePosition(50, 75));
         }
 
         [Fact]
@@ -150,7 +161,7 @@ namespace BifrostQL.Server.Test.OData
             var binding = Binding(set: "SecretWidgets", filter: "tenant_id eq 'tenant-a'", identity: "user-a-fingerprint");
             var token = ODataContinuationToken.Issue(50, T0, binding, Secret);
 
-            // The transmitted payload segment (before the dot) decodes to offset|issuedAt only —
+            // The transmitted payload segment (before the dot) decodes to offset|rowEnd|issuedAt only —
             // no entity-set name, no filter text, no identity plaintext (criterion 4).
             var payloadSegment = token[..token.IndexOf('.')];
             var padded = payloadSegment.Replace('-', '+').Replace('_', '/');
@@ -160,7 +171,7 @@ namespace BifrostQL.Server.Test.OData
             payload.Should().NotContain("SecretWidgets");
             payload.Should().NotContain("tenant-a");
             payload.Should().NotContain("user-a-fingerprint");
-            payload.Should().Be("50|" + T0.ToUnixTimeSeconds());
+            payload.Should().Be("50||" + T0.ToUnixTimeSeconds());
         }
     }
 }

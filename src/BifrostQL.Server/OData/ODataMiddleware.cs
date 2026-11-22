@@ -199,16 +199,22 @@ namespace BifrostQL.Server.OData
             // The resume offset: from the server-signed $skiptoken when present (re-validated against
             // the live binding), otherwise the $skip the translator resolved. A tampered/expired/
             // cross-context token throws a clean OData 400 here — never a silent wrong page.
-            var offset = options.SkipToken is not null
+            // The end of a $top-bounded walk comes from the FIRST request's $skip + $top and rides
+            // inside the signed token from then on: $top caps the total, not each page.
+            var position = options.SkipToken is not null
                 ? ODataContinuationToken.Decode(
                     options.SkipToken, binding, _tokenSecret, DateTimeOffset.UtcNow, _options.ContinuationTokenTtl)
-                : (read.Query.Offset ?? 0);
+                : new ODataPagePosition(read.Query.Offset ?? 0, read.RowEnd);
+            var offset = position.Offset;
+            var rowEnd = position.RowEnd;
 
             // Over-fetch one row past the page to detect whether a next page exists without a
             // second round-trip; the extra row is trimmed from the response. The window comes from
             // the same max-query-rows clamp SQL generation applies, so a ceiling below the page
             // narrows the page (and still pages on) instead of silently cutting rows.
-            var window = RowProbeWindow.For(model, pageSize);
+            // The last page of a $top-bounded walk is clamped to the rows $top still allows.
+            var requestedPage = rowEnd is int end ? Math.Min(pageSize, Math.Max(0, end - offset)) : pageSize;
+            var window = RowProbeWindow.For(model, requestedPage);
             read.Query.Offset = offset > 0 ? offset : null;
             read.Query.Limit = window.Fetch;
             // $count reports the pipeline-filtered total through the SAME intent (COUNT(*) with the
@@ -238,11 +244,12 @@ namespace BifrostQL.Server.OData
 
             // An empty page ($top=0, or a ceiling of 1 leaving no room beside the sentinel) never
             // advances the offset, so a nextLink from it would point back at itself and a client
-            // following it would loop forever.
+            // following it would loop forever. A walk that has delivered its $top rows is done.
             string? nextLink = null;
-            if (hasMore && window.Page > 0)
+            var nextOffset = offset + window.Page;
+            if (hasMore && window.Page > 0 && (rowEnd is null || nextOffset < rowEnd))
             {
-                var token = ODataContinuationToken.Issue(offset + window.Page, DateTimeOffset.UtcNow, binding, _tokenSecret);
+                var token = ODataContinuationToken.Issue(nextOffset, DateTimeOffset.UtcNow, binding, _tokenSecret, rowEnd);
                 nextLink = BuildNextLink(ServiceRoot(context), entity.Table.GraphQlName, options, token);
             }
 

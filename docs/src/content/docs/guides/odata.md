@@ -61,7 +61,7 @@ enabling OData touches no GraphQL or binary service.
 | `Realm` | `BifrostQL` | Label advertised in the `WWW-Authenticate` challenge on a 401. Only a hint for interactive Basic clients; carries no security weight. |
 | `Endpoint` | `null` | Which registered BifrostQL endpoint's cached model/connection to read against; `null` selects the single registered endpoint. |
 | `DefaultPageSize` | `100` | Page size applied to a collection read when the request supplies no `$top`. Every collection response is bounded — a caller can never pull an unbounded result set in one request. |
-| `MaxPageSize` | `1000` | Hard ceiling a requested `$top` is clamped to. A caller asking for more rows than this receives at most this many. |
+| `MaxPageSize` | `1000` | Hard ceiling on one page. A `$top` above it is served in pages of at most this many rows, linked by `nextLink`, until `$top` rows have been returned. |
 | `ContinuationTokenSecret` | `null` | HMAC secret the opaque `$skiptoken` continuation token is signed with. When set, `nextLink` tokens survive restarts and resolve across a scaled fleet; when unset, a per-instance random key is used (a startup warning is logged) and tokens live only for the process's lifetime. The token carries position only — it is never the authorization boundary. |
 | `ContinuationTokenTtl` | `15 min` | How long a minted continuation token stays valid. An expired token fails closed as a clean `400`, exactly like a tampered one, so a stale `nextLink` can never silently serve a wrong page. |
 | `PublicServiceRoot` | `null` | Absolute service root used to build `@odata.context` pointers and paging `nextLink`s (e.g. `https://api.example.com/odata`). When unset they are derived from the request's own scheme/Host/PathBase — the Host header is client-supplied, so behind a reverse proxy (or any host without host filtering) set this explicitly to keep a forged `Host` out of the emitted links. |
@@ -277,9 +277,15 @@ when more rows remain, so following every link returns every row. `$top=0`
 returns an empty page and never carries a `nextLink`. Use it with `$count=true`
 to get only the total.
 
+`$top` caps the total across every page, as OData v4 specifies, not the page size.
+`$top=10` on a set of thousands returns 10 rows and no `nextLink`. A `$top` larger
+than the page is split into pages, and the last page is cut to the rows `$top`
+still allows, so following every link returns exactly `$top` rows (after `$skip`).
+
 The token is HMAC-signed and binds the entity set, the query shape
 (`$filter`/`$select`/`$orderby`), the effective page size, and a fingerprint of
-the caller's identity. A tampered, expired (past `ContinuationTokenTtl`), or
+the caller's identity. It also carries the end of a `$top`-bounded walk inside the
+signed payload, so editing `$top` on a continuation request cannot extend it. A tampered, expired (past `ContinuationTokenTtl`), or
 cross-context token — one replayed against a different query, page size, or
 identity — fails the integrity check and returns a clean `400`, never a silently
 wrong page. Set `ContinuationTokenSecret` to a stable secret if you run more than

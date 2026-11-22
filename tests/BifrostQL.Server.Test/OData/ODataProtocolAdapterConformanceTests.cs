@@ -272,7 +272,7 @@ namespace BifrostQL.Server.Test.OData
             string? wireText = null;
             try
             {
-                offset = ODataContinuationToken.Decode(token, replayBinding, secret, now, ttl);
+                offset = ODataContinuationToken.Decode(token, replayBinding, secret, now, ttl).Offset;
             }
             catch (ODataProtocolException ex)
             {

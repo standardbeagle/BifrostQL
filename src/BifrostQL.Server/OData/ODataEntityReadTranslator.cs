@@ -12,7 +12,11 @@ namespace BifrostQL.Server.OData
     /// isolation and soft-delete are unskippable (.claude/rules/protocol-adapter-security.md, read
     /// seam invariant).
     /// </summary>
-    internal sealed record ODataEntityRead(GqlObjectQuery Query, IReadOnlyList<ColumnDto> ProjectedColumns);
+    /// <param name="RowEnd">
+    /// The exclusive row index the caller's <c>$skip + $top</c> ends at, or null when no
+    /// <c>$top</c> was given. <c>$top</c> caps the total across every page, not the page.
+    /// </param>
+    internal sealed record ODataEntityRead(GqlObjectQuery Query, IReadOnlyList<ColumnDto> ProjectedColumns, int? RowEnd);
 
     /// <summary>
     /// Pure translation from an entity-set GET plus its <c>$select</c>/<c>$orderby</c>/<c>$top</c>/
@@ -64,7 +68,12 @@ namespace BifrostQL.Server.OData
             if (offset > 0)
                 query.Offset = offset;
 
-            return new ODataEntityRead(query, projected);
+            // Saturate rather than overflow: an end past int.MaxValue is unreachable anyway.
+            int? rowEnd = options.Top is null
+                ? null
+                : (int)Math.Min(int.MaxValue, (long)offset + ParseNonNegative(options.Top, "$top"));
+
+            return new ODataEntityRead(query, projected, rowEnd);
         }
 
         /// <summary>
@@ -143,7 +152,8 @@ namespace BifrostQL.Server.OData
 
         /// <summary>
         /// The page size: <c>$top</c> when supplied, else the endpoint default, clamped to the
-        /// endpoint maximum. A non-integer or out-of-range value (e.g. a 29-digit number that
+        /// endpoint maximum. <c>$top</c> also caps the total (<see cref="ODataEntityRead.RowEnd"/>),
+        /// so a <c>$top</c> above the maximum pages until that total is reached. A non-integer or out-of-range value (e.g. a 29-digit number that
         /// overflows) is a clean 400 — never an unhandled parse fault
         /// (.claude/rules/protocol-adapter-security.md invariant 5); a negative value is rejected.
         /// </summary>

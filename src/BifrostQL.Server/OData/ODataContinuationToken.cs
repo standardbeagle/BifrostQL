@@ -24,11 +24,21 @@ namespace BifrostQL.Server.OData
         string IdentityFingerprint);
 
     /// <summary>
+    /// The position a continuation token resumes at: the next page's row <see cref="Offset"/>
+    /// and, when the first request carried <c>$top</c>, the exclusive <see cref="RowEnd"/>
+    /// (<c>$skip + $top</c>) the walk stops at. <c>$top</c> caps the TOTAL a client receives
+    /// across every page (OData v4 Part 2 §5.1.7), and the first request's <c>$skip</c> is not
+    /// on the continuation request (<c>$skip</c> and <c>$skiptoken</c> cannot combine), so the
+    /// end travels inside the MAC'd payload instead of being re-derived.
+    /// </summary>
+    public readonly record struct ODataPagePosition(int Offset, int? RowEnd);
+
+    /// <summary>
     /// Issues and validates the opaque, integrity-protected continuation token that
     /// backs <c>@odata.nextLink</c> (carried on the wire as <c>$skiptoken</c>).
     ///
-    /// <para><b>The token carries POSITION ONLY</b> — the next page's row offset and the
-    /// issue time — never scope, tenant, policy, or any row/PK data (criterion 4: an
+    /// <para><b>The token carries POSITION ONLY</b> — the next page's row offset, the
+    /// <c>$top</c>-derived end of the walk, and the issue time — never scope, tenant, policy, or any row/PK data (criterion 4: an
     /// offset integer is not readable row content a caller could not otherwise derive).
     /// Containment of a forged or replayed token does not come from the token validating
     /// the caller's scope; it comes from the read pipeline ANDing tenant/soft-delete/policy
@@ -37,7 +47,8 @@ namespace BifrostQL.Server.OData
     /// The MAC is the tamper/replay guard, not the authorization boundary. (Same shape as
     /// <see cref="S3.S3ContinuationToken"/>.)</para>
     ///
-    /// <para><b>Wire form:</b> <c>base64url(offset '|' issuedAtUnix) '.' base64url(mac)</c>.
+    /// <para><b>Wire form:</b> <c>base64url(offset '|' rowEnd '|' issuedAtUnix) '.' base64url(mac)</c>,
+    /// with <c>rowEnd</c> empty when the walk is unbounded.
     /// The MAC is HMAC-SHA256 over a canonical, length-prefixed serialization of the
     /// binding PLUS the position, so nothing about the binding is transmitted. A
     /// malformed, tampered, expired, or cross-context token throws
@@ -48,27 +59,32 @@ namespace BifrostQL.Server.OData
     {
         // Bump when the canonical layout changes so old tokens fail closed rather than
         // being reinterpreted under a new schema.
-        private const string Version = "odatact1";
+        private const string Version = "odatact2";
 
-        /// <summary>Mints the token that resumes at <paramref name="offset"/>.</summary>
-        public static string Issue(int offset, DateTimeOffset issuedAt, ODataPageBinding binding, byte[] secret)
+        /// <summary>
+        /// Mints the token that resumes at <paramref name="offset"/> and, when
+        /// <paramref name="rowEnd"/> is set, stops before that row index.
+        /// </summary>
+        public static string Issue(
+            int offset, DateTimeOffset issuedAt, ODataPageBinding binding, byte[] secret, int? rowEnd = null)
         {
             ArgumentNullException.ThrowIfNull(secret);
             if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+            if (rowEnd <= offset) throw new ArgumentOutOfRangeException(nameof(rowEnd));
 
-            var payload = Payload(offset, issuedAt.ToUnixTimeSeconds());
+            var payload = Payload(offset, rowEnd, issuedAt.ToUnixTimeSeconds());
             var mac = ComputeMac(payload, binding, secret);
             return ProtocolBase64Url.Encode(Encoding.UTF8.GetBytes(payload)) + "." + ProtocolBase64Url.Encode(mac);
         }
 
         /// <summary>
         /// Validates <paramref name="token"/> against <paramref name="binding"/> re-derived
-        /// from the LIVE request and returns the resume offset it encodes. Any malformed,
+        /// from the LIVE request and returns the position it encodes. Any malformed,
         /// tampered, cross-context, or expired token throws
         /// <see cref="ODataProtocolException.BadRequest"/> with a generic message — the token
         /// internals are never echoed (invariant 3).
         /// </summary>
-        public static int Decode(
+        public static ODataPagePosition Decode(
             string token, ODataPageBinding binding, byte[] secret, DateTimeOffset now, TimeSpan ttl)
         {
             ArgumentNullException.ThrowIfNull(secret);
@@ -116,7 +132,7 @@ namespace BifrostQL.Server.OData
             // Parse the position only after the MAC decision is computed. A well-formed but
             // out-of-range offset (e.g. a 29-digit number) throws OverflowException from
             // int.Parse — caught here into the same clean 400 (invariant 5).
-            var parsed = TryParsePayload(payload, out var offset, out var issuedAtUnix);
+            var parsed = TryParsePayload(payload, out var offset, out var rowEnd, out var issuedAtUnix);
 
             if (!macOk || !parsed)
                 throw InvalidToken();
@@ -127,7 +143,7 @@ namespace BifrostQL.Server.OData
             if (age < TimeSpan.Zero || age > ttl)
                 throw InvalidToken();
 
-            return offset;
+            return new ODataPagePosition(offset, rowEnd);
         }
 
         /// <summary>
@@ -165,19 +181,28 @@ namespace BifrostQL.Server.OData
             }
         }
 
-        private static string Payload(int offset, long issuedAtUnix)
-            => offset.ToString(CultureInfo.InvariantCulture) + "|" + issuedAtUnix.ToString(CultureInfo.InvariantCulture);
+        private static string Payload(int offset, int? rowEnd, long issuedAtUnix)
+            => offset.ToString(CultureInfo.InvariantCulture)
+               + "|" + (rowEnd?.ToString(CultureInfo.InvariantCulture) ?? string.Empty)
+               + "|" + issuedAtUnix.ToString(CultureInfo.InvariantCulture);
 
-        private static bool TryParsePayload(string payload, out int offset, out long issuedAtUnix)
+        private static bool TryParsePayload(string payload, out int offset, out int? rowEnd, out long issuedAtUnix)
         {
             offset = 0;
+            rowEnd = null;
             issuedAtUnix = 0;
-            var bar = payload.IndexOf('|');
-            if (bar <= 0 || bar == payload.Length - 1)
+            var parts = payload.Split('|');
+            if (parts.Length != 3)
                 return false;
-            return int.TryParse(payload[..bar], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out offset)
-                && offset >= 0
-                && long.TryParse(payload[(bar + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out issuedAtUnix);
+            if (!int.TryParse(parts[0], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out offset) || offset < 0)
+                return false;
+            if (parts[1].Length > 0)
+            {
+                if (!int.TryParse(parts[1], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var end) || end <= offset)
+                    return false;
+                rowEnd = end;
+            }
+            return long.TryParse(parts[2], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out issuedAtUnix);
         }
 
         private static byte[] ComputeMac(string payload, ODataPageBinding binding, byte[] secret)

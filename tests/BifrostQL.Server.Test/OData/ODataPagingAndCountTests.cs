@@ -93,7 +93,8 @@ namespace BifrostQL.Server.Test.OData
             await using var harness = await ODataRealDbHarness.StartAsync("page-walk", Metadata, Seed);
             var opts = Opts(max: 3, def: 3);
 
-            var (s1, _, b1) = await Run(harness, "/widgets", "?$top=3", options: opts);
+            // No $top: the endpoint's page size (3) pages, and the whole set is reachable.
+            var (s1, _, b1) = await Run(harness, "/widgets", "", options: opts);
             s1.Should().Be(200);
             var r1 = JsonDocument.Parse(b1).RootElement;
             Ids(r1).Should().Equal(1, 2, 3);
@@ -166,6 +167,73 @@ namespace BifrostQL.Server.Test.OData
             root.GetProperty("@odata.nextLink").GetString().Should().Contain("$skiptoken=");
         }
 
+        // ---- $top caps the TOTAL, not the page (OData v4 11.2.6.3) --------------------------
+
+        [Fact]
+        public async Task Top_below_the_page_size_caps_the_total_and_emits_no_nextlink()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("top-total-small", Metadata, Seed);
+
+            var (status, _, body) = await Run(harness, "/widgets", "?$top=2", options: Opts(max: 1000, def: 100));
+
+            status.Should().Be(200);
+            var root = JsonDocument.Parse(body).RootElement;
+            Ids(root).Should().Equal(1, 2);
+            root.TryGetProperty("@odata.nextLink", out _).Should().BeFalse(
+                "$top=2 asked for two rows in total; a nextLink would hand the client the rest of the set");
+        }
+
+        [Theory]
+        [InlineData("?$top=5", new[] { 1, 2, 3, 4, 5 })]
+        [InlineData("?$skip=1&$top=4", new[] { 2, 3, 4, 5 })]
+        public async Task Top_above_the_page_size_followed_through_nextlink_returns_exactly_top_rows(
+            string query, int[] expected)
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("top-total-walk", Metadata, Seed);
+            var opts = Opts(max: 3, def: 3);
+
+            var (s1, _, b1) = await Run(harness, "/widgets", query, options: opts);
+            s1.Should().Be(200);
+            var r1 = JsonDocument.Parse(b1).RootElement;
+            r1.TryGetProperty("@odata.nextLink", out _).Should().BeTrue("the page (3) is smaller than $top");
+
+            var seen = new List<int>(Ids(r1));
+            var link = r1.GetProperty("@odata.nextLink").GetString();
+            var hops = 0;
+            while (link is not null)
+            {
+                hops.Should().BeLessThan(5, "a $top-bounded walk must terminate");
+                hops++;
+                var (path, next) = SplitLink(link);
+                var (s, _, b) = await Run(harness, path, next, options: opts);
+                s.Should().Be(200);
+                var r = JsonDocument.Parse(b).RootElement;
+                seen.AddRange(Ids(r));
+                link = r.TryGetProperty("@odata.nextLink", out var n) ? n.GetString() : null;
+            }
+            seen.Should().Equal(expected);
+        }
+
+        [Fact]
+        public async Task A_continuation_with_a_widened_top_still_ends_where_the_first_request_said()
+        {
+            // The end of the walk rides in the signed token, not the live $top: both $top values
+            // clamp to the same page size, so the token is accepted, yet it may not extend the walk.
+            await using var harness = await ODataRealDbHarness.StartAsync("top-total-widened", Metadata, Seed);
+            var opts = Opts(max: 3, def: 3);
+
+            var (_, _, b1) = await Run(harness, "/widgets", "?$top=5", options: opts);
+            var token = SkipTokenOf(JsonDocument.Parse(b1).RootElement);
+
+            var (status, _, body) = await Run(harness, "/widgets",
+                "?$top=1000&$skiptoken=" + Uri.EscapeDataString(token), options: opts);
+
+            status.Should().Be(200);
+            var root = JsonDocument.Parse(body).RootElement;
+            Ids(root).Should().Equal(4, 5);
+            root.TryGetProperty("@odata.nextLink", out _).Should().BeFalse();
+        }
+
         // ---- max-query-rows ceiling below the page: narrowed pages, nothing lost ------------
 
         // Ceiling 4 leaves a page of 3 beside the sentinel row; the 7 widgets need three pages.
@@ -221,8 +289,9 @@ namespace BifrostQL.Server.Test.OData
             root.TryGetProperty("@odata.nextLink", out _).Should().BeFalse(
                 "a nextLink from an empty page resumes at the same offset and loops forever");
 
-            // Control: the same set with $top=1 does page on, so the absence above is the $top=0 rule.
-            var (_, _, controlBody) = await Run(harness, "/widgets", "?$top=1");
+            // Control: the same set at a page size of 1 does page on, so the absence above is the
+            // $top=0 rule.
+            var (_, _, controlBody) = await Run(harness, "/widgets", "", options: Opts(def: 1));
             JsonDocument.Parse(controlBody).RootElement.TryGetProperty("@odata.nextLink", out _).Should().BeTrue();
         }
 
@@ -234,12 +303,12 @@ namespace BifrostQL.Server.Test.OData
             await using var harness = await ODataRealDbHarness.StartAsync("page-tamper", Metadata, Seed);
             var opts = Opts(max: 3, def: 3);
 
-            var (_, _, b1) = await Run(harness, "/widgets", "?$top=3", options: opts);
+            var (_, _, b1) = await Run(harness, "/widgets", "", options: opts);
             var token = SkipTokenOf(JsonDocument.Parse(b1).RootElement);
             // Deterministic tamper: flip the first MAC byte (see ODataContinuationTokenTests).
             var tampered = ODataContinuationTokenTests.FlipMacByte(token);
 
-            var (status, _, body) = await Run(harness, "/widgets", $"?$top=3&$skiptoken={Uri.EscapeDataString(tampered)}", options: opts);
+            var (status, _, body) = await Run(harness, "/widgets", $"?$skiptoken={Uri.EscapeDataString(tampered)}", options: opts);
 
             status.Should().Be(400);
             ErrorCode(body).Should().Be("BadRequest");
@@ -252,13 +321,13 @@ namespace BifrostQL.Server.Test.OData
             var opts = Opts(max: 2, def: 2);
 
             // Mint under $filter=id gt 0 (7 rows → a nextLink exists).
-            var (_, _, b1) = await Run(harness, "/widgets", "?$top=2&$filter=id gt 0", options: opts);
+            var (_, _, b1) = await Run(harness, "/widgets", "?$filter=id gt 0", options: opts);
             var token = SkipTokenOf(JsonDocument.Parse(b1).RootElement);
 
             // Replay the same token with a DIFFERENT $filter — the re-derived query-shape hash
             // differs, so the MAC check fails: a clean 400, never a wrong page for the new filter.
             var (status, _, body) = await Run(harness, "/widgets",
-                $"?$top=2&$filter=id gt 3&$skiptoken={Uri.EscapeDataString(token)}", options: opts);
+                $"?$filter=id gt 3&$skiptoken={Uri.EscapeDataString(token)}", options: opts);
 
             status.Should().Be(400);
             ErrorCode(body).Should().Be("BadRequest");
@@ -273,7 +342,7 @@ namespace BifrostQL.Server.Test.OData
             var userB = ODataTestAuth.Principal("user-b", tenant: "tenant-b");
 
             // tenant-a pages its own 4 rows (a1..a4); page 1 → a1,a2 with a nextLink.
-            var (_, _, b1) = await Run(harness, "/orders", "?$top=2", user: userA, options: opts);
+            var (_, _, b1) = await Run(harness, "/orders", "", user: userA, options: opts);
             var r1 = JsonDocument.Parse(b1).RootElement;
             Names(r1).Should().Equal("a1", "a2");
             var token = SkipTokenOf(r1);
@@ -281,13 +350,13 @@ namespace BifrostQL.Server.Test.OData
             // Replaying tenant-a's token as tenant-b: the identity fingerprint differs → 400.
             // The continuation never leaks tenant-a's rows to tenant-b.
             var (statusB, _, bodyB) = await Run(harness, "/orders",
-                $"?$top=2&$skiptoken={Uri.EscapeDataString(token)}", user: userB, options: opts);
+                $"?$skiptoken={Uri.EscapeDataString(token)}", user: userB, options: opts);
             statusB.Should().Be(400);
             ErrorCode(bodyB).Should().Be("BadRequest");
 
             // And tenant-a's own continuation stays within tenant-a's scope (a3,a4) — never a tenant-b row.
             var (statusA, _, bodyA) = await Run(harness, "/orders",
-                $"?$top=2&$skiptoken={Uri.EscapeDataString(token)}", user: userA, options: opts);
+                $"?$skiptoken={Uri.EscapeDataString(token)}", user: userA, options: opts);
             statusA.Should().Be(200);
             Names(JsonDocument.Parse(bodyA).RootElement).Should().Equal("a3", "a4");
         }

@@ -14,7 +14,7 @@ namespace BifrostQL.Core.Utils
     ///
     /// Patterns handled (case-insensitive):
     /// <list type="bullet">
-    ///   <item><description><c>Password=...</c> and <c>Pwd=...</c> up to <c>;</c>, <c>"</c>, or end-of-string</description></item>
+    ///   <item><description><c>Password=...</c> and <c>Pwd=...</c>: a <c>"..."</c> or <c>'...'</c> quoted value (doubled quotes escape), else up to <c>;</c>, <c>"</c>, or end-of-string</description></item>
     ///   <item><description><c>User Id=...</c> and <c>Uid=...</c> (PII) with the same termination rules</description></item>
     ///   <item><description>URL-style credentials <c>scheme://user:password@host</c> (only the password portion)</description></item>
     ///   <item><description><c>BIFROST_SERVERS=...</c> env-var dumps (entire value to end-of-line/string)</description></item>
@@ -32,21 +32,23 @@ namespace BifrostQL.Core.Utils
         private static readonly RegexOptions Opts =
             RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
 
-        // "Password=" / "Pwd=" followed by:
-        //   1. a quoted value "..." (which may itself contain ; characters), OR
-        //   2. a plain value up to the next ; or end-of-string.
+        // A connection-string value: "..." or '...' (either may contain ; and escapes its
+        // own quote by doubling it, as ADO.NET does), else a plain value up to the next ;
+        // or end-of-string. The quoted forms come first in the alternation so that
+        // 'ab;cd';x=1 consumes the whole quoted segment instead of leaking cd'.
+        private const string ConnectionStringValue = @"(?:""(?:[^""]|"""")*""|'(?:[^']|'')*'|[^;""]*)";
+
+        // "Password=" / "Pwd=" followed by a ConnectionStringValue.
         // The key itself is captured so we can preserve its original casing.
-        // Quoted form is tried first via the alternation ordering so that the
-        // "value";x=1 case consumes the whole quoted segment.
         private static readonly Regex PasswordRegex = new(
-            @"(?<key>Password|Pwd)\s*=\s*(?:""[^""]*""|[^;""]*)",
+            @"(?<key>Password|Pwd)\s*=\s*" + ConnectionStringValue,
             Opts);
 
         // "User Id=" / "Uid=" — same dual-form handling as Password above.
         // "User Id" allows one or more whitespace characters between the two words
         // to match the Microsoft ADO.NET connection-string conventions.
         private static readonly Regex UserIdRegex = new(
-            @"(?<key>User\s+Id|Uid)\s*=\s*(?:""[^""]*""|[^;""]*)",
+            @"(?<key>User\s+Id|Uid)\s*=\s*" + ConnectionStringValue,
             Opts);
 
         // URL credentials: scheme://user:password@host

@@ -20,6 +20,10 @@ namespace BifrostQL.Core.Test.Utils
         [InlineData("Server=x;PASSWORD=abc123;", "Server=x;PASSWORD=****;")]
         [InlineData("Password=p@$$w0rd!;Other=1", "Password=****;Other=1")]
         [InlineData("Password=\"embedded;value\";x=1", "Password=****;x=1")]
+        [InlineData("Password='ab;cd';x=1", "Password=****;x=1")]
+        [InlineData("Server=x;Password='ab;cd'", "Server=x;Password=****")]
+        [InlineData("Password='it''s;secret';x=1", "Password=****;x=1")]
+        [InlineData("Password=\"say \"\"hi\"\";now\";x=1", "Password=****;x=1")]
         public void Scrub_PasswordKey_IsReplaced(string input, string expected)
         {
             SecretScrubber.Scrub(input).Should().Be(expected);
@@ -30,6 +34,7 @@ namespace BifrostQL.Core.Test.Utils
         [InlineData("Server=x;pwd=xyz789;", "Server=x;pwd=****;")]
         [InlineData("Server=x;PWD=Secret!;", "Server=x;PWD=****;")]
         [InlineData("Pwd=end-of-string", "Pwd=****")]
+        [InlineData("Pwd='ab;cd';x=1", "Pwd=****;x=1")]
         public void Scrub_PwdKey_IsReplaced(string input, string expected)
         {
             SecretScrubber.Scrub(input).Should().Be(expected);
@@ -43,6 +48,7 @@ namespace BifrostQL.Core.Test.Utils
         [InlineData("Server=x;USER ID=andy;", "Server=x;USER ID=****;")]
         [InlineData("Server=x;Uid=admin;", "Server=x;Uid=****;")]
         [InlineData("Server=x;UID=admin", "Server=x;UID=****")]
+        [InlineData("Server=x;User Id='an;dy';x=1", "Server=x;User Id=****;x=1")]
         public void Scrub_UserIdKey_IsReplaced(string input, string expected)
         {
             SecretScrubber.Scrub(input).Should().Be(expected);

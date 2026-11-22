@@ -52,6 +52,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **CLI commands never print a provider's connection-string parse error.** A password containing an unquoted `;` was quoted back (`Keyword not supported: 'cd'`) by `config-validate`, `test`, `doctor` and `watch` (every poll). An unhandled CLI exception that is or wraps an `ArgumentException` or `DbException` is reported by type only; others print their message. Postgres/MySQL failures in `schema`, `export` and `config-generate` no longer crash.
 - **A raw-claim tenant (`tenant-context-key` fed by a raw principal claim) is read as its single value everywhere.** Deferred change sets, pending changes, approvals and outbox rows recorded it as `"System.String[]"`, which merged every tenant: one org's review queue listed another's change sets, undo crossed tenants, and `pending_changes` reads returned other tenants' rows. A multi-valued tenant claim is refused, including by operations that touch no tenant table. Rows already stamped `"System.String[]"` match no caller and their approvals are refused; re-stamp them from `requester_context` or reject them.
 - **`transition-not-by` compares actors as values.** A numeric actor claim (`42.0` against a stored `42`) or a non-invariant culture made the author look like a different actor, so the author could approve their own row. JSON-number actors that are not integers are refused.
+- **`transition-not-by` no longer lets an author self-approve when the actor is a large number written in exponent form** (`1E+17` against `100000000000000000`).
 
 ### Breaking — fifth review pass
 
@@ -71,6 +72,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`MetadataValidator.ValidateTableMetadata`, `ValidateColumnMetadata` and `ValidateDatabaseMetadata` are removed.** Nothing called them but their tests, and they had drifted from the load-time gate. Nothing public replaces them; `ModelConfigValidator` runs at model load.
 - **A raw `tenant_id` token claim no longer supplies the tenant when the identity has none.** It filled the key the OIDC mapper had chosen not to project. Project the tenant through an `IOidcClaimMapper`, or name the claim with `tenant-context-key`.
 - **`bifrost config-validate` reports a malformed connection string with constant text instead of naming the rejected keyword.**
+- **`MetadataLoader(IConfiguration, string)` and `FileMetadataSource(IConfigurationSection, string)` are removed.** Use `new MetadataLoader(MetadataLoader.ReadMetadataRules(section))` or `new FileMetadataSource(MetadataLoader.ReadMetadataRules(section))`.
 
 ### Fixed — fifth review pass
 
@@ -111,6 +113,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Claim types that differ only in case no longer suppress the state-transition audit row or workflow triggers.** The HTTP user context is case-insensitive and merges such claims.
 - **A scalar or object-shaped `BifrostQL:Metadata` fails startup and `config-validate`.** It was dropped silently, taking any tenant-filter rule with it. The Host, file metadata source and `config-validate` share one reader.
 - **`doctor` and `serve` report a malformed or wrong-shaped config file** (including a non-object `connectionStrings` or non-string `bifrost` value) instead of crashing.
+- **`<t>History` on a tenant-filtered table works when `tenant-context-key` is fed by a raw claim.** The trail bound the claim's array as the filter value and failed with a database error; a multi-valued claim is refused as access denied.
+- **A tenant claim whose case differs from `tenant-context-key` resolves the same on every surface.** User-context copies dropped the case-insensitive comparer, so GraphQL reads refused what mutations accepted. Every copy goes through `UserContexts.Copy`.
+- **`bifrost config-validate`, `doctor` and `serve` accept config files with comments and trailing commas, as the server does.**
+- **Docs: `IGrantResolver` receives only the identity tenant (`tenant_id`), not the `tenant-context-key` value;** grants resolve before any endpoint's model is known.
 
 ### Security — silent fallbacks
 

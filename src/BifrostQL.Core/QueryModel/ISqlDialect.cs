@@ -87,6 +87,10 @@ public interface ISqlDialect
     /// <param name="totalAlias">Alias for the per-parent total column.</param>
     /// <param name="offset">Rows to skip per parent (null → 0).</param>
     /// <param name="limit">Max rows per parent (null → 100 default, -1 → unlimited).</param>
+    /// <param name="keepTotalCarriers">When true, a parent whose window keeps no row (a zero
+    /// limit, or an offset at or past its row count) keeps its row number 1 anyway, outside
+    /// the window, so its total still reaches the reader. The caller must drop every row
+    /// outside the window (<see cref="GqlObjectQuery.IsInPagedWindow"/>).</param>
     string ConnectedPaging(
         string projection,
         string fromAndWhere,
@@ -95,7 +99,8 @@ public interface ISqlDialect
         string rowNumberAlias,
         string totalAlias,
         int? offset,
-        int? limit)
+        int? limit,
+        bool keepTotalCarriers = false)
     {
         var partition = string.Join(", ", partitionColumns);
         var order = orderColumns?.Any() == true
@@ -113,6 +118,10 @@ public interface ISqlDialect
         var rnFilter = actualLimit.HasValue
             ? $"{rn} BETWEEN {lower} AND {actualOffset + actualLimit.Value}"
             : $"{rn} >= {lower}";
+        if (keepTotalCarriers && actualLimit == 0)
+            rnFilter = $"{rn} = 1";
+        else if (keepTotalCarriers && lower > 1)
+            rnFilter = $"({rnFilter}) OR ({rn} = 1 AND {total} < {lower})";
         return $"SELECT * FROM ({window}) {EscapeIdentifier("p")} WHERE {rnFilter}";
     }
 

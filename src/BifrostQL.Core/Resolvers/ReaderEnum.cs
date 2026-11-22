@@ -183,6 +183,16 @@ namespace BifrostQL.Core.Resolvers
                 var matched = key == null
                     ? (IList<object?[]>)Array.Empty<object?[]>()
                     : GetJoinIndex(join.JoinName, tableData, key.Length).Match(key);
+                // A paged parent whose window is empty still gets one row, only to carry
+                // its total (ISqlDialect.ConnectedPaging); it is not on the page.
+                if (connected.IncludeResult && matched.Count > 0)
+                {
+                    var rowNumberIdx = tableData.index[QueryModel.PagedKeys.RowNumber];
+                    matched = matched
+                        .Where(r => QueryModel.GqlObjectQuery.IsInPagedWindow(
+                            Convert.ToInt64(r[rowNumberIdx]), connected.Offset, connected.Limit))
+                        .ToList();
+                }
                 var subTable = new SubTableEnumerable(this, matched, tableData, connected);
                 // Paged nested collections (multi-links) surface the same
                 // wrapper as top-level queries: {total, offset, limit, data}.

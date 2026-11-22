@@ -239,6 +239,17 @@ namespace BifrostQL.Core.QueryModel
         private static readonly ParameterizedSql EmptyWindowFilter = new(" WHERE 1=0", Array.Empty<SqlParameterInfo>());
 
         /// <summary>
+        /// True when a per-parent paged row with window row number <paramref name="rowNumber"/>
+        /// is on the page that <paramref name="offset"/> and <paramref name="limit"/> (the
+        /// node's raw arguments) ask for. <see cref="ISqlDialect.ConnectedPaging"/> keeps one
+        /// row outside the window for a parent whose window is empty (<c>limit: 0</c>, or an
+        /// offset at or past its row count), only to carry that parent's total; it is not data.
+        /// The window's upper bound is already applied in SQL.
+        /// </summary>
+        public static bool IsInPagedWindow(long rowNumber, int? offset, int? limit)
+            => limit != 0 && rowNumber > (offset ?? 0);
+
+        /// <summary>
         /// ORDER BY expressions for a query that is about to be PAGED: the caller's
         /// sort, then the table's primary key ascending as a tie-break.
         ///
@@ -464,7 +475,7 @@ namespace BifrostQL.Core.QueryModel
             var projection = string.IsNullOrEmpty(joinColumnSql)
                 ? srcProjection
                 : $"{srcProjection}, {joinColumnSql}";
-            return ConnectedRowsSql(ctx, main, tableJoin, projection);
+            return ConnectedRowsSql(ctx, main, tableJoin, projection, keepTotalCarriers: true);
         }
 
         /// <summary>
@@ -474,7 +485,11 @@ namespace BifrostQL.Core.QueryModel
         /// link, per-parent paged collection, or flat collection) applied exactly as the
         /// field's statement applies them.
         /// </summary>
-        private static ParameterizedSql ConnectedRowsSql(SqlBuildContext ctx, ParameterizedSql main, TableJoin tableJoin, string projection)
+        /// <param name="keepTotalCarriers">True only for the field's own statement, whose
+        /// reader takes each paged parent's total from its rows: a parent with an empty window
+        /// keeps one row outside it (<see cref="ISqlDialect.ConnectedPaging"/>). A restricted
+        /// parent set for a deeper level passes false, so it holds only rows on the page.</param>
+        private static ParameterizedSql ConnectedRowsSql(SqlBuildContext ctx, ParameterizedSql main, TableJoin tableJoin, string projection, bool keepTotalCarriers)
         {
             var dbModel = ctx.Model;
             var dialect = ctx.Dialect;
@@ -521,7 +536,7 @@ namespace BifrostQL.Core.QueryModel
                 return BuildSingleJoinSql(wrap, main, relationParams, filter);
 
             if (tableJoin.ConnectedTable.IncludeResult)
-                return BuildPagedCollectionSql(ctx, tableJoin, projection, fromClause, filter, main, relationParams);
+                return BuildPagedCollectionSql(ctx, tableJoin, projection, fromClause, filter, main, relationParams, keepTotalCarriers);
 
             return BuildFlatCollectionSql(ctx, tableJoin, wrap, filter, main, relationParams);
         }
@@ -559,7 +574,7 @@ namespace BifrostQL.Core.QueryModel
         /// JoinId_&lt;i&gt;); order by the child sort columns against the `b` alias —
         /// both valid at the join level where the window is computed.
         /// </summary>
-        private static ParameterizedSql BuildPagedCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string projection, string fromClause, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams)
+        private static ParameterizedSql BuildPagedCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string projection, string fromClause, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams, bool keepTotalCarriers)
         {
             var dialect = ctx.Dialect;
             var ea = dialect.EscapeIdentifier("a");
@@ -582,7 +597,8 @@ namespace BifrostQL.Core.QueryModel
                 // the root SELECT: ConnectedPaging's own null -> 100 default sits below
                 // the ceiling and would hand each parent 100 children under a ceiling
                 // of 5.
-                ResolveRowWindow(ctx.Model, tableJoin.ConnectedTable.Limit));
+                ResolveRowWindow(ctx.Model, tableJoin.ConnectedTable.Limit),
+                keepTotalCarriers);
 
             return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
         }
@@ -672,7 +688,7 @@ namespace BifrostQL.Core.QueryModel
             var baseSql = GetRestrictedSqlParameterized(dbModel, dialect, parameters, query.Parent);
             var parentRows = ConnectedRowsSql(
                 new SqlBuildContext(dbModel, dialect, parameters), baseSql, query.Parent.Join,
-                query.Join.EmitJoinIdProjection(dialect, "b"));
+                query.Join.EmitJoinIdProjection(dialect, "b"), keepTotalCarriers: false);
             var nestedJoinIdNames = string.Join(", ", Enumerable.Range(0, query.Join.FromColumns.Count)
                 .Select(i => dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, query.Join.FromColumns.Count))));
             return new ParameterizedSql(

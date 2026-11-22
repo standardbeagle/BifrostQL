@@ -101,6 +101,25 @@ public sealed class SqlServerZeroRowWindowTests : FullIntegrationTestBase, IAsyn
         first.GetProperty("orders").GetProperty("total").GetInt32().Should().Be(2);
     }
 
+    // A nested paged collection reads its per-parent total off the window's __total column;
+    // an empty window dropped every row carrying it, so total read 0.
+    [SkippableTheory]
+    [InlineData("limit: 0", new[] { 2, 1, 0 }, new[] { 0, 0, 0 })]
+    [InlineData("offset: 1, limit: 0", new[] { 2, 1, 0 }, new[] { 0, 0, 0 })]
+    [InlineData("offset: 1, limit: 5", new[] { 2, 1, 0 }, new[] { 1, 0, 0 })]
+    [InlineData("limit: 1", new[] { 2, 1, 0 }, new[] { 1, 1, 0 })]
+    public async Task NestedPagedCollection_EmptyWindow_ReportsEachParentsTotal(string arguments, int[] totals, int[] rowCounts)
+    {
+        Skip.If(_factory is null, "BIFROST_TEST_SQLSERVER not set");
+
+        var page = await RunAsync(
+            $"{{ customers(sort: [id_asc]) {{ data {{ id orders({arguments}, sort: [id_asc]) {{ total data {{ id }} }} }} }} }}", "customers");
+
+        var orders = page.GetProperty("data").EnumerateArray().Select(c => c.GetProperty("orders")).ToList();
+        orders.Select(o => o.GetProperty("total").GetInt32()).Should().Equal(totals);
+        orders.Select(o => o.GetProperty("data").GetArrayLength()).Should().Equal(rowCounts);
+    }
+
     [SkippableFact]
     public async Task GroupedAggregate_ZeroLimit_ReturnsNoGroups()
     {

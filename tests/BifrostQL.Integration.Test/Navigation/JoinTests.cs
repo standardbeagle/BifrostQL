@@ -103,6 +103,50 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         joinData.Should().HaveCount(TestSchema.Counts.Products); // All products linked back
     }
 
+    /// <summary>
+    /// A paged collection's per-parent total rides on the window's <c>__total</c> column.
+    /// A window that keeps no row for a parent (a zero limit, or an offset past its rows)
+    /// keeps that parent's row number 1 as the carrier of its total, on every dialect; the
+    /// reader drops it from the page. The unpaged link is the control that counts the rows.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(null, 0)]
+    [InlineData(1000, 5)]
+    public void OneToMany_PagedEmptyWindow_KeepsOneTotalCarrierPerParent(int? offset, int limit)
+    {
+        var allQuery = BuildQuery("Categories");
+        var allLink = BuildLinkedQuery("Products");
+        allLink.GraphQlName = "products";
+        allQuery.Links.Add(allLink);
+        allQuery.ConnectLinks(Fixture.Database.DbModel);
+        var all = QueryExecutor.Execute(allQuery, Fixture.Database.DbModel, Fixture.Database.ConnFactory)[allQuery.Joins.First().JoinName];
+        var expectedTotals = all.data
+            .GroupBy(row => Convert.ToInt64(row[all.index["src_id"]]))
+            .ToDictionary(g => g.Key, g => (long)g.Count());
+        expectedTotals.Should().NotBeEmpty("control: the categories have products");
+
+        var pagedQuery = BuildQuery("Categories");
+        var pagedLink = BuildLinkedQuery("Products");
+        pagedLink.GraphQlName = "products";
+        pagedLink.IncludeResult = true;
+        pagedLink.Offset = offset;
+        pagedLink.Limit = limit;
+        pagedQuery.Links.Add(pagedLink);
+        pagedQuery.ConnectLinks(Fixture.Database.DbModel);
+        var paged = QueryExecutor.Execute(pagedQuery, Fixture.Database.DbModel, Fixture.Database.ConnFactory)[pagedQuery.Joins.First().JoinName];
+
+        var carriers = paged.data
+            .GroupBy(row => Convert.ToInt64(row[paged.index["src_id"]]))
+            .ToDictionary(g => g.Key, g => g.ToList());
+        carriers.Keys.Should().BeEquivalentTo(expectedTotals.Keys);
+        foreach (var (parent, rows) in carriers)
+        {
+            rows.Should().ContainSingle();
+            Convert.ToInt64(rows[0][paged.index[PagedKeys.RowNumber]]).Should().Be(1);
+            Convert.ToInt64(rows[0][paged.index[PagedKeys.Total]]).Should().Be(expectedTotals[parent]);
+        }
+    }
+
     [SkippableFact]
     public void OneToMany_OrderToItems()
     {

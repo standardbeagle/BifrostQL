@@ -454,10 +454,11 @@ public class ConfigGeneratorTests
         var generator = new ConfigGenerator();
         var rules = generator.Generate(results);
 
-        // 1 table-level rule (soft-delete + tenant) + 3 audit column rules
-        rules.Should().HaveCount(4);
-        rules[0].Should().Contain("soft-delete: deleted_at");
-        rules[0].Should().Contain("tenant-filter: tenant_id");
+        // user-audit-key (updated_by is an actor column) + 1 table-level rule (soft-delete + tenant) + 3 audit column rules
+        rules.Should().HaveCount(5);
+        rules[0].Should().Be(":root { user-audit-key: id }");
+        rules[1].Should().Contain("soft-delete: deleted_at");
+        rules[1].Should().Contain("tenant-filter: tenant_id");
     }
 
     [Fact]

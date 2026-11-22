@@ -69,6 +69,11 @@ public sealed class ConfigGenerateCommand : ICommand
 
             output.WriteInfo("");
             output.WriteInfo("Add these rules to the \"Metadata\" array in your bifrostql.json config.");
+            if (rules.Contains(ConfigGenerator.UserAuditKeyRule))
+                output.WriteWarning(
+                    $"  Confirm '{ConfigGenerator.UserAuditKeyRule}': it names the user-context claim the " +
+                    "created-by/updated-by/deleted-by columns are stamped from. 'id' is the caller id BifrostQL " +
+                    "maps by default; change it if your host maps the writer's identity under another claim.");
             return 0;
         }
         catch (SqlException ex)

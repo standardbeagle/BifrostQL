@@ -15,12 +15,26 @@ public sealed class ConfigGenerator
         ArgumentNullException.ThrowIfNull(results, nameof(results));
 
         var rules = new List<string>();
+        if (results.Any(r => r.AuditColumns.Any(a => StampsActor(a.Role))))
+            rules.Add(UserAuditKeyRule);
         foreach (var result in results)
         {
             rules.AddRange(GenerateTableRules(result));
         }
         return rules;
     }
+
+    /// <summary>
+    /// The model-level rule naming the claim actor columns are stamped from. Model load refuses a
+    /// created-by/updated-by/deleted-by populator without one, so <see cref="Generate"/> emits it
+    /// whenever it emits such a populator. The value is the key the identity mapper writes the
+    /// caller's id under by default; a host with its own claim mapping must confirm it.
+    /// </summary>
+    public static readonly string UserAuditKeyRule =
+        $":root {{ {MetadataKeys.Audit.UserKey}: {MetadataKeys.Auth.DefaultUserAuditKey} }}";
+
+    private static bool StampsActor(AuditRole role)
+        => role is AuditRole.CreatedBy or AuditRole.UpdatedBy or AuditRole.DeletedBy;
 
     /// <summary>
     /// Generates metadata rules for a single table's detected patterns.

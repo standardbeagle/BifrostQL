@@ -140,7 +140,7 @@ No custom resolver code is involved at any step — the behavior is entirely met
 
 1. Load `org-model.sql` (or the PostgreSQL seed sample, which is self-contained) into your database.
 2. Apply the metadata from the seed-file header comments via the BifrostQL `Metadata` config section.
-3. Ensure your authentication path produces `tenant_id`, `tenant_ids`, and `roles` claims — see the [Authentication](/BifrostQL/guides/authentication) guide.
+3. Ensure your authentication path gives the identity its tenant, organizations and roles. `IdentityContextMapper` then writes them as the `tenant_id`, `tenant_ids` and `roles` keys. Local auth reads them from the `bifrost:tenant`, `bifrost:org` and role claims; an OIDC provider projects them through its `IOidcClaimMapper`. A raw token claim named `tenant_id` or `tenant_ids` is ignored, because those keys belong to the mapper, and a caller whose identity has no tenant is refused. To scope by a raw token claim instead, name it with `tenant-context-key` (for example `org_id`). See the [Authentication](/BifrostQL/guides/authentication#changing-claim-keys) guide.
 4. Optionally add audit columns and the audit metadata for mutation ownership tracking.
 
 See the [Module System](/BifrostQL/guides/modules) guide for the full `tenant-filter`, `auto-filter`, and audit module reference.

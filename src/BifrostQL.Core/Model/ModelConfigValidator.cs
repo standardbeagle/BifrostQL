@@ -469,7 +469,7 @@ namespace BifrostQL.Core.Model
             foreach (var key in metadata.Keys)
             {
                 if (!knownKeys.Contains(key))
-                    continue; // Unknown entirely — reported by MetadataValidator's warnings, not an error here.
+                    continue; // Unknown entirely — refused by ValidateUnknownMetadataKeys, not reported twice.
 
                 var canonical = knownKeys.First(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
                 if (!string.Equals(canonical, key, StringComparison.Ordinal))
@@ -481,6 +481,14 @@ namespace BifrostQL.Core.Model
                 }
             }
         }
+
+        // Retired names with a fixed replacement: refused with the rename rather than the typo text.
+        // 'audit-user-key' was accepted but never read, so a model carrying it recorded a null
+        // actor on every actor stamp, history row and state transition.
+        private static readonly Dictionary<string, string> RenamedMetadataKeys = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [MetadataKeys.Audit.LegacyUserKey] = MetadataKeys.Audit.UserKey,
+        };
 
         /// <summary>
         /// Central unknown-key gate: every metadata key that is neither in the built-in
@@ -494,14 +502,6 @@ namespace BifrostQL.Core.Model
         /// keys are contained by the case-insensitive allow-list here and reported separately
         /// by <see cref="ValidateMetadataKeyCasing"/>, so they are not double-reported.
         /// </summary>
-        // Retired names with a fixed replacement: refused with the rename rather than the typo text.
-        // 'audit-user-key' was accepted but never read, so a model carrying it recorded a null
-        // actor on every actor stamp, history row and state transition.
-        private static readonly Dictionary<string, string> RenamedMetadataKeys = new(StringComparer.OrdinalIgnoreCase)
-        {
-            [MetadataKeys.Audit.LegacyUserKey] = MetadataKeys.Audit.UserKey,
-        };
-
         private static void ValidateUnknownMetadataKeys(
             IDictionary<string, object?> metadata,
             HashSet<string> knownKeys,

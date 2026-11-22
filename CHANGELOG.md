@@ -57,6 +57,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Malformed `prefix-groups` entries, and prefixes that match no table, fail model load.** They were skipped silently.
 - **`soft-delete-by` records the `user-audit-key` actor, the same value audit and history record.** It read a hardcoded `user_id` claim, so with `user-audit-key: email` the three disagreed. Without `user-audit-key` the column is left unset; a host relying on the old claim adds `:root { user-audit-key: user_id }`. `SoftDeleteMutationTransformer.UserIdContextKey` is removed.
 - **State transitions and workflow triggers identify the row by its full key and the table by `schema.name`.** Transitions carried only the first key column, so composite-key rows were indistinguishable, and triggers matched the bare table name, so a workflow for `employee` fired for every schema. Triggers accept `schema.name`; a bare name matches only when it is unique. Trigger inputs replace `entityId` with `entityKey`, `entity` and `table` are schema-qualified, and the transition `audit_log` row's `entity_id` is the key as JSON. `StateTransitionInfo` carries the resolved table and `EntityKey`.
+- **Model load fails when `soft-delete-by` or `populate: created-by`/`updated-by`/`deleted-by` is declared without a model-level `user-audit-key`.** Those columns were silently never stamped. The legacy `audit-user-key` was accepted but never read; the error names it and asks for the rename. The shipped Host `appsettings.json` used it and is fixed.
+- **`<table>Pivot` returns at most `max-query-rows - 1` rows; the last row fetched is the truncation check, as on every other capped surface.** It fetched one row past the ceiling, and a ceiling of `int.MaxValue` overflowed into a negative FETCH/LIMIT.
 
 ### Fixed — fifth review pass
 
@@ -71,6 +73,12 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Undoing a deferred change set replays its inverses newest first.** A TreeSync or batch that inserted a parent and then its children was undone parent first, hit a foreign-key violation, and stayed in `undoing` forever.
 - **`policy-write-deny` (or `write-requires`) on the `tenant-filter` column no longer makes the table unwritable.** The policy check judged the tenant column the server had just stamped; it now runs first and judges only the columns the client wrote. A client that sends the tenant column itself is still refused.
 - **Workflow `on-mutation` triggers receive the model.** No production call site set it on the observer context.
+- **`limit: 0` returns an empty page with its total on SQL Server.** The root, link, flat-collection, grouped-aggregate and host read paths emitted `FETCH NEXT 0 ROWS ONLY`, which SQL Server rejects (error 10744). A zero window is now a `WHERE 1=0` statement on every dialect.
+- **A fragment spread at the operation root (`query { ...F }`) resolves like the same fields written inline.** It threw while parsing and failed every root field in the document.
+- **`_table(limit: null)` is treated as an omitted limit.** Only `limit: 0` returns an empty page.
+- **SQL Server pivots on an empty label or one longer than 128 characters use the portable CASE WHEN path.** The native PIVOT named each label as an identifier and failed (errors 1038, 103).
+- **History `entity_id`, outbox payload keys and the CloudEvents `subject` use one canonical form per key column type.** The first history key fix converted every unmodelled type through `string`, which rolled back writes on `datetimeoffset`/`time` keys and dropped fractional seconds from `DateTime` keys; the outbox recorded `_primaryKey` text as sent (`"05"`, `"5.0"`).
+- **A workflow whose bare trigger table name exists in more than one schema is skipped with a warning.** The ambiguity threw inside the trigger loop and stopped the other workflows matching the same write.
 
 ### Security — silent fallbacks
 

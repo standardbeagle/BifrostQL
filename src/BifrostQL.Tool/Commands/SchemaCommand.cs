@@ -1,8 +1,8 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
 using GraphQL.Utilities;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Tool.Commands;
 
@@ -55,7 +55,7 @@ public sealed class SchemaCommand : ICommand
             output.WritePlain(sdl);
             return 0;
         }
-        catch (SqlException ex)
+        catch (DbException ex)
         {
             if (output.IsJsonMode)
             {

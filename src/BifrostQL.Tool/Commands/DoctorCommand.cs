@@ -49,6 +49,7 @@ public sealed class DoctorCommand : ICommand
         }
 
         // Check 2: Parse connection string
+        var connectionStringParses = true;
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
             try
@@ -91,9 +92,12 @@ public sealed class DoctorCommand : ICommand
                     ));
                 }
             }
-            catch (ArgumentException ex)
+            // The parser's message names the rejected keyword, which can be part of a
+            // password holding an unquoted ';', so it is never printed.
+            catch (ArgumentException)
             {
-                checks.Add(new DoctorCheck("Connection String Format", DoctorStatus.Fail, $"Invalid format: {ex.Message}"));
+                connectionStringParses = false;
+                checks.Add(new DoctorCheck("Connection String Format", DoctorStatus.Fail, CliErrorText.MalformedConnectionString));
                 issues.Add(new DoctorIssue(
                     DoctorSeverity.Error,
                     "Invalid Connection String",
@@ -103,8 +107,9 @@ public sealed class DoctorCommand : ICommand
             }
         }
 
-        // Check 3: Test database connection
-        if (!string.IsNullOrWhiteSpace(connectionString))
+        // Check 3: Test database connection. Skipped for a string that does not parse:
+        // SqlConnection would throw the same keyword-quoting ArgumentException.
+        if (!string.IsNullOrWhiteSpace(connectionString) && connectionStringParses)
         {
             checks.Add(new DoctorCheck("Database Connection", DoctorStatus.Info, "Testing connection..."));
             

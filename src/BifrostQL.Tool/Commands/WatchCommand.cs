@@ -90,6 +90,17 @@ public sealed class WatchCommand : ICommand
                         }
                     }
                 }
+                // A connection string that does not parse never will, so stop rather than
+                // repeat it every poll. Its message names the rejected keyword, which can be
+                // part of a password holding an unquoted ';', so it is never printed.
+                catch (ArgumentException)
+                {
+                    if (output.IsJsonMode)
+                        output.WriteJson(new { success = false, error = CliErrorText.MalformedConnectionString });
+                    else
+                        output.WriteError(CliErrorText.MalformedConnectionString);
+                    return 1;
+                }
                 catch (Exception ex)
                 {
                     if (output.IsJsonMode)

@@ -1,7 +1,7 @@
+using System.Data.Common;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Model;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Tool.Commands;
 
@@ -62,7 +62,7 @@ public sealed class ExportCommand : ICommand
 
             return result;
         }
-        catch (SqlException ex)
+        catch (DbException ex)
         {
             if (output.IsJsonMode)
             {

@@ -20,8 +20,29 @@ public sealed class CommandRouter
     /// When the command name doesn't match a known command, defaults to serve
     /// and treats the unrecognized name as the first positional argument.
     /// Returns 0 on success, 1 on failure, 2 on usage error.
+    /// An exception no command handles is reported by type only, never by message: the
+    /// message can quote connection-string text (see <see cref="CliErrorText"/>).
     /// </summary>
     public async Task<int> ExecuteAsync(ToolConfig config, OutputFormatter output)
+    {
+        try
+        {
+            return await DispatchAsync(config, output);
+        }
+        catch (Exception ex)
+        {
+            var exceptionType = ex.GetType().FullName;
+            if (output.IsJsonMode)
+            {
+                output.WriteJson(new { success = false, error = CliErrorText.UnhandledFailure, exceptionType });
+                return 1;
+            }
+            output.WriteError($"{exceptionType}: {CliErrorText.UnhandledFailure}");
+            return 1;
+        }
+    }
+
+    private async Task<int> DispatchAsync(ToolConfig config, OutputFormatter output)
     {
         if (string.IsNullOrWhiteSpace(config.CommandName))
         {

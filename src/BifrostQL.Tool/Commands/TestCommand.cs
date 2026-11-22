@@ -78,6 +78,18 @@ public sealed class TestCommand : ICommand
                 output.WriteWarning($"  {remedy}");
             return 1;
         }
+        // SqlConnection's parse error names the rejected keyword, which can be part of a
+        // password holding an unquoted ';', so it is never printed.
+        catch (ArgumentException)
+        {
+            if (output.IsJsonMode)
+            {
+                output.WriteJson(new { success = false, error = CliErrorText.MalformedConnectionString });
+                return 1;
+            }
+            output.WriteError($"Connection failed: {CliErrorText.MalformedConnectionString}");
+            return 1;
+        }
     }
 
     private static async Task<int> CountAsync(SqlConnection connection, string sql)

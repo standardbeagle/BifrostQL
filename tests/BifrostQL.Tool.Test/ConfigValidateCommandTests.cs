@@ -122,7 +122,7 @@ public sealed class ConfigValidateCommandTests : IDisposable
         exit.Should().Be(1);
         json.GetProperty("success").GetBoolean().Should().BeFalse();
         json.GetProperty("modelValidated").GetBoolean().Should().BeFalse();
-        Messages(json).Should().ContainSingle().Which.Should().Contain("bogus keyword");
+        Messages(json).Should().ContainSingle().Which.Should().Be(CliErrorText.MalformedConnectionString);
         text.Should().NotContain("hunter2-secret").And.NotContain(_dir);
     }
 

@@ -1,6 +1,6 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Model;
-using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.Tool.Commands;
 
@@ -76,7 +76,7 @@ public sealed class ConfigGenerateCommand : ICommand
                     "maps by default; change it if your host maps the writer's identity under another claim.");
             return 0;
         }
-        catch (SqlException ex)
+        catch (DbException ex)
         {
             if (output.IsJsonMode)
             {

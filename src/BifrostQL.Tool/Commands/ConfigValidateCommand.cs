@@ -62,13 +62,20 @@ public sealed class ConfigValidateCommand : ICommand
         {
             try
             {
-                await new DbModelLoader(config.ConnectionString, new MetadataLoader(rules)).LoadAsync();
-                modelValidated = true;
+                var connFactory = await OpenConnFactoryAsync(config.ConnectionString);
+                if (connFactory == null)
+                    issues.Add(new ConfigIssue(null, CliErrorText.MalformedConnectionString));
+                else
+                {
+                    await new DbModelLoader(connFactory, new MetadataLoader(rules)).LoadAsync();
+                    modelValidated = true;
+                }
             }
-            // InvalidOperationException: ModelConfigValidator. ArgumentException (and its
-            // ArgumentOutOfRangeException subtype): a malformed connection string or a failed
-            // model lookup. Provider messages name the offending keyword, never the connection
-            // string or its values, so ex.Message is safe to print.
+            // InvalidOperationException: ModelConfigValidator or an unregistered provider.
+            // ArgumentException (and its ArgumentOutOfRangeException subtype): a failed model
+            // lookup. The provider's connection-string parse error is not among them: its
+            // message names the rejected keyword, which can be part of a password holding an
+            // unquoted ';', so OpenConnFactoryAsync drops it before the model load starts.
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
             {
                 issues.Add(new ConfigIssue(null, ex.Message));
@@ -121,6 +128,25 @@ public sealed class ConfigValidateCommand : ICommand
             ? "All rules valid against the database schema."
             : "All rules parse. Pass --connection-string to validate them against the database schema.");
         return 0;
+    }
+
+    // Resolves the provider and opens one connection, so the whole connection string is parsed
+    // (some factories parse it on construction, some providers only on open). Returns null when
+    // that parse throws ArgumentException; its message is dropped because it can quote part of
+    // a value (see CliErrorText).
+    private static async Task<IDbConnFactory?> OpenConnFactoryAsync(string connectionString)
+    {
+        try
+        {
+            var connFactory = DbConnFactoryResolver.Create(connectionString);
+            await using var connection = connFactory.GetConnection();
+            await connection.OpenAsync();
+            return connFactory;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     // Parses each rule on its own through the runtime parser, so every malformed rule is

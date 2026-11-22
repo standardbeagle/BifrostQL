@@ -23,7 +23,11 @@ their fixes are in the full changelog.
 
 ## Unreleased
 
-On `main` after v0.4.28; not yet on NuGet.
+On `main` after v0.4.30; nothing yet.
+
+## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
+
+Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`
 
 ### Fixed — link keys and operation-id reads
 
@@ -131,6 +135,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
 - **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
 - **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
+
+## 0.4.29 — 2026-11-22 (operation ids, set-based writes)
+
+Tag `v0.4.29` · NuGet `0.4.819` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.1`
 
 ### Security — silent fallbacks
 

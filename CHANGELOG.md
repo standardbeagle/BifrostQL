@@ -14,6 +14,8 @@ first reached NuGet with the next tag, and the section is headed by that tag.
 
 | Tag | Date | NuGet build |
 |-----|------|-------------|
+| v0.4.30 | 2026-11-22 | 0.4.831 |
+| v0.4.29 | 2026-11-22 | 0.4.819 |
 | v0.4.28 | 2026-11-09 | 0.4.740 |
 | v0.4.27 | 2026-11-02 | 0.4.731 |
 | v0.4.26 | 2026-11-02 | 0.4.729 |
@@ -37,7 +39,11 @@ apply each breaking or behaviour-change step on the way.
 
 ## Unreleased
 
-On `main` after v0.4.28; not yet on NuGet.
+On `main` after v0.4.30; nothing yet.
+
+## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
+
+Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`
 
 ### Fixed — link keys and operation-id reads
 
@@ -145,6 +151,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
 - **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
 - **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
+
+## 0.4.29 — 2026-11-22 (operation ids, set-based writes)
+
+Tag `v0.4.29` · NuGet `0.4.819` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.1`
 
 ### Security — silent fallbacks
 

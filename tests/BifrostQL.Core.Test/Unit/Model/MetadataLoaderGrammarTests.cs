@@ -97,6 +97,31 @@ namespace BifrostQL.Core.Test.Model
             act.Should().Throw<ArgumentException>();
         }
 
+        // ':root' is the only pseudo-selector ApplyDatabaseMetadata reads; any other
+        // ':'-prefixed selector matched nothing and its keys were dropped silently.
+        [Theory]
+        [InlineData(":auth { enable-auth: false; }", ":auth")]
+        [InlineData(":roots { default-limit: 5 }", ":roots")]
+        [InlineData(":root.dbo { default-limit: 5 }", ":root.dbo")]
+        [InlineData("dbo.orders, :roots { label: name }", ":roots")]
+        public void UnknownPseudoSelector_Throws(string rule, string selector)
+        {
+            var act = () => new MetadataLoader(new[] { rule });
+
+            act.Should().Throw<ArgumentException>().WithMessage($"*unknown selector '{selector}'*");
+        }
+
+        [Theory]
+        [InlineData(":root { default-limit: 5 }")]
+        [InlineData(":ROOT { default-limit: 5 }")]
+        public void RootSelector_AppliesToDatabaseMetadata(string rule)
+        {
+            var props = new Dictionary<string, object?>();
+            new MetadataLoader(new[] { rule }).ApplyDatabaseMetadata(props);
+
+            props.Should().ContainKey("default-limit").WhoseValue.Should().Be("5");
+        }
+
         [Fact]
         public void ValuelessProperty_ThrowsClearError_NotIndexOutOfRange()
         {

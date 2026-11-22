@@ -70,6 +70,8 @@ namespace BifrostQL.Core.Model
 
     class MetadataLoaderRule
     {
+        private const string RootSelector = ":root";
+
         private readonly MetadataMatcher[][] _rules;
         private readonly Dictionary<string, string> _metadata;
 
@@ -104,6 +106,14 @@ namespace BifrostQL.Core.Model
             var selectorList = selectors.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToArray();
             if (selectorList.Length == 0)
                 throw new ArgumentException($"Invalid metadata rule '{rule}': no selector was specified before '{{'.", nameof(rule));
+            // ':root' is the only pseudo-selector the runtime applies (ApplyDatabaseMetadata).
+            // Any other ':'-prefixed selector (':auth', a ':roots' typo) would match nothing
+            // and drop its keys silently, so it is refused here.
+            var pseudoSelector = selectorList.FirstOrDefault(s => s.StartsWith(':') && !string.Equals(s, RootSelector, StringComparison.OrdinalIgnoreCase));
+            if (pseudoSelector != null)
+                throw new ArgumentException(
+                    $"Invalid metadata rule '{rule}': unknown selector '{pseudoSelector}'; '{RootSelector}' is the only ':'-prefixed selector.",
+                    nameof(rule));
             _rules = selectorList.Select(s => s.Split(new[] { '.' }).Select(m => new MetadataMatcher(m)).ToArray()).ToArray();
 
             var properties = split.Groups["properties"].Value;

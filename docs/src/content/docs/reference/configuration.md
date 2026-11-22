@@ -75,7 +75,8 @@ The rule string is parsed structurally, not delimiter-agnostically:
   name), so a table named `data(2024)` is matched as written.
 
 Malformed rules fail fast at load: a missing brace, an empty selector, a
-property with no `:`, an empty key, a duplicate key, or an unbalanced backtick
+property with no `:`, an empty key, a duplicate key, an unbalanced backtick, or
+a `:`-prefixed selector other than `:root` (such as a `:roots` typo)
 throws an `ArgumentException` naming the offending rule rather than being
 silently ignored.
 
@@ -112,6 +113,7 @@ consistently.
 
 | Pattern | Matches |
 |---------|---------|
+| `:root` | The model (database-level keys); the only `:`-prefixed selector |
 | `dbo.orders` | The `orders` table in the `dbo` schema |
 | `dbo.orders.total` | The `total` column on `dbo.orders` |
 | `dbo.*` | All tables in the `dbo` schema |

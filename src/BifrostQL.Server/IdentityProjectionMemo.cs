@@ -34,7 +34,7 @@ namespace BifrostQL.Server
         {
             var projection = await CurrentSlot(context, scope, factory).Projection;
             return projection.Outcome == BifrostIdentityOutcome.Projected
-                ? projection with { UserContext = UserContexts.Copy(projection.UserContext) }
+                ? projection with { UserContext = UserContexts.Snapshot(projection.UserContext) }
                 : projection;
         }
 

@@ -103,8 +103,10 @@ namespace BifrostQL.Server
                 // Normalised once, here: a host factory may return an ordinal dictionary, and the
                 // surfaces that read the context directly must agree with the ones that copy it.
                 // Keys differing only in case throw inside this try and are refused like any
-                // other unprojectable identity.
-                projected = UserContexts.Copy(await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
+                // other unprojectable identity. A snapshot, so the projection shares no collection
+                // value (a host's List<string>, the roles/permissions arrays) with the factory or
+                // with any other caller handed a copy of a memoized projection.
+                projected = UserContexts.Snapshot(await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
                     context, services, context.RequestAborted));
             }
             catch (Exception ex)

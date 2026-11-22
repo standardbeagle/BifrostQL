@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Net.WebSockets;
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
@@ -131,16 +132,68 @@ public sealed class IdentityProjectionScopeTests
         (await second).CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ACallerMutatingItsPermissions_DoesNotChangeTheGateBuiltLater()
+    {
+        var host = new Host();
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var first = await http.GetBifrostUserContextAsync();
+        var permissions = (IList)first[MetadataKeys.Auth.DefaultPermissionsContextKey]!;
+        permissions[permissions.IndexOf("payments.create")] = "scribbled-by-the-first-caller";
+        var gate = await request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
+
+        host.ResolverCalls.Should().Be(1, "the gate reuses the memoized projection");
+        gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue(
+            "one caller's writes into a collection value never reach another caller's context");
+    }
+
+    [Fact]
+    public async Task AHostFactorysListValue_IsFrozen_SoACallerMutatingItDoesNotChangeTheGateBuiltLater()
+    {
+        var hostPermissions = new List<string> { "payments.create" };
+        var host = new Host(factory: new ListValuedFactory(hostPermissions));
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var first = await http.GetBifrostUserContextAsync();
+        ((IList)first[MetadataKeys.Auth.DefaultPermissionsContextKey]!)[0] = "scribbled-by-the-first-caller";
+        hostPermissions.Add("payments.refund");
+        var gate = await request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
+
+        gate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue(
+            "the gate's context is a copy of the frozen memo, not the first caller's list");
+        PolicyIdentity.ExtractPermissions(await http.GetBifrostUserContextAsync()).Should().Equal(
+            new[] { "payments.create" }, "the host's later write into its own list never reaches the memo");
+        first[MetadataKeys.Auth.DefaultPermissionsContextKey].Should().BeOfType<string[]>(
+            "a collection value is frozen into an array the caller owns");
+    }
+
     // ---- fixtures ----
+
+    private sealed class ListValuedFactory : IBifrostAuthContextFactory
+    {
+        private readonly List<string> _permissions;
+        public ListValuedFactory(List<string> permissions) => _permissions = permissions;
+
+        public IDictionary<string, object?> CreateUserContext(HttpContext context) => new Dictionary<string, object?>
+        {
+            [MetadataKeys.Auth.DefaultUserIdContextKey] = "user-1",
+            [MetadataKeys.Auth.DefaultPermissionsContextKey] = _permissions,
+        };
+    }
 
     private sealed class Host
     {
         private readonly HttpContextHolder _accessor = new();
         private int _resolverCalls;
 
-        public Host(Action<int>? onResolve = null)
+        public Host(Action<int>? onResolve = null, IBifrostAuthContextFactory? factory = null)
         {
             var services = new ServiceCollection();
+            if (factory is not null)
+                services.AddSingleton(factory);
             BifrostServiceRegistrar.RegisterGraphQlAndAuth(services, false, null, 10, null, null);
             var models = new PathCache<Inputs>();
             models.AddLoader("/graphql", () =>

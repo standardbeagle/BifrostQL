@@ -1071,17 +1071,20 @@ namespace BifrostQL.Server
         {
             // Inside the caller's catch-all: a host with no request services is a wiring fault that
             // closes the connection, as any other request fault does.
-            await using var scope = connection.Upgrade.RequestServices
-                .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
-            var message = connection.Upgrade.CreateMessageContext(
-                connection.User, scope.ServiceProvider, connection.Token);
-            // The task started without the reader's execution context (TryStart), so this
-            // sets the accessor for this message only and leaves the upgrade request's alone.
-            var accessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
-            if (accessor != null)
-                accessor.HttpContext = message;
+            IHttpContextAccessor? accessor = null;
             try
             {
+                // The scope is disposed inside the try, so scoped services see the message through
+                // the accessor while they dispose, as they do for an ASP.NET Core request.
+                await using var scope = connection.Upgrade.RequestServices
+                    .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+                var message = connection.Upgrade.CreateMessageContext(
+                    connection.User, scope.ServiceProvider, connection.Token);
+                // The task started without the reader's execution context (TryStart), so this
+                // sets the accessor for this message only and leaves the upgrade request's alone.
+                accessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
+                if (accessor != null)
+                    accessor.HttpContext = message;
                 if (!await SessionStillLiveAsync(connection, message))
                     return (false, null);
                 if (request.Type == BifrostMessageType.Resume)

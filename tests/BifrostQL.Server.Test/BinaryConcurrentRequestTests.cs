@@ -411,6 +411,50 @@ namespace BifrostQL.Server.Test
                 "the message's scope ends before its Result goes out");
         }
 
+        /// <summary>A scoped service that reads the request through the accessor while disposing, as an audit or unit-of-work flush does.</summary>
+        private sealed class AccessorAtDisposeProbe(IHttpContextAccessor accessor) : IDisposable
+        {
+            public volatile bool SawContextAtDispose;
+            public void Dispose() => SawContextAtDispose = accessor.HttpContext != null;
+        }
+
+        /// <summary>Resolves the message's <see cref="AccessorAtDisposeProbe"/>, then answers as <see cref="GatedEngine"/>.</summary>
+        private sealed class AccessorAtDisposeEngine : IBifrostEngine
+        {
+            private readonly GatedEngine _gate = new();
+            public ConcurrentQueue<AccessorAtDisposeProbe> Probes { get; } = new();
+
+            public Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+            {
+                Probes.Enqueue(request.RequestServices!.GetRequiredService<AccessorAtDisposeProbe>());
+                return _gate.ExecuteAsync(request, endpointPath);
+            }
+        }
+
+        [Fact]
+        public async Task MessageScope_IsDisposedWhileTheAccessorStillPointsAtTheMessage()
+        {
+            // ASP.NET Core disposes request services while IHttpContextAccessor still answers the
+            // request. The message scope was disposed after the accessor was cleared, so a scoped
+            // service reading the request in Dispose got null on the binary mount only.
+            var engine = new AccessorAtDisposeEngine();
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(Query(1, "{ fast }"));
+            var context = new DefaultHttpContext
+            {
+                RequestServices = new ServiceCollection()
+                    .AddHttpContextAccessor()
+                    .AddScoped<AccessorAtDisposeProbe>()
+                    .BuildServiceProvider(),
+            };
+            context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
+
+            await RunAsync(engine, context);
+
+            engine.Probes.Should().ContainSingle().Which.SawContextAtDispose.Should().BeTrue(
+                "the message's scoped services are disposed before the accessor is cleared");
+        }
+
         private static readonly AsyncLocal<string?> HostAmbient = new();
 
         /// <summary>Records the ambient state a message runs under, then answers as <see cref="GatedEngine"/>.</summary>

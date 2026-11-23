@@ -7,13 +7,11 @@ using Xunit;
 namespace BifrostQL.Integration.Test.SqlServer;
 
 /// <summary>
-/// The native T-SQL PIVOT matches <c>CAST(col AS NVARCHAR(MAX))</c> against labels
-/// built in .NET. For a <c>bit</c> column the two texts differ ("1"/"0" vs
-/// "True"/"False"), so every cell came back NULL. A non-string pivot column now takes
-/// the portable CASE WHEN pivot, which binds each value as a parameter. The string
-/// column is the paired control that keeps the native PIVOT. The GUID column passes
-/// either way under the container's case-insensitive collation (CAST gives upper
-/// case, .NET lower); it pins that the CASE WHEN route serves it too.
+/// SQL Server pivots run the portable CASE WHEN cross-tab, binding each pivot value as a
+/// parameter, so every label shape the retired native T-SQL PIVOT mishandled pivots end to
+/// end: non-string values (PIVOT matched <c>CAST(col AS NVARCHAR(MAX))</c> against .NET
+/// text, so a <c>bit</c>'s cells read NULL), labels that cannot be identifiers (empty, over
+/// 128 characters), and labels that one collation folds together.
 /// </summary>
 public sealed class SqlServerPivotLabelTests
 {
@@ -68,10 +66,9 @@ public sealed class SqlServerPivotLabelTests
     }
 
     /// <summary>
-    /// The native PIVOT names each label as a bracketed identifier in its <c>IN (...)</c>
-    /// list. A label longer than 128 characters is error 103, and an empty one renders
-    /// <c>[]</c>, error 1038. Such labels take the CASE WHEN pivot, which binds them as
-    /// parameters. "short" is the control column in every case.
+    /// The retired native PIVOT named each label as a bracketed identifier, so a label
+    /// longer than 128 characters was error 103 and an empty one error 1038. A bound
+    /// parameter has neither limit. "short" is the control column in every case.
     /// </summary>
     [SkippableTheory]
     [InlineData(129)]
@@ -111,12 +108,12 @@ public sealed class SqlServerPivotLabelTests
     }
 
     /// <summary>
-    /// SQL Server compares identifiers with trailing spaces ignored, so two labels that
-    /// differ only by them name one PIVOT output column twice (error 8156) and the whole
-    /// pivot failed. Discovery's DISTINCT folds such values together, but a NULL takes the
-    /// null label <c>_null_</c> after discovery, so a literal <c>"_null_ "</c> beside a NULL
-    /// still yields the pair. A whitespace-only label is a valid identifier (<c>[   ]</c>
-    /// runs), and is the paired control that keeps the native PIVOT.
+    /// The retired native PIVOT compared its output identifiers with trailing spaces
+    /// ignored, so two labels that differ only by them failed with error 8156. Discovery's
+    /// DISTINCT folds such values together, but a NULL takes the null label <c>_null_</c>
+    /// after discovery, so a literal <c>"_null_ "</c> beside a NULL still yields the pair;
+    /// the NULL arm is <c>IS NULL</c>, so each cell counts its own rows. A whitespace-only
+    /// label is the control.
     /// </summary>
     [SkippableTheory]
     [InlineData("_null_ ", true)]
@@ -163,27 +160,10 @@ public sealed class SqlServerPivotLabelTests
     }
 
     /// <summary>
-    /// The native PIVOT is kept for labels that are valid, distinct identifiers: the
-    /// trailing-space route must not send every pivot to CASE WHEN.
-    /// </summary>
-    [Fact]
-    public void Distinct_labels_keep_the_native_pivot_and_trailing_space_twins_do_not()
-    {
-        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
-
-        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { "a", "   ", null })
-            .Should().NotBeNull();
-        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { "a", "a  " })
-            .Should().BeNull();
-        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { null, "_null_ " })
-            .Should().BeNull();
-    }
-
-    /// <summary>
-    /// PIVOT output columns are identifiers, compared under the database collation. In an
-    /// accent-insensitive database, <c>cafe</c> and <c>café</c> from an accent-sensitive
-    /// column survive discovery's DISTINCT as two values but name one output column twice
-    /// (error 8156), so the whole pivot failed. Such labels take the CASE WHEN pivot.
+    /// The retired native PIVOT named output columns by label, compared under the database
+    /// collation. In an accent-insensitive database, <c>cafe</c> and <c>café</c> from an
+    /// accent-sensitive column survive discovery's DISTINCT as two values but named one
+    /// output column twice (error 8156). The cross-tab names no column by label.
     /// </summary>
     [SkippableFact]
     public async Task Pivot_labels_that_collide_only_under_an_accent_insensitive_collation_keep_their_cells()
@@ -235,85 +215,63 @@ public sealed class SqlServerPivotLabelTests
     }
 
     /// <summary>
-    /// Labels equal under case, accent, kana or width folding may name one identifier under
-    /// some collation, so each pair takes the CASE WHEN pivot. Over-routing is harmless.
+    /// Labels that some collation folds together (accent, kana, width, combining marks,
+    /// ignorable characters) are two values in a binary-collated column, and each keeps its
+    /// own cell: the cross-tab matches each bound parameter under the column's collation and
+    /// never compares labels in .NET.
     /// </summary>
-    [Theory]
+    [SkippableTheory]
     [InlineData("cafe", "café")]
     [InlineData("ｶﾀ", "カタ")]
     [InlineData("かた", "カタ")]
     [InlineData("A", "Ａ")]
     [InlineData("cafe\u0301", "café")]
     [InlineData("co\u00ADop", "coop")]
-    public void Labels_equal_under_collation_folding_leave_the_native_pivot(string first, string second)
+    public async Task Pivot_labels_equal_only_under_collation_folding_keep_their_cells(string first, string second)
     {
-        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+        var connString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        Skip.If(string.IsNullOrEmpty(connString), "BIFROST_TEST_SQLSERVER not set");
 
-        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", new object?[] { first, second })
-            .Should().BeNull();
-    }
-
-    /// <summary>
-    /// Controls for the folding theory: distinct printable-ASCII labels, and a lone non-ASCII
-    /// label (nothing to collide with), keep the native PIVOT.
-    /// </summary>
-    [Theory]
-    [InlineData("cafe", "cafes")]
-    [InlineData("café")]
-    public void Labels_that_cannot_collide_keep_the_native_pivot(params string[] labels)
-    {
-        var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
-
-        SqlServerDialect.Instance.BuildNativePivot(config, "[dbo].[t]", labels.Cast<object?>().ToArray())
-            .Should().NotBeNull();
-    }
-
-    private const string InvariantChildVariable = "BIFROST_TEST_INVARIANT_GLOBALIZATION_CHILD";
-
-    /// <summary>
-    /// Under InvariantGlobalization (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT) the culture
-    /// comparer ignores IgnoreNonSpace, IgnoreKanaType and IgnoreWidth, and String.Normalize
-    /// leaves non-ASCII text unchanged, so a fold built on either let cafe/café reach native
-    /// PIVOT and fail with error 8156. This runs the folding theory in a child test host with
-    /// that switch set, plus a probe proving the child really lacks culture data.
-    /// </summary>
-    [SkippableFact]
-    public async Task Labels_equal_under_collation_folding_leave_the_native_pivot_under_invariant_globalization()
-    {
-        // The child must never spawn another child.
-        Skip.If(Environment.GetEnvironmentVariable(InvariantChildVariable) == "1", "already the invariant-globalization child");
-
-        var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+        var table = $"bq_pivot_{Guid.NewGuid():N}";
+        await using var conn = new SqlConnection(connString);
+        await conn.OpenAsync();
+        await ExecAsync(conn, $"""
+            CREATE TABLE [dbo].[{table}] (id int PRIMARY KEY, region nvarchar(20) NOT NULL,
+                status nvarchar(20) COLLATE Latin1_General_100_BIN2 NOT NULL);
+            """);
+        try
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        psi.ArgumentList.Add("test");
-        psi.ArgumentList.Add(typeof(SqlServerPivotLabelTests).Assembly.Location);
-        psi.ArgumentList.Add("--filter");
-        psi.ArgumentList.Add(
-            $"FullyQualifiedName={typeof(SqlServerPivotLabelTests).FullName}.{nameof(Labels_equal_under_collation_folding_leave_the_native_pivot)}" +
-            $"|FullyQualifiedName={typeof(SqlServerPivotLabelTests).FullName}.{nameof(Invariant_child_lacks_culture_folding)}");
-        psi.Environment["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
-        psi.Environment[InvariantChildVariable] = "1";
+            await using (var insert = new SqlCommand(
+                $"INSERT INTO [dbo].[{table}] VALUES (1, N'north', @first), (2, N'north', @second), (3, N'north', @second)", conn))
+            {
+                insert.Parameters.AddWithValue("@first", first);
+                insert.Parameters.AddWithValue("@second", second);
+                await insert.ExecuteNonQueryAsync();
+            }
 
-        using var child = System.Diagnostics.Process.Start(psi)!;
-        var stdout = child.StandardOutput.ReadToEndAsync();
-        var stderr = child.StandardError.ReadToEndAsync();
-        await child.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
-        var output = await stdout + await stderr;
+            var pivotValues = new List<object?>();
+            await using (var distinct = new SqlCommand($"SELECT DISTINCT [status] FROM [dbo].[{table}]", conn))
+            await using (var reader = await distinct.ExecuteReaderAsync())
+                while (await reader.ReadAsync())
+                    pivotValues.Add(reader.GetString(0));
+            pivotValues.Should().BeEquivalentTo(new[] { first, second });
 
-        child.ExitCode.Should().Be(0, output);
-        output.Should().MatchRegex(@"Failed:\s+0, Passed:\s+7\b", output);
-    }
+            var config = PivotQueryConfig.Create("status", "id", "COUNT", new[] { "region" });
+            var pivot = PivotSqlGenerator.GeneratePivot(SqlServerDialect.Instance, config, $"[dbo].[{table}]", pivotValues);
 
-    [SkippableFact]
-    public void Invariant_child_lacks_culture_folding()
-    {
-        Skip.If(Environment.GetEnvironmentVariable(InvariantChildVariable) != "1", "runs only in the invariant-globalization child");
-
-        string.Compare("cafe", "café", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.CompareOptions.IgnoreNonSpace)
-            .Should().NotBe(0, "the child must run without culture data, or it proves nothing");
+            await using var cmd = new SqlCommand(pivot.Sql, conn);
+            foreach (var p in pivot.Parameters)
+                cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value);
+            await using var rows = await cmd.ExecuteReaderAsync();
+            (await rows.ReadAsync()).Should().BeTrue();
+            for (var position = 0; position < pivotValues.Count; position++)
+                rows[PivotSqlGenerator.ColumnAlias(position)].Should().Be(
+                    (string)pivotValues[position]! == first ? 1 : 2, $"cell {position} counts the rows of its own value");
+        }
+        finally
+        {
+            await ExecAsync(conn, $"DROP TABLE [dbo].[{table}]");
+        }
     }
 
     private static async Task ExecAsync(SqlConnection conn, string sql)

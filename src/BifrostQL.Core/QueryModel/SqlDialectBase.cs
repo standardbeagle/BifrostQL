@@ -231,14 +231,6 @@ public abstract class SqlDialectBase : ISqlDialect
         => $"CREATE TABLE IF NOT EXISTS {tableReference} ({RenderTableColumns(columns)})";
 
     /// <inheritdoc />
-    public virtual ParameterizedSql? BuildNativePivot(
-        PivotQueryConfig config,
-        string tableRef,
-        IReadOnlyList<object?> pivotValues,
-        ParameterizedSql? filter = null)
-        => null;
-
-    /// <inheritdoc />
     public virtual bool RequiresTextCast(string dataType) => false;
 
     /// <inheritdoc />

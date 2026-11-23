@@ -213,170 +213,15 @@ public sealed class PivotQueryTests
 
     #endregion
 
-    #region SQL Server PIVOT Generation
-
-    [Fact]
-    public void GenerateSqlServerPivot_BasicPivot_GeneratesCorrectSql()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?> { "Active", "Inactive", "Pending" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("SELECT [Region], [Active] AS [__pivot_0], [Inactive] AS [__pivot_1], [Pending] AS [__pivot_2] FROM");
-        result.Sql.Should().Contain("PIVOT (COUNT([Id])");
-        result.Sql.Should().Contain("FOR [__pivot_col] IN ([Active], [Inactive], [Pending])");
-        result.Sql.Should().Contain("FROM [Orders]");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithMultipleGroupBy_IncludesAllGroupColumns()
-    {
-        var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region", "Year" });
-        var pivotValues = new List<object?> { "Open", "Closed" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Sales]", pivotValues);
-
-        result.Sql.Should().Contain("SELECT [Region], [Year], [Open] AS [__pivot_0], [Closed] AS [__pivot_1] FROM");
-        result.Sql.Should().Contain("PIVOT (SUM([Amount])");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithNullPivotValue_UsesNullLabel()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?> { "Active", null, "Pending" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("[_null_]");
-        // NullLabel is now bound as a parameter — the literal must NOT appear in SQL
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p0)");
-        result.Sql.Should().NotContain("'_null_'");
-        result.Parameters.Should().Contain(p => p.Name == "@p0" && (string)p.Value! == "_null_");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithCustomNullLabel_UsesCustomLabel()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" }, nullLabel: "Unknown");
-        var pivotValues = new List<object?> { "Active", null };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("[Unknown]");
-        // NullLabel is now bound as a parameter — the literal must NOT appear in SQL
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p0)");
-        result.Sql.Should().NotContain("'Unknown'");
-        result.Parameters.Should().Contain(p => p.Name == "@p0" && (string)p.Value! == "Unknown");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithFilter_IncludesFilterInSubquery()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?> { "Active", "Inactive" };
-        var filter = new ParameterizedSql(" WHERE [Year] = @p0",
-            new List<SqlParameterInfo> { new("@p0", 2024) });
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues, filter);
-
-        result.Sql.Should().Contain("WHERE [Year] = @p0");
-        // @p0 is the filter parameter; @p1 is the bound NullLabel
-        result.Parameters.Should().Contain(p => p.Name == "@p0" && (int)p.Value! == 2024);
-        result.Parameters.Should().Contain(p => p.Name == "@p1" && (string)p.Value! == "_null_");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithSumAggregate_UsesSum()
-    {
-        var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region" });
-        var pivotValues = new List<object?> { "Open", "Closed" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("PIVOT (SUM([Amount])");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithAvgAggregate_UsesAvg()
-    {
-        var config = PivotQueryConfig.Create("Status", "Amount", "AVG", new[] { "Region" });
-        var pivotValues = new List<object?> { "Open", "Closed" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("PIVOT (AVG([Amount])");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithMinAggregate_UsesMin()
-    {
-        var config = PivotQueryConfig.Create("Status", "Price", "MIN", new[] { "Category" });
-        var pivotValues = new List<object?> { "Small", "Large" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Products]", pivotValues);
-
-        result.Sql.Should().Contain("PIVOT (MIN([Price])");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithMaxAggregate_UsesMax()
-    {
-        var config = PivotQueryConfig.Create("Status", "Price", "MAX", new[] { "Category" });
-        var pivotValues = new List<object?> { "Small", "Large" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Products]", pivotValues);
-
-        result.Sql.Should().Contain("PIVOT (MAX([Price])");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_EmptyPivotValues_ReturnsGroupByOnly()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?>();
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("SELECT [Region] FROM [Orders]");
-        result.Sql.Should().Contain("GROUP BY [Region]");
-        result.Sql.Should().NotContain("PIVOT");
-    }
-
-    [Fact]
-    public void GenerateSqlServerPivot_WithSchemaTable_IncludesFullRef()
-    {
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?> { "Active" };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[dbo].[Orders]", pivotValues);
-
-        result.Sql.Should().Contain("FROM [dbo].[Orders]");
-    }
-
-    #endregion
-
     #region CASE WHEN Pivot Generation
 
     [Fact]
-    public void GenerateCaseWhenPivot_BasicPivot_GeneratesCorrectSql()
+    public void GeneratePivot_BasicPivot_GeneratesCorrectSql()
     {
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active", "Inactive" };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region]");
@@ -390,12 +235,12 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_WithNullValue_UsesIsNull()
+    public void GeneratePivot_WithNullValue_UsesIsNull()
     {
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active", null };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("COUNT(CASE WHEN [Status] = @p0 THEN [Id] END) AS [__pivot_0],");
@@ -405,26 +250,26 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_WithSumAggregate_UsesSum()
+    public void GeneratePivot_WithSumAggregate_UsesSum()
     {
         var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region" });
         var pivotValues = new List<object?> { "Open" };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SUM(CASE WHEN [Status] = @p0 THEN [Amount] END) AS [__pivot_0] FROM");
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_WithFilter_IncludesFilter()
+    public void GeneratePivot_WithFilter_IncludesFilter()
     {
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "Active" };
         var filter = new ParameterizedSql(" WHERE [Year] = @p0",
             new List<SqlParameterInfo> { new("@p0", 2024) });
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues, filter);
 
         result.Sql.Should().Contain("WHERE [Year] = @p0");
@@ -432,12 +277,12 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_WithMultipleGroupBy_IncludesAll()
+    public void GeneratePivot_WithMultipleGroupBy_IncludesAll()
     {
         var config = PivotQueryConfig.Create("Status", "Amount", "SUM", new[] { "Region", "Year" });
         var pivotValues = new List<object?> { "Open" };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region], [Year]");
@@ -445,12 +290,12 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_EmptyPivotValues_ReturnsGroupByOnly()
+    public void GeneratePivot_EmptyPivotValues_ReturnsGroupByOnly()
     {
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?>();
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Sql.Should().Contain("SELECT [Region] FROM [Orders]");
@@ -459,12 +304,12 @@ public sealed class PivotQueryTests
     }
 
     [Fact]
-    public void GenerateCaseWhenPivot_ParametersAreCorrectlyIndexed()
+    public void GeneratePivot_ParametersAreCorrectlyIndexed()
     {
         var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
         var pivotValues = new List<object?> { "A", "B", "C" };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[Orders]", pivotValues);
 
         result.Parameters.Should().HaveCount(3);
@@ -517,36 +362,6 @@ public sealed class PivotQueryTests
     [Fact]
     public void PivotWorkflow_ConfigThenValidateThenGenerate_FullPipeline()
     {
-        // Arrange: Create a table model
-        var dbModel = DbModelTestFixture.Create()
-            .WithTable("Sales", t => t
-                .WithPrimaryKey("Id")
-                .WithColumn("Region", "nvarchar")
-                .WithColumn("Quarter", "nvarchar")
-                .WithColumn("Amount", "decimal"))
-            .Build();
-
-        var table = dbModel.GetTableFromDbName("Sales");
-
-        // Act: Create config, validate, generate SQL
-        var config = PivotQueryConfig.Create("Quarter", "Amount", "SUM", new[] { "Region" });
-        config.ValidateColumns(table.ColumnLookup);
-
-        var tableRef = Dialect.TableReference(table.TableSchema, table.DbName);
-        var pivotValues = new List<object?> { "Q1", "Q2", "Q3", "Q4" };
-
-        var pivotSql = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, tableRef, pivotValues);
-
-        // Assert
-        pivotSql.Sql.Should().Contain("SELECT [Region], [Q1] AS [__pivot_0], [Q2] AS [__pivot_1], [Q3] AS [__pivot_2], [Q4] AS [__pivot_3] FROM");
-        pivotSql.Sql.Should().Contain("PIVOT (SUM([Amount])");
-        pivotSql.Sql.Should().Contain("FOR [__pivot_col] IN ([Q1], [Q2], [Q3], [Q4])");
-    }
-
-    [Fact]
-    public void PivotWorkflow_CaseWhenFallback_FullPipeline()
-    {
         // Arrange
         var dbModel = DbModelTestFixture.Create()
             .WithTable("Sales", t => t
@@ -565,7 +380,7 @@ public sealed class PivotQueryTests
         var tableRef = Dialect.TableReference(table.TableSchema, table.DbName);
         var pivotValues = new List<object?> { "Q1", "Q2" };
 
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, tableRef, pivotValues);
 
         // Assert
@@ -584,16 +399,7 @@ public sealed class PivotQueryTests
         var filter = new ParameterizedSql(" WHERE [Year] >= @p0",
             new List<SqlParameterInfo> { new("@p0", 2020) });
 
-        // SQL Server pivot
-        var sqlServerResult = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[dbo].[Orders]", pivotValues, filter);
-
-        sqlServerResult.Sql.Should().Contain("[_null_]");
-        sqlServerResult.Sql.Should().Contain("WHERE [Year] >= @p0");
-        sqlServerResult.Sql.Should().Contain("PIVOT (AVG([Total])");
-
-        // CASE WHEN fallback
-        var caseResult = PivotSqlGenerator.GenerateCaseWhenPivot(
+        var caseResult = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues, filter);
 
         caseResult.Sql.Should().Contain("AVG(CASE WHEN [Status] IS NULL THEN [Total] END) AS [__pivot_1],");
@@ -611,29 +417,12 @@ public sealed class PivotQueryTests
     [InlineData("AVG", "AVG")]
     [InlineData("MIN", "MIN")]
     [InlineData("MAX", "MAX")]
-    public void GenerateSqlServerPivot_AllAggregateFunctions_GenerateCorrectPivot(string funcInput, string expectedSql)
+    public void GeneratePivot_AllAggregateFunctions_GenerateCorrectCase(string funcInput, string expectedSql)
     {
         var config = PivotQueryConfig.Create("Status", "Amount", funcInput, new[] { "Region" });
         var pivotValues = new List<object?> { "X" };
 
         var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[T]", pivotValues);
-
-        result.Sql.Should().Contain($"PIVOT ({expectedSql}([Amount])");
-    }
-
-    [Theory]
-    [InlineData("COUNT", "COUNT")]
-    [InlineData("SUM", "SUM")]
-    [InlineData("AVG", "AVG")]
-    [InlineData("MIN", "MIN")]
-    [InlineData("MAX", "MAX")]
-    public void GenerateCaseWhenPivot_AllAggregateFunctions_GenerateCorrectCase(string funcInput, string expectedSql)
-    {
-        var config = PivotQueryConfig.Create("Status", "Amount", funcInput, new[] { "Region" });
-        var pivotValues = new List<object?> { "X" };
-
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
             Dialect, config, "[T]", pivotValues);
 
         result.Sql.Should().Contain($"{expectedSql}(CASE WHEN [Status] = @p0 THEN [Amount] END)");
@@ -641,10 +430,10 @@ public sealed class PivotQueryTests
 
     #endregion
 
-    #region Dialect-Aware Dispatch
+    #region Every Dialect Emits CASE WHEN
 
     [Fact]
-    public void GeneratePivot_OnSqlServer_RoutesToNativePivot()
+    public void GeneratePivot_OnSqlServer_RoutesToCaseWhen()
     {
         var config = PivotQueryConfig.Create("Status", "Amount", "sum", new[] { "Region" });
         var pivotValues = new List<object?> { "Open", "Closed" };
@@ -652,8 +441,9 @@ public sealed class PivotQueryTests
         var result = PivotSqlGenerator.GeneratePivot(
             BifrostQL.SqlServer.SqlServerDialect.Instance, config, "[dbo].[T]", pivotValues);
 
-        result.Sql.Should().Contain("PIVOT (");
-        result.Sql.Should().NotContain("CASE WHEN");
+        result.Sql.Should().Contain("CASE WHEN");
+        result.Sql.Should().NotContain("PIVOT (");
+        result.Sql.Should().Contain("[Status]");
     }
 
     [Fact]
@@ -697,24 +487,6 @@ public sealed class PivotQueryTests
         result.Sql.Should().Contain("CASE WHEN");
         result.Sql.Should().NotContain("PIVOT (");
         result.Sql.Should().Contain("`Status`");
-    }
-
-    [Fact]
-    public void OnlySqlServerBuildsANativePivot()
-    {
-        // Only SQL Server emits a native PIVOT; every other dialect returns null from
-        // BuildNativePivot so PivotSqlGenerator falls back to the CASE WHEN cross-tab.
-        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" });
-        var pivotValues = new List<object?> { "Active", "Inactive" };
-
-        BifrostQL.SqlServer.SqlServerDialect.Instance
-            .BuildNativePivot(config, "[Orders]", pivotValues).Should().NotBeNull();
-        BifrostQL.Sqlite.SqliteDialect.Instance
-            .BuildNativePivot(config, "\"Orders\"", pivotValues).Should().BeNull();
-        BifrostQL.Ngsql.PostgresDialect.Instance
-            .BuildNativePivot(config, "\"Orders\"", pivotValues).Should().BeNull();
-        BifrostQL.MySql.MySqlDialect.Instance
-            .BuildNativePivot(config, "`Orders`", pivotValues).Should().BeNull();
     }
 
     #endregion

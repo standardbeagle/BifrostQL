@@ -600,9 +600,7 @@ namespace BifrostQL.Core.Resolvers
             // both be held. Reject with an actionable message BEFORE running the pivot.
             // The result-set columns are aliased by position (PivotSqlGenerator.ColumnAlias),
             // so a label never names a result-set column and cannot collide with a row key.
-            // SQL Server's native PIVOT still writes each string label into its IN list as an
-            // escaped identifier (SqlServerDialect.BuildNativePivot), and falls back to the
-            // portable CASE WHEN pivot for a label that cannot be one.
+            // On every dialect each label reaches the server only as a bound parameter.
             var labels = pivotValues.Select(v => v?.ToString() ?? config.NullLabel).ToList();
             var duplicate = labels
                 .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
@@ -642,7 +640,7 @@ namespace BifrostQL.Core.Resolvers
             // position, so this is the second line rather than the first — it holds
             // even in a host that registers no EncryptedColumnReadGuard. The pivot
             // COLUMN LABELS are deliberately not projected: they are the values the
-            // cross-tab matched on (SQL Server's native PIVOT names them in its IN list),
+            // cross-tab matched on (each is bound as that column's CASE WHEN parameter),
             // so rewriting them would misreport which value each column counts — the
             // filter guard is what keeps ciphertext out of that position.
             var readChain = await TableReadChain.ForAsync(

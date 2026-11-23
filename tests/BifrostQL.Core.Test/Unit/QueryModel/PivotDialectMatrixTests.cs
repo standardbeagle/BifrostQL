@@ -41,8 +41,7 @@ public sealed class PivotDialectMatrixTests
         var tableRef = dialect.TableReference("dbo", "orders");
         var sql = PivotSqlGenerator.GeneratePivot(dialect, Config(), tableRef, PivotValues);
 
-        // SQL Server routes to the native PIVOT operator (no GROUP BY); the other
-        // dialects emit the CASE WHEN cross-tab. Both must parse for their grammar.
+        // Every dialect emits the CASE WHEN cross-tab; it must parse for each grammar.
         SqlSyntax.AssertValid(sql.Sql, flavor, "pivot SQL");
     }
 

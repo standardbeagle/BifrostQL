@@ -304,26 +304,6 @@ public interface ISqlDialect
         => throw new NotSupportedException("This dialect does not support internal table provisioning.");
 
     /// <summary>
-    /// Builds a native pivot (cross-tab) query for dialects that ship a `PIVOT`
-    /// operator, or returns null when the dialect has none — in which case
-    /// <see cref="PivotSqlGenerator.GeneratePivot"/> falls back to the portable
-    /// CASE WHEN cross-tab. Only SQL Server implements this; keeping the
-    /// SQL-Server-specific `PIVOT`/`ISNULL(... NVARCHAR(MAX) ...)` syntax inside the
-    /// dialect (not in Core) is why this is a hook rather than a bool flag; null
-    /// means the dialect has no native pivot.
-    /// </summary>
-    /// <param name="config">Pivot query configuration.</param>
-    /// <param name="tableRef">Escaped, optionally schema-qualified table reference.</param>
-    /// <param name="pivotValues">Distinct non-empty pivot-column values (null = SQL NULL).</param>
-    /// <param name="filter">Optional WHERE-clause fragment applied to the source rows.</param>
-    ParameterizedSql? BuildNativePivot(
-        PivotQueryConfig config,
-        string tableRef,
-        IReadOnlyList<object?> pivotValues,
-        ParameterizedSql? filter = null)
-        => null;
-
-    /// <summary>
     /// Whether a column of the given database type cannot be materialized directly by
     /// the provider (read as a CLR object) and must be cast to text in the SELECT.
     /// Defaults to false. PostgreSQL returns true for 'USER-DEFINED' types such as

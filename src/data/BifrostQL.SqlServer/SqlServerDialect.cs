@@ -15,24 +15,6 @@ public sealed class SqlServerDialect : SqlDialectBase
 {
     private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.SqlServer);
 
-    /// <summary> The longest identifier SQL Server accepts (sysname). </summary>
-    private const int MaxIdentifierLength = 128;
-
-    // Whether two labels may name one identifier under some SQL Server collation. Only
-    // printable ASCII folds without culture data: case and trailing spaces. Any other character
-    // may fold to another (é/e, Ａ/A, ｶ/カ/か) or be ignored (U+00AD, controls) under some
-    // collation, and the runtime cannot be asked: under InvariantGlobalization the culture
-    // comparer ignores IgnoreNonSpace, IgnoreKanaType and IgnoreWidth, and String.Normalize
-    // leaves non-ASCII text unchanged. So a set holding any such label counts as colliding.
-    private static bool LabelsMayCollideAsIdentifiers(IReadOnlyList<string> labels)
-    {
-        if (labels.Count < 2)
-            return false;
-        if (labels.Any(label => label.Any(c => c is < ' ' or > '~')))
-            return true;
-        return labels.Select(label => label.TrimEnd(' ').ToUpperInvariant()).Distinct(StringComparer.Ordinal).Count() < labels.Count;
-    }
-
     /// <inheritdoc />
     /// <remarks>
     /// SQL Server has no read-only transaction, and T-SQL needs no separator between
@@ -143,95 +125,6 @@ public sealed class SqlServerDialect : SqlDialectBase
 
     /// <inheritdoc />
     /// <remarks>
-    /// SQL Server requires ORDER BY for OFFSET/FETCH. When no sort columns are provided,
-    /// ORDER BY (SELECT NULL) is used as a no-op ordering to satisfy the syntax requirement.
-    /// </remarks>
-    /// <inheritdoc />
-    /// <remarks>
-    /// Emits SQL Server's native `PIVOT (agg(value) FOR col IN (...))` operator,
-    /// coalescing NULL pivot keys with `ISNULL(CAST(... AS NVARCHAR(MAX)), @p)`.
-    /// Both constructs are T-SQL-specific, which is why this lives in the SqlServer
-    /// dialect rather than in Core's PivotSqlGenerator. The empty-pivot-values shape
-    /// is dialect-neutral and reuses PivotSqlGenerator.GenerateEmptyPivot.
-    /// </remarks>
-    public override ParameterizedSql? BuildNativePivot(
-        PivotQueryConfig config,
-        string tableRef,
-        IReadOnlyList<object?> pivotValues,
-        ParameterizedSql? filter = null)
-    {
-        if (pivotValues.Count == 0)
-            return PivotSqlGenerator.GenerateEmptyPivot(this, config, tableRef, filter);
-
-        // PIVOT matches CAST(col AS NVARCHAR(MAX)) against labels built in .NET, which
-        // agree only for text: a bit casts to "1" (.NET "True"), a datetime to style 0,
-        // and a uniqueidentifier to upper case (hidden only by a case-insensitive
-        // collation). Any other type takes the portable CASE WHEN pivot, which binds
-        // each value as a parameter.
-        if (pivotValues.Any(v => v is not null and not string))
-            return null;
-
-        var aggFunc = config.AggregateFunction.ToString().ToUpperInvariant();
-        var groupByCols = string.Join(", ", config.GroupByColumns.Select(EscapeIdentifier));
-        var pivotCol = EscapeIdentifier(config.PivotColumn);
-        var valueCol = EscapeIdentifier(config.ValueColumn);
-
-        // Build column aliases for pivot values, replacing NULL with the null label.
-        var pivotAliases = pivotValues
-            .Select(v => v == null ? config.NullLabel : v.ToString()!)
-            .ToList();
-
-        // Native PIVOT names each output column by its label, so every label becomes a
-        // bracket-quoted identifier in the IN list. SQL Server refuses an empty identifier
-        // (error 1038) and one longer than 128 characters (error 103), which failed the
-        // whole pivot. Such a label takes the portable CASE WHEN pivot, which binds it as a
-        // parameter value.
-        if (pivotAliases.Any(label => label.Length == 0 || label.Length > MaxIdentifierLength))
-            return null;
-        // SQL Server compares identifiers with trailing spaces ignored, under the database's
-        // collation, so two labels equal after trailing spaces and that collation's folding
-        // name one output column twice (error 8156). Discovery's DISTINCT runs under the
-        // column's collation, which can be stricter than the database's (an accent-sensitive
-        // column keeps "cafe" and "café" apart in an accent-insensitive database), and the null
-        // label is applied after it, so a literal "_null_ " beside a NULL still yields a pair.
-        // The database collation is unknown here, so labels that may be equal under any
-        // collation's folding (case, accent, kana, width, ignorable characters) take CASE WHEN;
-        // over-routing only costs the native form. A whitespace-only label is a valid
-        // identifier and stays native.
-        if (LabelsMayCollideAsIdentifiers(pivotAliases))
-            return null;
-
-        var pivotColumnList = string.Join(", ", pivotAliases.Select(EscapeIdentifier));
-        // The PIVOT output columns carry the labels; the outer SELECT renames each to its
-        // positional alias, the same result-set shape the CASE WHEN cross-tab emits.
-        var positionalColumnList = string.Join(", ", pivotAliases.Select((label, position) =>
-            $"{EscapeIdentifier(label)} AS {EscapeIdentifier(PivotSqlGenerator.ColumnAlias(position))}"));
-
-        // Bind NullLabel as a parameter to prevent SQL injection via user-controlled
-        // config values. The index is offset past the filter params so names don't collide.
-        var filterParamCount = filter?.Parameters.Count ?? 0;
-        var nullLabelParamName = $"@p{filterParamCount}";
-
-        // Source subquery that coalesces NULL pivot values to the null label.
-        var coalescedPivotCol = $"ISNULL(CAST({pivotCol} AS NVARCHAR(MAX)), {nullLabelParamName})";
-
-        var sourceSql = $"SELECT {groupByCols}, {coalescedPivotCol} AS {EscapeIdentifier("__pivot_col")}, {valueCol}" +
-                        $" FROM {tableRef}";
-
-        if (filter != null && !string.IsNullOrEmpty(filter.Sql))
-            sourceSql += filter.Sql;
-
-        var sql = $"SELECT {groupByCols}, {positionalColumnList}" +
-                  $" FROM ({sourceSql}) AS __src" +
-                  $" PIVOT ({aggFunc}({valueCol}) FOR {EscapeIdentifier("__pivot_col")} IN ({pivotColumnList})) AS __pvt";
-
-        var allParameters = (filter?.Parameters ?? Array.Empty<SqlParameterInfo>()).ToList();
-        allParameters.Add(new SqlParameterInfo(nullLabelParamName, config.NullLabel));
-        return new ParameterizedSql(sql, allParameters);
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
     /// sys.partitions.rows is write-maintained (it is what DBCC UPDATEUSAGE
     /// audits), so it answers an unfiltered total instantly where COUNT(*)
     /// scans the table — ~340ms warm / seconds cold per page turn on a 13M-row
@@ -254,6 +147,11 @@ public sealed class SqlServerDialect : SqlDialectBase
                $"THEN ({catalogSum}) ELSE (SELECT COUNT(*) FROM {tableRef}) END";
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQL Server requires ORDER BY for OFFSET/FETCH. When no sort columns are provided,
+    /// ORDER BY (SELECT NULL) is used as a no-op ordering to satisfy the syntax requirement.
+    /// </remarks>
     public override string Pagination(IEnumerable<string>? sortColumns, int? offset, int? limit)
     {
         var orderBy = sortColumns?.Any() == true

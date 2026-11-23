@@ -13,13 +13,57 @@ public sealed class PivotSqlGeneratorTests
     private static readonly ISqlDialect Dialect = SqlServerDialect.Instance;
 
     /// <summary>
-    /// FIX 1 (SQL injection): NullLabel must be emitted as a parameter placeholder in the
-    /// generated ISNULL expression, never interpolated literally into SQL.
-    /// The label legitimately appears as an escaped pivot-column identifier (that is
-    /// correct and unavoidable), but it must NEVER appear as a bare SQL string literal.
+    /// SQL Server pivot labels are data and must reach the server only as bound
+    /// parameters, as on every other dialect. The native T-SQL PIVOT wrote each string
+    /// label (and the null label) into its <c>IN (...)</c> list as an escaped identifier,
+    /// so client data sat in SQL text behind a bracket-escaping and collation-folding
+    /// guard. The SQL is tokenized with ScriptDom: no identifier or string-literal token
+    /// may carry a label, and each non-null label is bound to its own variable token.
     /// </summary>
     [Fact]
-    public void GenerateSqlServerPivot_MaliciousNullLabel_IsParameterizedNotLiteral()
+    public void SqlServerPivot_BindsEveryLabelAsAParameter_AndWritesNoneIntoSqlText()
+    {
+        const string injectionLabel = "x]; DROP TABLE t--";
+        var config = PivotQueryConfig.Create("Status", "Id", "COUNT", new[] { "Region" }, nullLabel: "Unknown");
+        var pivotValues = new List<object?> { "Active", injectionLabel, null };
+
+        var result = PivotSqlGenerator.GeneratePivot(SqlServerDialect.Instance, config, "[dbo].[Orders]", pivotValues);
+
+        var parser = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql160Parser(initialQuotedIdentifiers: true);
+        var tokens = parser.GetTokenStream(new StringReader(result.Sql), out var errors);
+        errors.Should().BeEmpty();
+        var labels = new[] { "Active", injectionLabel, "Unknown" };
+        var dataTokens = tokens
+            .Where(t => t.TokenType is Microsoft.SqlServer.TransactSql.ScriptDom.TSqlTokenType.QuotedIdentifier
+                or Microsoft.SqlServer.TransactSql.ScriptDom.TSqlTokenType.Identifier
+                or Microsoft.SqlServer.TransactSql.ScriptDom.TSqlTokenType.AsciiStringLiteral
+                or Microsoft.SqlServer.TransactSql.ScriptDom.TSqlTokenType.UnicodeStringLiteral)
+            .Select(t => Unquote(t.Text))
+            .ToList();
+        dataTokens.Should().Contain("Status", "the control: the pivot column is an identifier token");
+        dataTokens.Should().NotIntersectWith(labels, "a pivot label must never be SQL text");
+
+        var variables = tokens
+            .Where(t => t.TokenType == Microsoft.SqlServer.TransactSql.ScriptDom.TSqlTokenType.Variable)
+            .Select(t => t.Text)
+            .ToList();
+        variables.Should().Equal("@p0", "@p1");
+        result.Parameters.Select(p => (p.Name, p.Value)).Should().Equal(("@p0", (object?)"Active"), ("@p1", injectionLabel));
+    }
+
+    private static string Unquote(string text) => text switch
+    {
+        ['[', .. var inner, ']'] => inner.Replace("]]", "]"),
+        ['N', '\'', .. var inner, '\''] => inner.Replace("''", "'"),
+        ['\'', .. var inner, '\''] => inner.Replace("''", "'"),
+        _ => text,
+    };
+
+    /// <summary>
+    /// The NULL arm compares with IS NULL, so the null label never appears as a string literal.
+    /// </summary>
+    [Fact]
+    public void GeneratePivot_MaliciousNullLabel_DoesNotAppearAsStringLiteral()
     {
         const string maliciousLabel = "'; DROP TABLE t;--";
 
@@ -32,87 +76,18 @@ public sealed class PivotSqlGeneratorTests
         var result = PivotSqlGenerator.GeneratePivot(
             Dialect, config, "[dbo].[Orders]", pivotValues);
 
-        // Security property 1: the label must NOT appear as a SQL string literal.
-        // An unparameterized string literal would look like 'value'; only that form
-        // can be exploited for injection. The label appearing as a delimited identifier
-        // [value] is safe and expected.
-        result.Sql.Should().NotContain($"'{maliciousLabel}'",
-            because: "NullLabel must be bound as a parameter, not inlined as a SQL string literal");
-
-        // Security property 2: the ISNULL expression must reference the parameter.
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p0)",
-            because: "NullLabel should be passed as a bound parameter in ISNULL");
-
-        // Security property 3: the parameter carries the actual value.
-        result.Parameters.Should().ContainSingle(p => p.Name == "@p0",
-            because: "one parameter should exist for the NullLabel binding");
-        result.Parameters[0].Value.Should().Be(maliciousLabel,
-            because: "the NullLabel value must be preserved in the parameter");
-    }
-
-    /// <summary>
-    /// FIX 1 + EscapeIdentifier hardening: a NullLabel containing the SQL Server
-    /// closing-bracket delimiter <c>]</c> must have that character doubled to <c>]]</c>
-    /// inside the pivot column identifier. Without doubling the bracket would close the
-    /// delimited identifier early and the rest of the label would execute as raw SQL.
-    /// </summary>
-    [Fact]
-    public void GenerateSqlServerPivot_NullLabelWithClosingBracket_IdentifierDoublesDelimiter()
-    {
-        const string labelWithBracket = "x]; DROP TABLE t--";
-
-        var config = PivotQueryConfig.Create(
-            "Status", "Id", "COUNT", new[] { "Region" },
-            nullLabel: labelWithBracket);
-
-        var pivotValues = new List<object?> { null };
-
-        var result = PivotSqlGenerator.GeneratePivot(
-            Dialect, config, "[dbo].[Orders]", pivotValues);
-
-        // The escaped identifier must double the ] so the identifier never closes early.
-        // Correct form:   [x]]; DROP TABLE t--]   (]] = escaped ] inside the brackets)
-        // Breakout form:  [x]; DROP TABLE t--]     (] closes early → loose SQL)
-        result.Sql.Should().Contain("[x]]; DROP TABLE t--]",
-            because: "EscapeIdentifier must double ] to prevent SQL breakout");
-
-        // The original unescaped form must NOT appear: x]; DROP TABLE t-- has a single ]
-        // immediately followed by ;, which is the breakout sequence.
-        result.Sql.Should().NotContain("x]; DROP TABLE t--",
-            because: "a raw x]; sequence would indicate the ] was not doubled and breakout could occur");
-    }
-
-    /// <summary>
-    /// FIX 1: Same injection guard for GenerateCaseWhenPivot — NullLabel appears only in the
-    /// column alias (identifier), never as an unparameterized string literal in the CASE expression.
-    /// </summary>
-    [Fact]
-    public void GenerateCaseWhenPivot_MaliciousNullLabel_DoesNotAppearAsStringLiteral()
-    {
-        const string maliciousLabel = "'; DROP TABLE t;--";
-
-        var config = PivotQueryConfig.Create(
-            "Status", "Id", "COUNT", new[] { "Region" },
-            nullLabel: maliciousLabel);
-
-        var pivotValues = new List<object?> { "Active", null };
-
-        var result = PivotSqlGenerator.GenerateCaseWhenPivot(
-            Dialect, config, "[dbo].[Orders]", pivotValues);
-
-        // The CASE WHEN branch for NULL does not interpolate the NullLabel as a literal value —
-        // it only uses it as a column alias (escaped via EscapeIdentifier).
         // The body is "CASE WHEN [Status] IS NULL THEN [Id] END", no string literal involved.
         result.Sql.Should().NotContain($"'{maliciousLabel}'",
             because: "the null-branch CASE expression uses IS NULL, not a string comparison");
     }
 
     /// <summary>
-    /// FIX 1: NullLabel parameter is appended after any existing filter parameters so
-    /// parameter names do not collide.
+    /// Pivot-value parameters are numbered after the filter's, so a value never takes the
+    /// filter's <c>@p0</c>. The null label is never SQL text or a parameter: the NULL arm is
+    /// <c>IS NULL</c>.
     /// </summary>
     [Fact]
-    public void GenerateSqlServerPivot_WithFilterAndMaliciousNullLabel_NullLabelParamIndexedAfterFilterParams()
+    public void GeneratePivot_WithFilter_NumbersValueParamsAfterFilterParams()
     {
         const string maliciousLabel = "'; DROP TABLE t;--";
 
@@ -120,7 +95,7 @@ public sealed class PivotSqlGeneratorTests
             "Status", "Id", "COUNT", new[] { "Region" },
             nullLabel: maliciousLabel);
 
-        var pivotValues = new List<object?> { "Active" };
+        var pivotValues = new List<object?> { "Active", null };
         var filter = new ParameterizedSql(
             " WHERE [Year] = @p0",
             new List<SqlParameterInfo> { new("@p0", 2024) });
@@ -129,12 +104,8 @@ public sealed class PivotSqlGeneratorTests
             Dialect, config, "[dbo].[Orders]", pivotValues, filter);
 
         result.Sql.Should().NotContain(maliciousLabel);
-
-        // Filter param keeps its index; NullLabel gets the next index
-        result.Parameters.Should().Contain(p => p.Name == "@p0" && (int)p.Value! == 2024);
-        result.Parameters.Should().Contain(p => p.Name == "@p1" && (string)p.Value! == maliciousLabel);
-
-        // ISNULL must reference the NullLabel parameter, not @p0 (which belongs to filter)
-        result.Sql.Should().Contain("ISNULL(CAST([Status] AS NVARCHAR(MAX)), @p1)");
+        result.Parameters.Select(p => (p.Name, p.Value)).Should().Equal(("@p0", (object?)2024), ("@p1", "Active"));
+        result.Sql.Should().Contain("CASE WHEN [Status] = @p1 THEN [Id] END");
+        result.Sql.Should().Contain("CASE WHEN [Status] IS NULL THEN [Id] END");
     }
 }

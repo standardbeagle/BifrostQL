@@ -15,11 +15,14 @@ defaults {
     // (The scaffolded 60s was a runtime budget wearing a backstop's name.)
     stall "30m"
 
-    // Runaway guard only. A full parallel epic run peaks at ~2.1GB on a 6-core
-    // box, so the scaffolded 2048 sat *below* the healthy working set and culled
-    // the gate mid-build with exit 126. 8192 keeps ~4x headroom over the real
-    // peak while still catching a leak long before it threatens a 24GB machine.
-    max-mem 8192
+    // Runaway guard only, sized for the heaviest run in the repo: the release
+    // tier's nested `dotnet test` from a cold build. On build3 (32 cores, the
+    // fleet's widest box, so the most MSBuild nodes) that peaked at 10943MB
+    // (2026-11-23, bin/obj removed, build server shut down); 8192 culled four
+    // such runs at 8228-9243MB. A warm rerun peaks at 5356MB and an epic run
+    // at ~2.1GB. 16384 is 1.5x the cold peak and still stops a leak well before
+    // it threatens a 28GB runner.
+    max-mem 16384
 
     // No `max-cpu` on purpose. tman normalises CPU% across all cores, so the
     // scaffolded 95 meant "kill anything that saturates the machine" — exactly
@@ -71,16 +74,15 @@ alias "test-js" {
 // gated before pack-publish. The script brings up docker-compose.test.yml first;
 // the Integration project reads the connection strings from its runsettings.
 //
-// Floor: the epic tier's measured cost (see `test`), a lower bound, since this
-// tier runs the same suites against the same containers for three TFMs. The
-// release tier itself could not be measured: on build3 (32 cores) both runs
-// were culled at the defaults block's max-mem 8192 while building (8228MB and
-// 8377MB tree peaks, 2026-11-23).
+// Floor: memory is the release tier's measured cold-build peak, 10943MB on
+// build3 (32 cores, 2026-11-23, bin/obj removed). The test containers run
+// under dockerd, outside the tree, so the booking stays a lower bound. Cores
+// stay at the epic tier's measured share (see `test`).
 alias "test-release" {
     command "./scripts/test-release.sh"
     max-time "90m"
     cores "40%"
-    mem "8159m"
+    mem "10943m"
 }
 
 // Floor: reused MSBuild nodes and VBCSCompiler do this build's compiling outside

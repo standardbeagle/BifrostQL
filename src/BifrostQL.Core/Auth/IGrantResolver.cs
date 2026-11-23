@@ -1,22 +1,24 @@
 namespace BifrostQL.Core.Auth;
 
 /// <summary>
-/// Optional per-request grant loading hook. When an application registers an
-/// implementation (<c>AddBifrostGrantResolver</c>), it runs every time the user
-/// context is assembled (at least once per request; nothing memoizes it), and its result is UNIONED into the
-/// <c>permissions</c> user-context key before any security module or transformer
-/// sees the context.
+/// Optional grant loading hook. When an application registers an implementation
+/// (<c>AddBifrostGrantResolver</c>), it runs once per identity projection (nothing
+/// memoizes it), and its result is UNIONED into the <c>permissions</c> user-context key
+/// before any security module or transformer sees the context.
 ///
-/// Transport shape: HTTP mounts (GraphQL, binary WebSocket, MCP-HTTP) run it per
-/// request; the connection-oriented adapters (pgwire, RESP, LDAP) project identity
-/// once per CONNECTION at login, so there a permission change takes effect on the
-/// client's next connection; the Prometheus scrape identity never runs it (no
-/// request service provider exists for a scoped resolver).
+/// Transport shape: HTTP mounts (GraphQL, MCP-HTTP, gRPC) project once per request and the
+/// binary WebSocket mount once per message; the connection-oriented adapters (pgwire, RESP,
+/// LDAP) project once per CONNECTION at login, so there a permission change takes effect on
+/// the client's next connection; the Prometheus scrape identity never runs it (no request
+/// service provider exists for a scoped resolver). A host SignalR hub projects from the
+/// connection's <c>RequestServices</c>, so a scoped resolver there lives for the connection
+/// and anything it caches in its own state is the host's concern.
 ///
 /// Execution: every shipped gate awaits the resolver through
-/// <c>IBifrostAuthContextFactory.CreateUserContextAsync</c>; no thread blocks on it. It runs
-/// once per projection (an endpoint that projects the caller and also takes the policy gate
-/// runs it twice), so keep the read bounded and cheap.
+/// <c>IBifrostAuthContextFactory.CreateUserContextAsync</c>; no thread blocks on it. An
+/// endpoint that projects the caller and then takes the policy gate with
+/// <c>IPolicyGateAccessor.GetAsync()</c> projects twice; passing its context to
+/// <c>GetAsync(userContext)</c> projects once. Keep the read bounded and cheap.
 ///
 /// The hook exists for deployments whose capability sets live in the database and
 /// must take effect immediately: a token (JWT, cookie) can live for weeks, but a

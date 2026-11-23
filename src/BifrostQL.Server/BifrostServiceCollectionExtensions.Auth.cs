@@ -132,8 +132,8 @@ namespace BifrostQL.Server
         /// application's business. Two transport-shape exceptions: pgwire, RESP and
         /// LDAP assemble identity once per CONNECTION at login (a permission change
         /// takes effect on the next connection), and the Prometheus scrape identity
-        /// never runs the resolver. The assembly contract is synchronous — the
-        /// resolver is awaited inline on the request path. Fail closed: a throwing
+        /// never runs the resolver. The resolver is awaited on the request path; no
+        /// thread blocks on it. Fail closed: a throwing
         /// resolver empties the permission set for that request and logs a Warning;
         /// a null result is treated as empty.
         /// </summary>

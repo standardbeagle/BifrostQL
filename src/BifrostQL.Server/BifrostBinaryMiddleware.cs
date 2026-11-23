@@ -500,7 +500,7 @@ namespace BifrostQL.Server
                 // would read the shared context through the accessor (the engine's profile
                 // resolution, the policy gate, host hooks), and the accessor cannot be pointed
                 // elsewhere without clearing it for the whole request. Each message sets its own
-                // context there instead (RunRequestAsync). The trace parent and the cultures are
+                // context there instead (ExecuteInMessageScopeAsync). The trace parent and the cultures are
                 // carried over by hand; logging scopes pushed on the upgrade request are not.
                 var activity = System.Diagnostics.Activity.Current;
                 var culture = System.Globalization.CultureInfo.CurrentCulture;
@@ -1007,32 +1007,26 @@ namespace BifrostQL.Server
         /// resolver and the DbContext it reads) across concurrent messages, and its HttpContext,
         /// which is not thread-safe, would be read by all of them at once. The message's context is
         /// also what <see cref="IHttpContextAccessor"/> returns inside the message.
+        ///
+        /// The scope covers only the session check, the identity projection and the execution,
+        /// which ends with the response serialized to bytes. It is disposed before the response is
+        /// sent: a chunked send waits on the client's acks (up to the ack timeout per chunk), and
+        /// holding the host's scoped services (a DbContext and its connection) through that wait
+        /// would pin them for a response that no longer needs them.
         /// </summary>
         private async Task RunRequestAsync(BifrostMessage request, BinaryConnection connection, int heldReassemblyBytes)
         {
-            IHttpContextAccessor? accessor = null;
             try
             {
                 try
                 {
-                    // Inside the catch-all: a host with no request services is a wiring fault that
-                    // closes the connection, as any other request fault does.
-                    await using var scope = connection.Upgrade.RequestServices
-                        .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
-                    var message = connection.Upgrade.CreateMessageContext(
-                        connection.User, scope.ServiceProvider, connection.Token);
-                    // The task started without the reader's execution context (TryStart), so this
-                    // sets the accessor for this message only and leaves the upgrade request's alone.
-                    accessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
-                    if (accessor != null)
-                        accessor.HttpContext = message;
-
-                    if (!await SessionStillLiveAsync(connection, message))
+                    var (live, response) = await ExecuteInMessageScopeAsync(request, connection);
+                    if (!live)
                         return;
                     if (request.Type == BifrostMessageType.Resume)
                         await HandleResumeAsync(request, connection);
                     else
-                        await HandleQueryAsync(request, connection, message);
+                        await SendResponseAsync(response!, connection);
                 }
                 catch (OperationCanceledException) when (connection.InputEnded.IsCancellationRequested)
                 {
@@ -1052,10 +1046,44 @@ namespace BifrostQL.Server
             }
             finally
             {
-                if (accessor != null)
-                    accessor.HttpContext = null;
                 if (heldReassemblyBytes > 0)
                     connection.ChunkReceiver.ReleaseAssembled(heldReassemblyBytes);
+            }
+        }
+
+        /// <summary>
+        /// Runs the scoped part of one message in its own DI scope and HttpContext: the session
+        /// check, then (for anything but a Resume, which needs no scope to retransmit) the
+        /// execution, whose response comes back fully serialized. <c>Live</c> is false when the
+        /// session check closed the connection. The scope and the accessor's pointer at the
+        /// message context end here, before anything is sent.
+        /// </summary>
+        private async Task<(bool Live, BifrostMessage? Response)> ExecuteInMessageScopeAsync(
+            BifrostMessage request, BinaryConnection connection)
+        {
+            // Inside the caller's catch-all: a host with no request services is a wiring fault that
+            // closes the connection, as any other request fault does.
+            await using var scope = connection.Upgrade.RequestServices
+                .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+            var message = connection.Upgrade.CreateMessageContext(
+                connection.User, scope.ServiceProvider, connection.Token);
+            // The task started without the reader's execution context (TryStart), so this
+            // sets the accessor for this message only and leaves the upgrade request's alone.
+            var accessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
+            if (accessor != null)
+                accessor.HttpContext = message;
+            try
+            {
+                if (!await SessionStillLiveAsync(connection, message))
+                    return (false, null);
+                if (request.Type == BifrostMessageType.Resume)
+                    return (true, null);
+                return (true, await ExecuteRequestAsync(request, message, connection.Token));
+            }
+            finally
+            {
+                if (accessor != null)
+                    accessor.HttpContext = null;
             }
         }
 
@@ -1198,13 +1226,12 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Executes a Query/Mutation request and sends the response, chunking it when it
-        /// exceeds the chunk threshold.
+        /// Sends an executed request's response, chunking it when it exceeds the chunk threshold.
+        /// The response is already serialized (<see cref="ExecuteRequestAsync"/>), so nothing here
+        /// touches the message's scoped services, which are disposed by now.
         /// </summary>
-        private async Task HandleQueryAsync(BifrostMessage request, BinaryConnection connection, HttpContext message)
+        private async Task SendResponseAsync(BifrostMessage response, BinaryConnection connection)
         {
-            var response = await ExecuteRequestAsync(request, message, connection.Token);
-
             if (connection.ChunkSender.RequiresChunking(response))
             {
                 _logger.LogDebug(
@@ -1292,7 +1319,7 @@ namespace BifrostQL.Server
                 return response;
             }
 
-            // The message's own scope (RunRequestAsync).
+            // The message's own scope (ExecuteInMessageScopeAsync).
             var services = message.RequestServices;
 
             IReadOnlyDictionary<string, object?>? variables;

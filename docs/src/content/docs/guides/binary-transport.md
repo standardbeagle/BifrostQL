@@ -125,7 +125,9 @@ The codes are public as `BinaryErrorCode` in both `BifrostQL.Server` and `@bifro
 GraphQL execution errors carry no frame code; they arrive in `errors` as on the HTTP endpoint.
 
 Each request runs in its own DI scope, so scoped services are not shared between the requests
-of one connection.
+of one connection. The scope covers the session check, the identity projection and the
+execution; it is disposed once the response is serialized, before the first frame is sent, so a
+chunked response waiting on acks holds no scoped service (a `DbContext`, its connection).
 
 Each request also gets its own `HttpContext`, and that is the one your
 `IBifrostAuthContextFactory`, grant resolver, hooks and `IHttpContextAccessor` see. It is a copy

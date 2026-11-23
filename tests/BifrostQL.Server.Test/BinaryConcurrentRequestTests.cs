@@ -356,6 +356,61 @@ namespace BifrostQL.Server.Test
             upgrade.Request.RouteValues["tenant"].Should().Be("acme", "a message never writes the upgrade request's routes");
         }
 
+        /// <summary>A scoped service that records when its message's scope disposes it.</summary>
+        private sealed class ScopeProbe : IDisposable
+        {
+            public volatile bool Disposed;
+            public void Dispose() => Disposed = true;
+        }
+
+        /// <summary>Resolves the message's <see cref="ScopeProbe"/>, then answers as <see cref="GatedEngine"/>.</summary>
+        private sealed class ScopeProbeEngine : IBifrostEngine
+        {
+            private readonly GatedEngine _gate = new();
+            public ConcurrentQueue<ScopeProbe> Probes { get; } = new();
+
+            public Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+            {
+                Probes.Enqueue(request.RequestServices!.GetRequiredService<ScopeProbe>());
+                return _gate.ExecuteAsync(request, endpointPath);
+            }
+        }
+
+        [Fact]
+        public async Task MessageScope_IsDisposedBeforeTheResponseIsSent()
+        {
+            // The scope used to live through the chunked send, ack waits included (60 s per ack,
+            // up to the idle timeout overall), holding the host's scoped services (a DbContext and
+            // its connection) for a response that was already serialized. Request 1 chunks at
+            // threshold 100; request 2 answers in one Result frame.
+            var engine = new ScopeProbeEngine();
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(Query(1, "{ large }"));
+            socket.EnqueueMessage(Query(2, "{ fast }"));
+            var disposedAtFirstSend = new ConcurrentDictionary<uint, bool>();
+            socket.Sent += m =>
+            {
+                if (m.Type is BifrostMessageType.Chunk or BifrostMessageType.Result
+                    && engine.Probes.Count >= m.RequestId)
+                    disposedAtFirstSend.TryAdd(m.RequestId, engine.Probes.ElementAt((int)m.RequestId - 1).Disposed);
+            };
+            var context = new DefaultHttpContext
+            {
+                RequestServices = new ServiceCollection().AddScoped<ScopeProbe>().BuildServiceProvider(),
+            };
+            context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
+
+            await RunAsync(engine, context);
+
+            socket.SentMessages().Should().Contain(m => m.RequestId == 1 && m.Type == BifrostMessageType.Chunk,
+                "request 1's response is chunked");
+            engine.Probes.Should().HaveCount(2).And.OnlyHaveUniqueItems("each message has its own scope");
+            disposedAtFirstSend.Should().ContainKey(1u).WhoseValue.Should().BeTrue(
+                "the message's scope ends before its first chunk goes out");
+            disposedAtFirstSend.Should().ContainKey(2u).WhoseValue.Should().BeTrue(
+                "the message's scope ends before its Result goes out");
+        }
+
         [Fact]
         public async Task RequestPastTheConcurrencyCap_IsRefused()
         {

@@ -126,5 +126,24 @@ namespace BifrostQL.Core.Resolvers
                 site, detail);
             return new BifrostExecutionError(wireMessage) { ErrorCode = errorCode };
         }
+
+        /// <summary>
+        /// Same log/sanitize pair for a fault the SERVER caused (its database unreachable, a
+        /// required plugin unregistered), logged at Error with <paramref name="exception"/>. The
+        /// client did nothing wrong and every caller is refused until an operator acts, so the
+        /// detail must be visible at default log levels. <see cref="LookupMiss"/> and
+        /// <see cref="Sanitized"/> stay at Debug: they record client-caused refusals (a bad name, a
+        /// stale concurrency token) that a client can raise at will, and logging those at Error
+        /// would let any caller flood the operator's log. <paramref name="detail"/> may carry
+        /// identifiers, never a secret or connection string; pass the driver exception as
+        /// <paramref name="exception"/>, not its text.
+        /// </summary>
+        public static BifrostExecutionError ServerFault(string wireMessage, string detail, string site, Exception? exception = null)
+        {
+            Logger?.LogError(exception,
+                "Server fault at {Site}; sanitized off the wire. Detail: {Detail}",
+                site, detail);
+            return new BifrostExecutionError(wireMessage);
+        }
     }
 }

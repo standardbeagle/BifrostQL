@@ -74,10 +74,11 @@ namespace BifrostQL.Core.Modules.History
         {
             var name = HistoryConfig.ResolveWriterName(model, table);
             // The wire gets a constant message; the table, configured name and registered plugin
-            // names are server detail (invariant 3), logged by the sink for the operator.
+            // names are server detail (invariant 3), logged by the sink for the operator at Error:
+            // every write to the table fails until the host registers the writer.
             return _writers.TryGetValue(name, out var writer)
                 ? writer
-                : throw BifrostErrorSink.Sanitized(
+                : throw BifrostErrorSink.ServerFault(
                     "The table's history writer is not registered, so the change was refused.",
                     $"Table '{Qualify(table)}' records change history with '{MetadataKeys.History.Writer}: {name}', " +
                     $"but no history writer of that name is registered (registered: {string.Join(", ", _writers.Keys)}). " +

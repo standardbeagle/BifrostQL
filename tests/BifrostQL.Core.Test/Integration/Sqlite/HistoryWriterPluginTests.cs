@@ -21,6 +21,7 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// the changes <see cref="HistoryMutationHook"/> records, in the mutation's transaction,
 /// using only the public hook context — the shape an app-owned audit table needs.
 /// </summary>
+[Collection(ErrorSinkLoggerCollection.Name)]
 public sealed class HistoryWriterPluginTests : IAsyncLifetime
 {
     private const string ConnString = "Data Source=bifrost_history_writer_plugin_test;Mode=Memory;Cache=Shared";
@@ -209,6 +210,21 @@ public sealed class HistoryWriterPluginTests : IAsyncLifetime
         message.Should().Be("The table's history writer is not registered, so the change was refused.");
         message.Should().NotContain("orders").And.NotContain("nobody").And.NotContain("app-audit");
         (await CountAsync("orders", "status = 'packing'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task UnknownWriterName_LogsTheRefusalAtError()
+    {
+        // Every write to the table is refused until the host registers the writer: a server
+        // misconfiguration, so the operator must see it at default log levels, not at Debug.
+        var model = await LoadModelAsync("main.orders { history: enabled; history-writer: nobody }");
+        using var sink = new ErrorSinkCapture();
+
+        await ExecuteMutationAsync("mutation { orders(update: { id: 1, status: \"shipped\" }) }", model);
+
+        var entry = sink.Entries.Should().ContainSingle(e => e.Message.Contains(nameof(HistoryMutationHook))).Subject;
+        entry.Level.Should().Be(Microsoft.Extensions.Logging.LogLevel.Error);
+        entry.Message.Should().Contain("nobody", "the configured name is the operator's diagnosis");
     }
 
     [Fact]

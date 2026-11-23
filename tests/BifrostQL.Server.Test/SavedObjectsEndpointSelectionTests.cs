@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.SavedObjects;
 using BifrostQL.Sqlite;
 using FluentAssertions;
@@ -10,6 +11,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test;
@@ -140,5 +143,34 @@ public sealed class SavedObjectsEndpointSelectionTests : IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable, body);
         body.Should().NotContain("absent.db").And.NotContain("SQLite");
+    }
+
+    [Fact]
+    public async Task ModelLoadFailure_LogsTheFaultAtError_WithoutTheConnectionString()
+    {
+        // The 503 is a server fault (database down). Logged at Debug it is invisible at the default
+        // Information level, so the operator sees only clients failing.
+        var missing = Path.Combine(Path.GetTempPath(), $"so-missing-{Guid.NewGuid():N}", "absent.db");
+        var logger = new FakeLogger();
+        var previous = BifrostErrorSink.Logger;
+        BifrostErrorSink.Logger = logger;
+        try
+        {
+            _host = await StartAsync(null, ("/graphql", $"Data Source={missing};Mode=ReadOnly"));
+
+            using var response = await GetAsSignedInAsync();
+
+            response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        }
+        finally
+        {
+            BifrostErrorSink.Logger = previous;
+        }
+
+        var fault = logger.Collector.GetSnapshot()
+            .Should().ContainSingle(r => r.Message.Contains(nameof(BifrostSavedObjectsMiddleware))).Subject;
+        fault.Level.Should().Be(LogLevel.Error);
+        fault.Exception.Should().NotBeNull("the driver exception is the operator's diagnosis");
+        fault.Message.Should().NotContain("Data Source");
     }
 }

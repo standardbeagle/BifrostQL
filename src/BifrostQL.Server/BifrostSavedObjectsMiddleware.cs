@@ -129,8 +129,9 @@ namespace BifrostQL.Server
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    var error = BifrostErrorSink.Sanitized(ModelUnavailableMessage, ex.ToString(),
-                        $"{nameof(BifrostSavedObjectsMiddleware)}.{nameof(ResolveTenantContextKeyAsync)}");
+                    var error = BifrostErrorSink.ServerFault(ModelUnavailableMessage,
+                        "The served model could not be loaded to key the owner partition.",
+                        $"{nameof(BifrostSavedObjectsMiddleware)}.{nameof(ResolveTenantContextKeyAsync)}", ex);
                     await WriteError(context, StatusCodes.Status503ServiceUnavailable, error.Message);
                     return;
                 }

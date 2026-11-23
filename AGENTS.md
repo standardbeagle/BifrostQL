@@ -50,7 +50,7 @@ Only table root fields enter the `GqlObjectQuery` tree. Other root fields (intro
 - **Hook gates** ask applicability (`AppliesTo(IDbTable)` / `AnyApplies`), never registration. The registrar adds every hook to every host.
 - **Config validators** call the runtime parse function (`BatchMutationPipeline.GetMaxBatchSize`, `HistoryConfig.FromTable`, …), never a second parser.
 - **Hook state:** `MutationState` is per action, `TransactionState` is per transaction. Per-action state left in the transaction bag leaks into the next row.
-- **`BifrostErrorSink`** is the one sanitize-the-wire/log-the-detail seam. Attach a logger with `BifrostErrorSink.Attach`, never `??=`.
+- **`BifrostErrorSink`** is the one sanitize-the-wire/log-the-detail seam. Attach a logger with `BifrostErrorSink.Attach`, never `??=`. Server-caused faults (database down, plugin unregistered) go through `ServerFault` (Error, exception attached); client-caused refusals through `LookupMiss` / `Sanitized` (Debug).
 
 ## Protocol adapters
 

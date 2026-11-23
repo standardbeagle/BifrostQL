@@ -54,8 +54,15 @@ namespace BifrostQL.Server.Pgwire
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<PgWireAdapter>();
+            // The endpoint is checked as the host resolves its hosted services, the first point the
+            // registered endpoints are known: a misspelled or missing name aborts host startup before
+            // any listener binds, instead of failing every query.
             services.AddSingleton<IHostedService>(sp =>
-                new ProtocolAdapterHostedService(sp.GetRequiredService<PgWireAdapter>()));
+            {
+                MountAuthRequirement.RequireOneServedEndpoint(sp, options.Endpoint,
+                    nameof(AddBifrostPgwire), $"{nameof(PgWireOptions)}.{nameof(PgWireOptions.Endpoint)}");
+                return new ProtocolAdapterHostedService(sp.GetRequiredService<PgWireAdapter>());
+            });
 
             // Bind a plain-TCP listener; the handler answers SSLRequest and upgrades to
             // TLS itself (STARTTLS-style), which Kestrel HTTPS cannot express.

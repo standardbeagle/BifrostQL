@@ -30,6 +30,8 @@ namespace BifrostQL.Server.OData
             var options = app.ApplicationServices.GetService<ODataOptions>();
             if (options is null || !options.Enabled)
                 return app;
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.Endpoint,
+                nameof(UseBifrostOData), $"{nameof(ODataOptions)}.{nameof(ODataOptions.Endpoint)}");
 
             app.ApplicationServices.GetService<ILoggerFactory>()
                 ?.CreateLogger("BifrostQL.Server.OData")

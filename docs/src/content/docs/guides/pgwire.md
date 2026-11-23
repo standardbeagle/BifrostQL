@@ -58,7 +58,7 @@ builder.Services.AddSingleton<IPgCredentialStore, MyCredentialStore>();
 | `MaxAuthAttemptsPerSource` | `100` | Authentication attempts (SCRAM or cleartext) admitted from one client IP per `AuthRateLimitWindow`. Over the cap, the refusal is issued before any credential lookup or PBKDF2 work, with the same `28P01 invalid_password` shape as a wrong password. |
 | `MaxAuthAttemptsPerAccount` | `100` | Authentication attempts admitted against one login name per `AuthRateLimitWindow`, whatever their source. Same refusal as the per-source cap. Every connection counts, so set it above the rate a connection pool for one login reconnects. |
 | `AuthRateLimitWindow` | `1m` | Fixed window for both authentication caps. |
-| `Endpoint` | `null` | Registered BifrostQL endpoint path to read against; `null` selects the single endpoint. |
+| `Endpoint` | `null` | Registered BifrostQL endpoint path to read against; `null` selects the single endpoint. Unset with several endpoints registered, or a path none is registered under, refuses to start. |
 
 ## Authentication and identity mapping
 

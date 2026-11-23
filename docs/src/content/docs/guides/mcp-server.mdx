@@ -145,6 +145,8 @@ var mcpAuth = new McpAuthOptions
 };
 
 builder.Services.AddBifrostMcpHttp(mcpAuth, endpoint: "/graphql");
+// endpoint null = the single registered endpoint. Unset on a multi-endpoint host, or a
+// path no endpoint is registered under, fails host startup.
 
 // ... later, on the app:
 app.MapBifrostMcp("/mcp");   // default route is /mcp

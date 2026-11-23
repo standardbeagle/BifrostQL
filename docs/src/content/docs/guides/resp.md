@@ -44,7 +44,7 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 |--------|---------|---------|
 | `Port` | `6379` | TCP port the front door listens on. |
 | `RequireAuthentication` | `true` | When true, a connection must complete `AUTH` (or inline `HELLO … AUTH`) before any identity-bearing command runs; until then those commands are refused with `NOAUTH`. There is no anonymous mode unless a deployment explicitly sets this `false`. |
-| `Endpoint` | `null` | Registered BifrostQL endpoint path to read/write against; `null` selects the single registered endpoint. |
+| `Endpoint` | `null` | Registered BifrostQL endpoint path to read/write against; `null` selects the single registered endpoint. Unset with several endpoints registered, or a path none is registered under, refuses to start. |
 | `EnableWrites` | `false` | Master gate for the write surface (SET/HSET/MSET/DEL). Off by default: every write is refused with a clean `-ERR` and executes nothing until a deployment opts in. |
 | `MaxBulkLength` | `1048576` (1 MiB) | DoS guard on the unauthenticated path: a bulk/inline length prefix beyond this is refused, never allocated. |
 | `MaxFrameLength` | `1048576` (1 MiB) | DoS guard on the total byte length of one top-level frame, elements of nested aggregates included. The per-element caps bound only single parts; without this a frame built from individually legal parts could reach roughly 1 TiB, all of it retained until the frame completes. Charged per consumed byte and checked before any payload is allocated; reset at each top-level frame. |

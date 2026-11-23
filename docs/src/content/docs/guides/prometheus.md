@@ -45,7 +45,8 @@ builder.Services.AddBifrostPrometheus(p =>
     p.Exposition = new PrometheusExpositionOptions
     {
         RoutePath = "/metrics",                 // default /metrics
-        Endpoint = "/graphql",                  // which registered BifrostQL endpoint backs the metrics
+        Endpoint = "/graphql",                  // which registered BifrostQL endpoint backs the metrics;
+                                                // UseBifrostPrometheus refuses to start if none is registered there
         CacheTtl = TimeSpan.FromSeconds(10),    // single-flight cache freshness window
         GlobalMaxCardinality = 1000,            // backstop on label-value series per metric; null disables
         MaxRequestBodyBytes = 0,                // a scrape is a body-less GET

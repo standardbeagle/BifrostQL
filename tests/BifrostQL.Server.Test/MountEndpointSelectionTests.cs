@@ -1,5 +1,18 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules.Chat;
+using BifrostQL.Server.Feeds;
+using BifrostQL.Server.Ldap;
+using BifrostQL.Server.OData;
+using BifrostQL.Server.Pgwire;
+using BifrostQL.Server.Prometheus;
+using BifrostQL.Server.Resp;
+using BifrostQL.Server.S3;
+using BifrostQL.Server.Test.Ldap;
+using BifrostQL.Server.Test.Pgwire;
+using BifrostQL.Server.Test.Resp;
+using BifrostQL.Server.Test.S3;
 using BifrostQL.Sqlite;
+using NSubstitute;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -12,16 +25,19 @@ using Xunit;
 namespace BifrostQL.Server.Test;
 
 /// <summary>
-/// The HTTP mounts that serve a host-configured GraphQL endpoint (<c>/_blob</c>,
-/// <c>/_app-metadata</c>, the binary WebSocket) choose it at mount time, as
+/// Every front door that serves a host-configured GraphQL endpoint chooses it at startup, as
 /// <c>/_saved-objects</c> does (<see cref="SavedObjectsEndpointSelectionTests"/>). A misspelled
-/// name, or none named on a multi-endpoint host, used to pass the mount because
-/// MountAuthRequirement's single-endpoint fallback resolved an auth requirement anyway; every
-/// request then failed (blob 503, app-metadata unhandled 500, binary a result error).
+/// name, or none named on a multi-endpoint host, used to start the front door and fail every
+/// request: the HTTP mounts (blob 503, app-metadata unhandled 500, binary a result error) because
+/// MountAuthRequirement's single-endpoint fallback resolved an auth requirement anyway, the rest
+/// (chat, S3, OData, feeds, Prometheus, pgwire, RESP, LDAP) because nothing checked the name
+/// until a request resolved the model. The raw-wire listeners refuse when the host starts its
+/// hosted services, before any listener binds. gRPC already refused at
+/// <c>MapBifrostGrpcAsync</c>, which loads the model; MCP over HTTP is pinned in BifrostQL.Mcp.Test.
 /// </summary>
 public sealed class MountEndpointSelectionTests : IAsyncLifetime
 {
-    public enum Mount { Blob, AppMetadata, Binary }
+    public enum Mount { Blob, AppMetadata, Binary, Chat, S3, OData, Feeds, Prometheus, Pgwire, Resp, Ldap }
 
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"mount-endpoint-{Guid.NewGuid():N}.db");
     private IHost? _host;
@@ -64,8 +80,50 @@ public sealed class MountEndpointSelectionTests : IAsyncLifetime
                             e.Path = path;
                             e.DisableAuth = true;
                         });
+                    if (mount == Mount.S3)
+                        o.AddS3Endpoint(s3 => s3.Endpoint = endpoint);
+                    if (mount == Mount.OData)
+                        o.AddODataEndpoint(odata => odata.Endpoint = endpoint);
                 });
                 services.AddBifrostEngine();
+                switch (mount)
+                {
+                    case Mount.Chat:
+                        services.AddSingleton(Substitute.For<IChatCompletionService>());
+                        break;
+                    case Mount.S3:
+                        services.AddSingleton<IS3AccessKeyStore>(new FakeS3AccessKeyStore());
+                        break;
+                    case Mount.Feeds:
+                        services.AddBifrostFeeds(
+                            new FeedOptions { Title = "t", Link = "https://example.test/", Author = "a" },
+                            o => o.Endpoint = endpoint);
+                        break;
+                    case Mount.Prometheus:
+                        // The exposition option is non-null by default ("/graphql"); null is still
+                        // "the single endpoint" for the mount check, so both refusals apply.
+                        services.AddBifrostPrometheus(o => o.Exposition = new PrometheusExpositionOptions { Endpoint = endpoint! });
+                        break;
+                    case Mount.Pgwire:
+                        services.AddSingleton<IPgCredentialStore>(new FakePgCredentialStore());
+                        services.AddBifrostPgwire(o =>
+                        {
+                            o.Endpoint = endpoint;
+                            o.ServerCertificate = LdapTestCertificate.Instance;
+                        });
+                        break;
+                    case Mount.Resp:
+                        services.AddSingleton<IRespCredentialStore>(new FakeRespCredentialStore());
+                        services.AddBifrostResp(o =>
+                        {
+                            o.Endpoint = endpoint;
+                            o.RequireAuthentication = false;
+                        });
+                        break;
+                    case Mount.Ldap:
+                        services.AddBifrostLdap(o => o.Endpoint = endpoint);
+                        break;
+                }
             });
             web.Configure(app =>
             {
@@ -82,14 +140,37 @@ public sealed class MountEndpointSelectionTests : IAsyncLifetime
                         app.UseWebSockets();
                         app.UseBifrostBinary(graphqlPath: endpoint);
                         break;
+                    case Mount.Chat:
+                        app.UseBifrostChat(o => o.GraphQlEndpoint = endpoint);
+                        break;
+                    case Mount.S3:
+                        app.UseBifrostS3();
+                        break;
+                    case Mount.OData:
+                        app.UseBifrostOData();
+                        break;
+                    case Mount.Feeds:
+                        app.UseBifrostFeeds();
+                        break;
+                    case Mount.Prometheus:
+                        app.UseBifrostPrometheus();
+                        break;
                 }
             });
         }).StartAsync();
 
     [Theory]
-    [InlineData(Mount.Blob, "*Endpoint*")]
+    [InlineData(Mount.Blob, "*BifrostBlobOptions.Endpoint*")]
     [InlineData(Mount.AppMetadata, "*GraphQlEndpoint*")]
     [InlineData(Mount.Binary, "*graphqlPath*")]
+    [InlineData(Mount.Chat, "*BifrostChatOptions.GraphQlEndpoint*")]
+    [InlineData(Mount.S3, "*S3Options.Endpoint*")]
+    [InlineData(Mount.OData, "*ODataOptions.Endpoint*")]
+    [InlineData(Mount.Feeds, "*FeedEndpointOptions.Endpoint*")]
+    [InlineData(Mount.Prometheus, "*PrometheusExpositionOptions.Endpoint*")]
+    [InlineData(Mount.Pgwire, "*PgWireOptions.Endpoint*")]
+    [InlineData(Mount.Resp, "*RespWireOptions.Endpoint*")]
+    [InlineData(Mount.Ldap, "*LdapWireOptions.Endpoint*")]
     public async Task Mount_RefusesToStart_WhenSeveralEndpointsAreRegisteredAndNoneIsNamed(Mount mount, string message)
     {
         var start = () => StartAsync(mount, null, "/graphql", "/other");
@@ -101,6 +182,14 @@ public sealed class MountEndpointSelectionTests : IAsyncLifetime
     [InlineData(Mount.Blob)]
     [InlineData(Mount.AppMetadata)]
     [InlineData(Mount.Binary)]
+    [InlineData(Mount.Chat)]
+    [InlineData(Mount.S3)]
+    [InlineData(Mount.OData)]
+    [InlineData(Mount.Feeds)]
+    [InlineData(Mount.Prometheus)]
+    [InlineData(Mount.Pgwire)]
+    [InlineData(Mount.Resp)]
+    [InlineData(Mount.Ldap)]
     public async Task Mount_RefusesToStart_WhenTheNamedEndpointIsNotRegistered(Mount mount)
     {
         // A single registered endpoint is exactly where the auth fallback masked the typo.
@@ -113,6 +202,14 @@ public sealed class MountEndpointSelectionTests : IAsyncLifetime
     [InlineData(Mount.Blob)]
     [InlineData(Mount.AppMetadata)]
     [InlineData(Mount.Binary)]
+    [InlineData(Mount.Chat)]
+    [InlineData(Mount.S3)]
+    [InlineData(Mount.OData)]
+    [InlineData(Mount.Feeds)]
+    [InlineData(Mount.Prometheus)]
+    [InlineData(Mount.Pgwire)]
+    [InlineData(Mount.Resp)]
+    [InlineData(Mount.Ldap)]
     public async Task Mount_Starts_WhenItNamesARegisteredEndpoint_OnAMultiEndpointHost(Mount mount)
     {
         // Control for both refusals: a registered name (any case) mounts.
@@ -125,6 +222,14 @@ public sealed class MountEndpointSelectionTests : IAsyncLifetime
     [InlineData(Mount.Blob)]
     [InlineData(Mount.AppMetadata)]
     [InlineData(Mount.Binary)]
+    [InlineData(Mount.Chat)]
+    [InlineData(Mount.S3)]
+    [InlineData(Mount.OData)]
+    [InlineData(Mount.Feeds)]
+    [InlineData(Mount.Prometheus)]
+    [InlineData(Mount.Pgwire)]
+    [InlineData(Mount.Resp)]
+    [InlineData(Mount.Ldap)]
     public async Task Mount_Starts_WhenNoneIsNamed_OnASingleEndpointHost(Mount mount)
     {
         // Null still selects the single registered endpoint (the binary mount's default).

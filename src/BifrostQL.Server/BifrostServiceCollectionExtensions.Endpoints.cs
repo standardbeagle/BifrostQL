@@ -182,6 +182,8 @@ namespace BifrostQL.Server
                 throw new InvalidOperationException(
                     "The S3 endpoint is enabled but no IS3AccessKeyStore is registered. " +
                     "Register one (there is no fallback identity source) before UseBifrostS3.");
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.Endpoint,
+                nameof(UseBifrostS3), $"{nameof(S3Options)}.{nameof(S3Options.Endpoint)}");
 
             app.ApplicationServices.GetService<ILoggerFactory>()
                 ?.CreateLogger("BifrostQL.Server.S3")

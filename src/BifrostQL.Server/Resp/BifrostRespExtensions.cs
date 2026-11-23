@@ -78,8 +78,15 @@ namespace BifrostQL.Server.Resp
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();
+            // The endpoint is checked as the host resolves its hosted services, the first point the
+            // registered endpoints are known: a misspelled or missing name aborts host startup before
+            // any listener binds, instead of failing every query.
             services.AddSingleton<IHostedService>(sp =>
-                new ProtocolAdapterHostedService(sp.GetRequiredService<RespWireAdapter>()));
+            {
+                MountAuthRequirement.RequireOneServedEndpoint(sp, options.Endpoint,
+                    nameof(AddBifrostResp), $"{nameof(RespWireOptions)}.{nameof(RespWireOptions.Endpoint)}");
+                return new ProtocolAdapterHostedService(sp.GetRequiredService<RespWireAdapter>());
+            });
 
             // Bind the listener; the handler speaks RESP on the (optionally TLS-terminated) socket.
             //

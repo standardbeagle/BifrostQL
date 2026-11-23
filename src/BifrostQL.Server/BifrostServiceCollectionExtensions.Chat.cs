@@ -50,6 +50,8 @@ namespace BifrostQL.Server
                 || services.GetService<IMutationIntentExecutor>() is null)
                 throw new InvalidOperationException(
                     "The intent executors are not registered. Call AddBifrostEndpoints (or AddBifrostQL) before UseBifrostChat.");
+            MountAuthRequirement.RequireOneServedEndpoint(services, options.GraphQlEndpoint,
+                nameof(UseBifrostChat), $"{nameof(BifrostChatOptions)}.{nameof(BifrostChatOptions.GraphQlEndpoint)}");
 
             // Startup health gate: constructing the completion service performs its
             // fail-fast configuration checks (e.g. the Anthropic api-key check).

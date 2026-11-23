@@ -58,7 +58,7 @@ app.UseBifrostFeeds();
 
 `FeedOptions.Title`/`Link`/`Description`/`Author` are operator-supplied channel metadata — never row data — but the writers still XML-escape them. `MaxItems`/`DefaultItems` are the only bounds: a caller's requested `limit` is clamped under `MaxItems`, so no request can widen the page.
 
-With multiple registered endpoints, set `Endpoint` explicitly; an unknown path fails fast rather than silently falling back to another database.
+With multiple registered endpoints, set `Endpoint` explicitly. `UseBifrostFeeds()` refuses to start (`InvalidOperationException`) when it is unset with several endpoints registered, or names a path no endpoint is registered under, rather than start and fail every request.
 
 ## URL, query, and format behavior
 

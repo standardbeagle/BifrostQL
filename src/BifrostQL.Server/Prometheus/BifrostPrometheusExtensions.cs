@@ -109,6 +109,8 @@ namespace BifrostQL.Server.Prometheus
             var options = app.ApplicationServices.GetService<PrometheusExpositionOptions>();
             if (options is null)
                 return app; // not configured → inert.
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.Endpoint,
+                nameof(UseBifrostPrometheus), $"{nameof(PrometheusExpositionOptions)}.{nameof(PrometheusExpositionOptions.Endpoint)}");
 
             // Force gate construction now so the arming posture warning is logged at startup, not on
             // the first scrape (the gate is otherwise a lazily-resolved singleton).

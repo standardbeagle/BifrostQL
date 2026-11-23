@@ -84,6 +84,8 @@ namespace BifrostQL.Server.Feeds
             var options = app.ApplicationServices.GetService<FeedEndpointOptions>();
             if (options is null || !options.Enabled)
                 return app;
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.Endpoint,
+                nameof(UseBifrostFeeds), $"{nameof(FeedEndpointOptions)}.{nameof(FeedEndpointOptions.Endpoint)}");
 
             app.ApplicationServices.GetService<ILoggerFactory>()
                 ?.CreateLogger("BifrostQL.Server.Feeds")

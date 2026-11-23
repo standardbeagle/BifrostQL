@@ -59,8 +59,15 @@ namespace BifrostQL.Mcp
 
             // Surface the startup posture once (writes/anonymous opt-ins are posture
             // changes worth logging), mirroring the stdio adapter's startup warning.
-            services.AddHostedService(sp => new McpHttpPostureLogger(
-                sp.GetRequiredService<ILoggerFactory>().CreateLogger<BifrostMcpAdapter>(), options));
+            // The endpoint is checked as the host resolves its hosted services, the first point the
+            // registered endpoints are known: a misspelled or missing name aborts host startup
+            // instead of failing every tool call.
+            services.AddHostedService(sp =>
+            {
+                MountAuthRequirement.RequireOneServedEndpoint(sp, endpoint, nameof(AddBifrostMcpHttp), nameof(endpoint));
+                return new McpHttpPostureLogger(
+                    sp.GetRequiredService<ILoggerFactory>().CreateLogger<BifrostMcpAdapter>(), options);
+            });
 
             return services
                 .AddMcpServer(server =>

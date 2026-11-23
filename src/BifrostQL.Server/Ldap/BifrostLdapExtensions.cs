@@ -102,8 +102,15 @@ namespace BifrostQL.Server.Ldap
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<LdapWireAdapter>();
+            // The endpoint is checked as the host resolves its hosted services, the first point the
+            // registered endpoints are known: a misspelled or missing name aborts host startup before
+            // any listener binds, instead of failing every query.
             services.AddSingleton<IHostedService>(sp =>
-                new ProtocolAdapterHostedService(sp.GetRequiredService<LdapWireAdapter>()));
+            {
+                MountAuthRequirement.RequireOneServedEndpoint(sp, options.Endpoint,
+                    nameof(AddBifrostLdap), $"{nameof(LdapWireOptions)}.{nameof(LdapWireOptions.Endpoint)}");
+                return new ProtocolAdapterHostedService(sp.GetRequiredService<LdapWireAdapter>());
+            });
 
             // Bind a plain-TCP listener; the handler speaks LDAP/BER directly on the raw socket. The
             // bind address is the declared exposure posture — loopback unless the host widened it

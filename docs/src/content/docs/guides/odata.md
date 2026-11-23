@@ -59,7 +59,7 @@ enabling OData touches no GraphQL or binary service.
 | `Enabled` | `false` | Master gate. Off by default; the endpoint serves nothing until a deployment opts in. |
 | `RoutePrefix` | `/odata` | Path prefix the endpoint listens under. The adapter mounts on its own branch here; existing routes are untouched. |
 | `Realm` | `BifrostQL` | Label advertised in the `WWW-Authenticate` challenge on a 401. Only a hint for interactive Basic clients; carries no security weight. |
-| `Endpoint` | `null` | Which registered BifrostQL endpoint's cached model/connection to read against; `null` selects the single registered endpoint. |
+| `Endpoint` | `null` | Which registered BifrostQL endpoint's cached model/connection to read against; `null` selects the single registered endpoint. Unset with several endpoints registered, or a path none is registered under, refuses to start. |
 | `DefaultPageSize` | `100` | Page size applied to a collection read when the request supplies no `$top`. Every collection response is bounded — a caller can never pull an unbounded result set in one request. |
 | `MaxPageSize` | `1000` | Hard ceiling on one page. A `$top` above it is served in pages of at most this many rows, linked by `nextLink`, until `$top` rows have been returned. |
 | `ContinuationTokenSecret` | `null` | HMAC secret the opaque `$skiptoken` continuation token is signed with. When set, `nextLink` tokens survive restarts and resolve across a scaled fleet; when unset, a per-instance random key is used (a startup warning is logged) and tokens live only for the process's lifetime. The token carries position only — it is never the authorization boundary. |

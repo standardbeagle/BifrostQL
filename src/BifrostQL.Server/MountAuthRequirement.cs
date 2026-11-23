@@ -92,6 +92,25 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Refuses, at mount time, a mount keyed by its own path (<c>UseBifrostFrontend</c> /
+        /// <c>UseBifrostGraphQL</c>) that serves no endpoint: a path no endpoint is registered under
+        /// (case-insensitive, as <c>app.Map</c> and <see cref="Resolve"/> match it) while several are
+        /// registered. With exactly one registered, such a mount serves it through
+        /// <c>BifrostEngine</c>'s single-endpoint fallback, a supported shape, so it passes.
+        /// </summary>
+        /// <param name="services">The application services holding the registered endpoints.</param>
+        /// <param name="mountPath">The mount path, which is also the endpoint key.</param>
+        /// <param name="mount">The mount method named in the error (<c>UseBifrostFrontend</c>).</param>
+        internal static void RequireServedOrSoleEndpoint(IServiceProvider services, string mountPath, string mount)
+        {
+            var endpoints = services.GetRequiredService<PathCache<Inputs>>();
+            if (endpoints.Count > 1 && !endpoints.HasPath(mountPath.ToLowerInvariant()))
+                throw new InvalidOperationException(
+                    $"{mount}: path '{mountPath}' is not a registered GraphQL endpoint and {endpoints.Count} " +
+                    "are registered; mount it at the path of the endpoint it serves.");
+        }
+
+        /// <summary>
         /// The requirement once the served endpoint is known — used directly by the
         /// GraphQL mounts in <c>UseBifrostEndpoints</c>, which already hold their
         /// endpoint. A null endpoint is the unidentified/ambiguous case: fail closed.

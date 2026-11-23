@@ -14,11 +14,11 @@ using Xunit;
 namespace BifrostQL.Server.Test;
 
 /// <summary>
-/// <c>BifrostEngine</c> refuses a request whose mount path is not a registered GraphQL endpoint
-/// when several are registered. Since <c>UseBifrostBinary</c> refuses an unset or unknown
-/// <c>graphqlPath</c> at mount time (MountEndpointSelectionTests), only a protocol frontend
-/// mounted at a non-endpoint path reaches that refusal, so its text must name that mount and not
-/// tell the operator to configure the binary transport.
+/// <c>UseBifrostFrontend</c> / <c>UseBifrostGraphQL</c> key their endpoint by the mount path. A
+/// mount at a path that is not a registered endpoint serves the single endpoint when exactly one
+/// is registered; with several, it has no target and used to start and fail every request with
+/// <c>BifrostEngine</c>'s ambiguity error. It now refuses at mount time, like every front door
+/// that names its endpoint (MountEndpointSelectionTests).
 /// </summary>
 public sealed class FrontendEndpointFallbackTests : IAsyncLifetime
 {
@@ -80,14 +80,37 @@ public sealed class FrontendEndpointFallbackTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FrontendAtANonEndpointPath_OnAMultiEndpointHost_NamesTheFrontendMount()
+    public async Task FrontendAtANonEndpointPath_OnAMultiEndpointHost_RefusesToStart()
     {
-        var body = await PostWidgetsAsync(FrontendPath, "/graphql", "/other");
+        var start = () => PostWidgetsAsync(FrontendPath, "/graphql", "/other");
 
-        body.GetProperty("errors")[0].GetProperty("message").GetString().Should().Be(
-            "This mount's path is not a registered GraphQL endpoint and more than one endpoint is " +
-            "registered, so it has no target database. Mount UseBifrostFrontend / UseBifrostGraphQL " +
-            "at the path of the endpoint it serves.");
+        (await start.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("UseBifrostFrontend: path '/front' is not a registered GraphQL endpoint*2*");
+    }
+
+    [Fact]
+    public async Task FrontendAtARegisteredEndpointPath_OnAMultiEndpointHost_ServesThatEndpoint()
+    {
+        // Control: naming a registered endpoint (any case, as app.Map matches) still starts.
+        var body = await PostWidgetsAsync("/Other", "/graphql", "/other");
+
+        body.TryGetProperty("errors", out _).Should().BeFalse(body.ToString());
+        body.GetProperty("data").GetProperty("widgets").GetProperty("data").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Engine_CalledDirectlyWithANonEndpointPath_OnAMultiEndpointHost_RefusesTheRequest()
+    {
+        // The engine keeps its own refusal for hosts that call IBifrostEngine directly.
+        await PostWidgetsAsync("/graphql", "/graphql", "/other");
+        var engine = _host!.Services.GetRequiredService<BifrostQL.Core.Resolvers.IBifrostEngine>();
+
+        var result = await engine.ExecuteAsync(
+            new BifrostQL.Core.Resolvers.BifrostRequest { Query = "{ widgets { data { id } } }" }, FrontendPath);
+
+        result.Errors.Should().ContainSingle().Which.Message.Should().Be(
+            "The endpoint path is not a registered GraphQL endpoint and more than one endpoint is " +
+            "registered, so it has no target database. Pass the path of the endpoint to serve.");
     }
 
     [Fact]

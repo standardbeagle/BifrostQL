@@ -179,6 +179,9 @@ namespace BifrostQL.Server
             bool? requireAuthentication = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
+            // The mount path is the endpoint key: on a multi-endpoint host a path that names no
+            // endpoint has no target, so refuse here instead of failing every request.
+            MountAuthRequirement.RequireServedOrSoleEndpoint(app.ApplicationServices, path, nameof(UseBifrostFrontend));
             var requiresAuth = requireAuthentication
                 ?? MountAuthRequirement.Resolve(app.ApplicationServices, path);
             app.Map(path, branch =>

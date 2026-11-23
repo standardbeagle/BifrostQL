@@ -125,19 +125,19 @@ namespace BifrostQL.Server
                 // HTTP path enforces (see BifrostHttpMiddleware, UnknownBifrostEndpointException).
                 // With multiple endpoints, "first" is nondeterministic, so refuse instead
                 // (returned as a result error, consistent with the profile-gate path below).
-                // UseBifrostBinary cannot get here: it refuses an unset or unknown graphqlPath on
-                // a multi-endpoint host at mount time (MountAuthRequirement.RequireOneServedEndpoint).
-                // What reaches it is a protocol frontend (UseBifrostFrontend / UseBifrostGraphQL)
-                // mounted at a path that is not a registered endpoint, so the text names that mount.
+                // The shipped mounts cannot get here: UseBifrostBinary refuses an unset or unknown
+                // graphqlPath (MountAuthRequirement.RequireOneServedEndpoint) and UseBifrostFrontend /
+                // UseBifrostGraphQL refuse a non-endpoint path (RequireServedOrSoleEndpoint) on a
+                // multi-endpoint host at mount time. What remains is a host calling
+                // IBifrostEngine.ExecuteAsync directly with such a path.
                 if (_pathCache.Count > 1)
                     return new BifrostResult
                     {
                         Data = null,
                         Errors = new[] { new BifrostResultError
                         {
-                            Message = "This mount's path is not a registered GraphQL endpoint and more than one endpoint is " +
-                                "registered, so it has no target database. Mount UseBifrostFrontend / UseBifrostGraphQL " +
-                                "at the path of the endpoint it serves.",
+                            Message = "The endpoint path is not a registered GraphQL endpoint and more than one endpoint is " +
+                                "registered, so it has no target database. Pass the path of the endpoint to serve.",
                         }},
                     };
 

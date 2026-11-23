@@ -68,7 +68,7 @@ namespace BifrostQL.Server
         /// <para>Every front door that takes a host-configured endpoint calls this once at startup:
         /// the HTTP mounts in their <c>UseBifrost*</c> method, the raw-wire adapters (pgwire, RESP,
         /// LDAP) and MCP over HTTP as the host resolves their hosted service, before any listener
-        /// binds. gRPC needs no call: <c>MapBifrostGrpcAsync</c> loads the endpoint's model.</para>
+        /// binds, and the stdio MCP adapter as the host constructs it. gRPC needs no call: <c>MapBifrostGrpcAsync</c> loads the endpoint's model.</para>
         /// </summary>
         /// <param name="services">The application services holding the registered endpoints.</param>
         /// <param name="endpointPath">The configured endpoint path; null selects the single endpoint.</param>

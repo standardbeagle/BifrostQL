@@ -50,6 +50,11 @@ namespace BifrostQL.Mcp
         {
             ArgumentNullException.ThrowIfNull(services);
             var options = authOptions ?? new McpAuthOptions();
+            if (options.Endpoint is not null)
+                throw new ArgumentException(
+                    $"{nameof(AddBifrostMcpHttp)} takes its endpoint as the {nameof(endpoint)} argument; " +
+                    $"{nameof(McpAuthOptions)}.{nameof(McpAuthOptions.Endpoint)} configures the stdio adapter only.",
+                    nameof(authOptions));
 
             // Required by the per-request identity guard: the MCP HTTP transport flows the
             // originating request's ExecutionContext with each JSON-RPC message, so the

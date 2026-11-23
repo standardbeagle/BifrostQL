@@ -96,6 +96,11 @@ builder.Services.AddBifrostQL(o => o
     .AddProtocolAdapter<BifrostMcpAdapter>());
 ```
 
+On a host with several GraphQL endpoints, name the one the tools run against with
+`McpAuthOptions.Endpoint` (for example `Endpoint = "/graphql"`). Null selects the
+single registered endpoint; unset on a multi-endpoint host, or a path no endpoint is
+registered under, fails host startup.
+
 Because the host process now speaks MCP JSON-RPC on stdout, **nothing else in
 the process may write to stdout**. Configure logging to stderr or a file.
 
@@ -181,6 +186,7 @@ anonymously by accident.
 | `BearerToken` | `null` | A single static token for the session (used only in `Bearer` mode when `CredentialSource` is unset). Null/empty presents no credential → fail closed. |
 | `CredentialSource` | `null` | Per-transport delegate that reads *where* the raw credential lives — build one with `McpCredentialSources.FromEnvironment(...)` (stdio) or `.FromAuthorizationHeader(...)` (HTTP). Returns null → fail closed. |
 | `ValidateBearerToken` | `null` | Host-supplied JWT handler: a token → `ClaimsPrincipal` (valid) or `null` (invalid). The adapter reads no claims itself; it hands the whole principal to the factory. |
+| `Endpoint` | `null` | stdio only: the registered GraphQL endpoint path the tools run against; null = the single registered endpoint. Checked at host startup. MCP over HTTP takes `AddBifrostMcpHttp(..., endpoint:)` instead and refuses options that set this. |
 | `CredentialStore` | `null` | Optional OIDC / token-exchange store (`IMcpCredentialStore`). When set, the extracted upstream token is exchanged for a candidate principal instead of using `ValidateBearerToken`. A failed/unknown exchange resolves to `null` — never an ambient identity. Off unless configured. |
 
 ## Security posture (as implemented)

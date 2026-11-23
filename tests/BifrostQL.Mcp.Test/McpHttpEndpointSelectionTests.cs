@@ -96,6 +96,14 @@ public sealed class McpHttpEndpointSelectionTests : IAsyncLifetime
     }
 
     [Fact]
+    public void McpHttp_RefusesTheStdioEndpointOption_InsteadOfIgnoringIt()
+    {
+        var add = () => new ServiceCollection().AddBifrostMcpHttp(new McpAuthOptions { Endpoint = "/graphql" });
+
+        add.Should().Throw<ArgumentException>().WithMessage("*endpoint argument*McpAuthOptions.Endpoint*");
+    }
+
+    [Fact]
     public async Task McpHttp_Starts_WhenNoneIsNamed_OnASingleEndpointHost()
     {
         _host = await StartAsync(null, "/graphql");

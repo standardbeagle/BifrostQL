@@ -126,6 +126,16 @@ namespace BifrostQL.Mcp
         /// full surface is visible). Applied by <see cref="BifrostMcpServerFactory.CreateServerOptions"/>.
         /// </summary>
         public McpToolPolicyOptions ToolPolicy { get; set; } = new();
+
+        /// <summary>
+        /// The registered GraphQL endpoint path whose cached model and connection the stdio
+        /// <see cref="BifrostMcpAdapter"/>'s tools run against; null selects the single registered
+        /// endpoint. Checked when the host resolves the adapter: null on a multi-endpoint host, or
+        /// a path no endpoint is registered under, aborts host startup. MCP over HTTP takes its
+        /// endpoint as <see cref="BifrostMcpHttpExtensions.AddBifrostMcpHttp"/>'s <c>endpoint</c>
+        /// argument and refuses an options object that sets this one.
+        /// </summary>
+        public string? Endpoint { get; set; }
     }
 
     /// <summary>
@@ -204,6 +214,12 @@ namespace BifrostQL.Mcp
             _authOptions = authOptions ?? new McpAuthOptions();
             _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
             _logger = _loggerFactory.CreateLogger<BifrostMcpAdapter>();
+
+            // The host resolves the adapter as it starts its hosted services, the first point the
+            // registered endpoints are known: a missing or misspelled endpoint aborts startup
+            // instead of failing every tool call.
+            MountAuthRequirement.RequireOneServedEndpoint(_services, _authOptions.Endpoint,
+                nameof(BifrostMcpAdapter), $"{nameof(McpAuthOptions)}.{nameof(McpAuthOptions.Endpoint)}");
         }
 
         /// <summary>
@@ -375,6 +391,29 @@ namespace BifrostQL.Mcp
                 authOptions.Mode, authOptions.EnableWrites ? "enabled" : "disabled");
         }
 
+        /// <summary>
+        /// Builds the session's MCP surface: the auth posture, the write opt-in, the tool policy and
+        /// any declarative tools, bound to the configured endpoint. Extracted from
+        /// <see cref="StartAsync"/> so the surface is testable without engaging the stdio transport.
+        /// </summary>
+        internal async Task<McpServerOptions> CreateServerOptionsAsync(CancellationToken cancellationToken)
+        {
+            // Declarative tools are opt-in: present only when AddBifrostMcpTools registered a
+            // document. Absent, the factory publishes only the built-in surface (inert).
+            var declarativeTools = _services.GetService(typeof(DeclarativeToolDocumentProvider)) is DeclarativeToolDocumentProvider documents
+                ? await documents.GetAsync(cancellationToken)
+                : null;
+            return BifrostMcpServerFactory.CreateServerOptions(
+                _executor,
+                _authOptions.Endpoint,
+                userContextProviderAsync: ConfigureAuth(),
+                mutationExecutor: _mutationExecutor,
+                enableWrites: _authOptions.EnableWrites,
+                toolPolicy: _authOptions.ToolPolicy,
+                logger: _logger,
+                declarativeTools: declarativeTools);
+        }
+
         public async Task StartAsync(CancellationToken cancellationToken)
         {
             if (_server is not null)
@@ -384,19 +423,7 @@ namespace BifrostQL.Mcp
             // session; once RunAsync starts, only StopAsync (via _stopping) ends it.
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Declarative tools are opt-in: present only when AddBifrostMcpTools registered a
-            // document. Absent, the factory publishes only the built-in surface (inert).
-            var declarativeTools = _services.GetService(typeof(DeclarativeToolDocumentProvider)) is DeclarativeToolDocumentProvider documents
-                ? await documents.GetAsync(cancellationToken)
-                : null;
-            var options = BifrostMcpServerFactory.CreateServerOptions(
-                _executor,
-                userContextProviderAsync: ConfigureAuth(),
-                mutationExecutor: _mutationExecutor,
-                enableWrites: _authOptions.EnableWrites,
-                toolPolicy: _authOptions.ToolPolicy,
-                logger: _logger,
-                declarativeTools: declarativeTools);
+            var options = await CreateServerOptionsAsync(cancellationToken);
             var transport = new StdioServerTransport(BifrostMcpServerFactory.ServerName, _loggerFactory);
             _server = McpServer.Create(transport, options, _loggerFactory, serviceProvider: null);
 

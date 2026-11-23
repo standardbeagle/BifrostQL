@@ -11,8 +11,8 @@ fetched rows itself.
 
 Under the hood the field routes through
 [`PivotSqlGenerator.GeneratePivot`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/QueryModel/PivotSqlGenerator.cs),
-which uses SQL Server's native `PIVOT` operator where available and a portable
-`CASE WHEN` cross-tab on every other dialect. The field name and aggregate-function
+which emits one portable `CASE WHEN` cross-tab on all four dialects, SQL Server
+included. The field name and aggregate-function
 enum come from a single source of truth,
 [`PivotSurface`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/Schema/PivotSurface.cs),
 so the SDL and the SQL can never disagree.
@@ -80,12 +80,12 @@ transformers **before** the distinct-value discovery query, so a cross-tenant
 pivot value never appears as an output column. This is the same fail-closed
 filter path the row and [aggregate](/BifrostQL/guides/aggregate-queries/) queries
 use. Table and column identifiers are schema-derived, and filter values and the
-null label are parameterized. Pivot *values* are data, not schema: the portable
-cross-tab binds each as a parameter, but SQL Server's native `PIVOT` writes each
-string value into its `IN` list as an escaped, bracket-quoted identifier. A value
-that cannot be an identifier (empty, or longer than 128 characters) takes the
-portable cross-tab instead, as do labels that SQL Server would read as one
-identifier (equal once trailing spaces and case are ignored).
+null label are parameterized. Pivot *values* are data, not schema: on every
+dialect each one is bound as a parameter in its own `CASE WHEN` arm and never
+appears in the SQL text. Output columns are aliased by position (`__pivot_0`,
+`__pivot_1`, …), so no label ever becomes an identifier. An empty label, a label
+of any length, and labels that a collation would fold together all pivot the same
+way, and the server matches each one under the pivot column's own collation.
 
 ## Cardinality cap
 

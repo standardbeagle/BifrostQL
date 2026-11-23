@@ -1,5 +1,7 @@
 # Pivot SQL: dialect-coupling survey
 
+> **Superseded.** SQL Server's native `PIVOT` path, `GenerateSqlServerPivot`, `GenerateCaseWhenPivot` and `SupportsNativePivot` (later `ISqlDialect.BuildNativePivot`) are gone. `PivotSqlGenerator.GeneratePivot` now emits the CASE WHEN cross-tab on every dialect and binds each pivot value as a parameter. The survey below records the earlier design.
+
 **Purpose:** Catalogue every code path in the Pivot subsystem that emits engine-specific SQL. Counterpart to `agg-dialect-survey.md`. Drives the worktrack tasks tracking pivot-related cross-dialect work.
 
 ## Trigger surface

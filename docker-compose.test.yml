@@ -12,6 +12,12 @@
 #
 # restart: unless-stopped keeps them up across reboots, so a bare `dotnet test`
 # (worktrack command steps, an IDE) finds them without going through a script.
+#
+# They are a shared host service, not a per-run fixture, so they carry no
+# `tman.run` label. Every checkout on the box runs this file under the same
+# project and container names: a per-run label would differ between runs, so a
+# second worktree's `up` would recreate the databases under the first one's
+# tests, and tman would remove them when the first run ended.
 name: bifrost-test
 
 services:

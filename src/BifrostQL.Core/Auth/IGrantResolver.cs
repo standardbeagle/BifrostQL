@@ -13,9 +13,10 @@ namespace BifrostQL.Core.Auth;
 /// client's next connection; the Prometheus scrape identity never runs it (no
 /// request service provider exists for a scoped resolver).
 ///
-/// Execution: the user-context assembly contract is synchronous, so the async
-/// signature is awaited INLINE on the request path — the call blocks a pool
-/// thread for the duration of the read. Keep the read bounded.
+/// Execution: every shipped gate awaits the resolver through
+/// <c>IBifrostAuthContextFactory.CreateUserContextAsync</c>; no thread blocks on it. It runs
+/// once per projection (an endpoint that projects the caller and also takes the policy gate
+/// runs it twice), so keep the read bounded and cheap.
 ///
 /// The hook exists for deployments whose capability sets live in the database and
 /// must take effect immediately: a token (JWT, cookie) can live for weeks, but a

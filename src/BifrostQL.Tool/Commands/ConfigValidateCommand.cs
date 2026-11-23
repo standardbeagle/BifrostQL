@@ -74,24 +74,23 @@ public sealed class ConfigValidateCommand : ICommand
                     modelValidated = true;
                 }
             }
-            // InvalidOperationException: ModelConfigValidator or an unregistered provider.
-            // ArgumentException (and its ArgumentOutOfRangeException subtype): a failed model
-            // lookup. The provider's connection-string parse error is not among them: its
-            // message names the rejected keyword, which can be part of a password holding an
-            // unquoted ';', so OpenConnFactoryAsync drops it before the model load starts.
-            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+            // Only the validator's refusal is an error in the config file.
+            catch (ModelConfigValidationException ex)
             {
                 issues.Add(new ConfigIssue(null, ex.Message));
             }
             catch (DbException ex)
             {
-                if (output.IsJsonMode)
-                {
-                    output.WriteJson(new { success = false, error = ex.Message });
-                    return 1;
-                }
-                output.WriteError($"Validation failed: {ex.Message}");
-                return 1;
+                return WriteValidationFailure(output, ex.Message);
+            }
+            // Any other failed load (a provider with no registered factory, a pool timeout) is
+            // the environment, not the file, so it is not counted against the file's rules. An
+            // ArgumentException message is withheld: it can quote connection-string text (the
+            // provider's own parse error is already dropped by OpenConnFactoryAsync).
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+            {
+                return WriteValidationFailure(output,
+                    CliErrorText.MayQuoteConnectionString(ex) ? CliErrorText.UnhandledFailure : ex.Message);
             }
         }
 
@@ -131,6 +130,16 @@ public sealed class ConfigValidateCommand : ICommand
             ? "All rules valid against the database schema."
             : "All rules parse. Pass --connection-string to validate them against the database schema.");
         return 0;
+    }
+
+    // The model could not be loaded for a reason outside the config file: one error, exit 1.
+    private static int WriteValidationFailure(OutputFormatter output, string error)
+    {
+        if (output.IsJsonMode)
+            output.WriteJson(new { success = false, error });
+        else
+            output.WriteError($"Validation failed: {error}");
+        return 1;
     }
 
     // Resolves the provider and opens one connection, so the whole connection string is parsed

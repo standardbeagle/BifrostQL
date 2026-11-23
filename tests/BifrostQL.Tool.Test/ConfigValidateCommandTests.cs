@@ -394,6 +394,39 @@ public sealed class ConfigValidateCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task MissingProviderFactory_IsAnEnvironmentFailure_NotAConfigIssue()
+    {
+        // No MySQL factory is registered in this test host, so the load fails before any rule is
+        // checked: an InvalidOperationException that is not the validator's refusal.
+        var (exit, json) = await RunAsync(
+            "Server=127.0.0.1;Port=3306;Database=app;Uid=app", "main.orders { soft-delete: deleted_at }");
+
+        exit.Should().Be(1);
+        json.TryGetProperty("issues", out _).Should().BeFalse(
+            "a missing provider package is not an error in the config file");
+        json.TryGetProperty("errorCount", out _).Should().BeFalse();
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should().Contain("No factory registered",
+            "control: the load failed on the provider, not on a rule");
+    }
+
+    [Fact]
+    public async Task MissingProviderFactory_TextOutputIsAValidationFailure_NotAnErrorCount()
+    {
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new { BifrostQL = new { Metadata = new[] { "main.orders { soft-delete: deleted_at }" } } }));
+
+        var writer = new StringWriter();
+        var exit = await new ConfigValidateCommand().ExecuteAsync(
+            ToolConfig.Parse(new[] { "config-validate", "--config", configPath, "--connection-string", "Server=127.0.0.1;Port=3306;Database=app;Uid=app" }),
+            new OutputFormatter(writer, jsonMode: false, supportsAnsi: false));
+
+        exit.Should().Be(1);
+        writer.ToString().Should().Contain("Validation failed: No factory registered")
+            .And.NotContain("error(s)");
+    }
+
+    [Fact]
     public async Task ParseErrors_SayTheModelWasNotValidated()
     {
         var connectionString = await CreateDatabaseAsync();

@@ -1,3 +1,5 @@
+using BifrostQL.Core.Schema;
+using GraphQL;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server
@@ -53,6 +55,36 @@ namespace BifrostQL.Server
                 return singleDb.IsUsingAuth;
 
             return true;
+        }
+
+        /// <summary>
+        /// Refuses, at mount time, a mount whose host-configured endpoint cannot name one
+        /// registered endpoint: null with several registered, or a path none is registered under
+        /// (matched case-insensitively, as <c>IntentEndpointResolver</c> and <see cref="Resolve"/>
+        /// match it). <see cref="Resolve"/>'s single-endpoint fallback otherwise resolves an auth
+        /// requirement for a misspelled name, so the mount starts and every request then fails
+        /// where the mount resolves its model or schema. A host with no Bifrost data path has
+        /// nothing to name; naming one there is a misconfiguration too.
+        /// </summary>
+        /// <param name="services">The application services holding the registered endpoints.</param>
+        /// <param name="endpointPath">The configured endpoint path; null selects the single endpoint.</param>
+        /// <param name="mount">The mount method named in the error (<c>UseBifrostBlobs</c>).</param>
+        /// <param name="option">The option that names the endpoint (<c>BifrostBlobOptions.Endpoint</c>).</param>
+        internal static void RequireOneServedEndpoint(
+            IServiceProvider services, string? endpointPath, string mount, string option)
+        {
+            var endpoints = services.GetService<PathCache<Inputs>>();
+            if (endpointPath is null)
+            {
+                if (endpoints is { Count: > 1 })
+                    throw new InvalidOperationException(
+                        $"{mount}: {endpoints.Count} GraphQL endpoints are registered; set {option} " +
+                        "to the one this mount serves.");
+                return;
+            }
+            if (endpoints is null || !endpoints.HasPath(endpointPath.ToLowerInvariant()))
+                throw new InvalidOperationException(
+                    $"{mount}: {option} '{endpointPath}' names no registered GraphQL endpoint.");
         }
 
         /// <summary>

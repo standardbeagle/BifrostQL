@@ -85,8 +85,11 @@ Mount it with `app.UseBifrostBlobs(...)` after `UseBifrostQL()` /
 `UseBifrostEndpoints()`; the workbench desktop host serves it by default. The
 mount takes the auth requirement of the GraphQL endpoint it reads from
 (`Endpoint`, or the single registered one), so a blob URL is gated exactly like
-the rows it serves. It requires a signed-in caller when that endpoint cannot be
-identified, and `RequireAuth` overrides the inherited value.
+the rows it serves. It requires a signed-in caller when no endpoint is
+registered, and `RequireAuth` overrides the inherited value. With several
+endpoints registered and `Endpoint` unset, or set to a path no endpoint is
+registered under, `UseBifrostBlobs` refuses to mount rather than start and fail
+every request.
 
 The **IoT Sensors** Quick Start schema ships with both: JSON documents in its
 `specifications`, `metadata`, and `configuration` columns, and real PNG photos

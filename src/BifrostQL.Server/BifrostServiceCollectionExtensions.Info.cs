@@ -53,7 +53,9 @@ namespace BifrostQL.Server
         /// authentication middleware, and a mount ahead of it sees every caller as anonymous (it then
         /// refuses them all when auth is required; it never serves them). The auth requirement is the
         /// served endpoint's, derived here by <c>MountAuthRequirement</c> unless
-        /// <see cref="BifrostAppMetadataOptions.RequireAuth"/> overrides it.</para>
+        /// <see cref="BifrostAppMetadataOptions.RequireAuth"/> overrides it. It refuses to mount when
+        /// <see cref="BifrostAppMetadataOptions.GraphQlEndpoint"/> is null with several endpoints
+        /// registered, or names no registered endpoint.</para>
         /// </summary>
         public static IApplicationBuilder UseBifrostAppMetadata(
             this IApplicationBuilder app,
@@ -62,6 +64,10 @@ namespace BifrostQL.Server
             var options = new BifrostAppMetadataOptions();
             configure?.Invoke(options);
 
+            if (options.Enabled)
+                MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.GraphQlEndpoint,
+                    nameof(UseBifrostAppMetadata),
+                    $"{nameof(BifrostAppMetadataOptions)}.{nameof(BifrostAppMetadataOptions.GraphQlEndpoint)}");
             var requiresAuth = options.RequireAuth
                 ?? MountAuthRequirement.Resolve(app.ApplicationServices, options.GraphQlEndpoint);
             if (options.Enabled)

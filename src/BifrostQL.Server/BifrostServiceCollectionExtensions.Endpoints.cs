@@ -125,6 +125,9 @@ namespace BifrostQL.Server
             TimeSpan? writeTimeout = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
+            // graphqlPath names the served endpoint; null is valid only with one registered.
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, graphqlPath,
+                nameof(UseBifrostBinary), nameof(graphqlPath));
             // The schema-resolution key is the GraphQL endpoint path, not the WebSocket mount
             // path (BifrostEngine keys the PathCache by GraphQL path). Default to the mount
             // path, which BifrostEngine falls back from to the single registered GraphQL

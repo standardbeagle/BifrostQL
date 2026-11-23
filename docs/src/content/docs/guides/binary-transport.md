@@ -69,9 +69,10 @@ apart. Serving anonymous callers is always an explicit choice: set `DisableAuth`
 endpoint, or pass `requireAuthentication: false` on the mount. A mount that cannot identify
 the endpoint it serves requires authentication.
 
-Set `graphqlPath` whenever more than one GraphQL endpoint is registered. Without it the
-mount cannot tell which endpoint it serves, so it resolves the schema by the
-single-endpoint rule and requires authentication.
+Set `graphqlPath` whenever more than one GraphQL endpoint is registered. `UseBifrostBinary`
+refuses to mount (`InvalidOperationException`) when `graphqlPath` is null with several
+endpoints registered, or names a path no endpoint is registered under, rather than starting
+and failing every request.
 
 ### Connection limits
 

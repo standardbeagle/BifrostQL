@@ -29,8 +29,8 @@ namespace BifrostQL.Server
         /// default) inherits the requirement of the GraphQL endpoint the overlay is filtered
         /// against (<see cref="GraphQlEndpoint"/>) through <c>MountAuthRequirement</c>, the one
         /// derivation every HTTP mount uses: required unless that endpoint sets
-        /// <c>DisableAuth</c>, and required whenever the endpoint cannot be identified (none
-        /// registered, or several with none named).
+        /// <c>DisableAuth</c>, and required when no endpoint is registered (several with none
+        /// named, or an unregistered name, refuse the mount).
         ///
         /// <para>The overlay enumerates entities, fields, grid columns and relationships — an
         /// introspection surface — and is always narrowed to what the caller may read. Set this
@@ -42,7 +42,9 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// The registered GraphQL endpoint path whose cached model the overlay is filtered
-        /// against. Null selects the single registered endpoint.
+        /// against. Null selects the single registered endpoint. With several registered and none
+        /// named, or a path no endpoint is registered under, <c>UseBifrostAppMetadata</c> refuses
+        /// to mount rather than guess.
         /// </summary>
         public string? GraphQlEndpoint { get; set; }
     }

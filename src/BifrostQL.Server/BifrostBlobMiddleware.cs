@@ -27,9 +27,9 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// The registered GraphQL endpoint whose cached model/connection blobs are
-        /// read from. Null selects the single registered endpoint; with multiple
-        /// endpoints it is required and misconfiguration fails closed (503), never a
-        /// silent first-endpoint fallback.
+        /// read from. Null selects the single registered endpoint. With several registered
+        /// and none named, or a path no endpoint is registered under, <c>UseBifrostBlobs</c>
+        /// refuses to mount rather than guess.
         /// </summary>
         public string? Endpoint { get; set; }
 
@@ -145,12 +145,12 @@ namespace BifrostQL.Server
             }
             catch (Exception ex)
             {
-                // Endpoint resolution failing is a DEPLOYMENT condition (multiple
-                // endpoints with none configured, unknown endpoint path), not a data
-                // condition — map it distinctly, detail server-side only.
-                _logger?.LogError(ex, "Blob endpoint could not resolve its GraphQL endpoint");
+                // The endpoint itself was checked at mount (UseBifrostBlobs), so what is left is
+                // its model failing to load (database unreachable): a server condition, not a
+                // data one — map it distinctly, detail server-side only.
+                _logger?.LogError(ex, "Blob endpoint could not load its GraphQL endpoint's model");
                 await WriteTextAsync(context, StatusCodes.Status503ServiceUnavailable,
-                    "The blob endpoint is not configured for this deployment.");
+                    "The blob endpoint is temporarily unavailable.");
                 return;
             }
 
@@ -460,12 +460,16 @@ namespace BifrostQL.Server
         /// after <c>UseBifrostQL()</c> / <c>UseBifrostEndpoints()</c>: a mount ahead of the
         /// authentication middleware they add sees every caller as anonymous. The auth requirement
         /// is the served endpoint's (<c>MountAuthRequirement</c>) unless
-        /// <see cref="BifrostBlobOptions.RequireAuth"/> overrides it.
+        /// <see cref="BifrostBlobOptions.RequireAuth"/> overrides it. Refuses to mount when
+        /// <see cref="BifrostBlobOptions.Endpoint"/> is null with several endpoints registered, or
+        /// names no registered endpoint.
         /// </summary>
         public static IApplicationBuilder UseBifrostBlobs(this IApplicationBuilder app, Action<BifrostBlobOptions>? configure = null)
         {
             var options = new BifrostBlobOptions();
             configure?.Invoke(options);
+            MountAuthRequirement.RequireOneServedEndpoint(app.ApplicationServices, options.Endpoint,
+                nameof(UseBifrostBlobs), $"{nameof(BifrostBlobOptions)}.{nameof(BifrostBlobOptions.Endpoint)}");
             var requiresAuth = options.RequireAuth
                 ?? MountAuthRequirement.Resolve(app.ApplicationServices, options.Endpoint);
             return app.UseMiddleware<BifrostBlobMiddleware>(options, requiresAuth);

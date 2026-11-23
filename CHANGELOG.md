@@ -42,6 +42,24 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.31; not yet on NuGet.
 
+### Security
+
+- **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
+- **`IPolicyGateAccessor.GetAsync(userContext, ct)` answers for the identity the context holds at each call.** The build was keyed on the dictionary reference, so an endpoint that stripped a role or permission from its context and asked again got the gate built from the earlier, more privileged contents. The identity (user id, roles, permissions) is now read when you call, and a changed identity gets a new gate.
+
+### Breaking
+
+- **Binary WebSocket messages no longer see the upgrade request's session or host features.** Each message's `HttpContext` carries the endpoint, a copy of the route values, the TLS handshake, headers, principal and a shallow copy of `Items`, all taken when the connection opens; `ISession` and features a host middleware installed are not copied. The objects stored in `Items` are shared, not cloned.
+- **Host `AsyncLocal` state does not reach binary WebSocket messages.** Request tasks start without the connection's execution context, so OpenTelemetry Baggage, tenant or impersonation `AsyncLocal`s and logging scopes set by host middleware are absent; the current `Activity` and cultures are carried over. Put per-connection state in `HttpContext.Items` at upgrade instead.
+
+### Fixed
+
+- **`bifrost schema` and `export` point at `config-validate` only when metadata validation fails;** other build failures, such as a provider with no registered factory, no longer get that hint.
+- **Binary WebSocket transport: concurrent requests on one connection no longer race on the shared upgrade `HttpContext`.** On a mount with no auth middleware the first read of `User` installed a feature concurrently, which could fail a request with "Malformed or unprocessable frame" and close the connection. Each message now gets its own `HttpContext`, a copy of the upgrade request taken when the connection opens; that copy is what `IHttpContextAccessor`, auth-context factories and hooks see. `Items` written during one message no longer carry over to the next.
+- **Model-load metadata validation throws the new `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
+- **An `enum:` value column that does not exist is caught at model load** with the other config errors, and `bifrost schema` and `export` point at `config-validate` for it, instead of failing later in the schema build.
+- **A binary WebSocket message releases its DI scope before the response is sent,** so scoped services (database connections, unit-of-work handles) no longer stay alive while a slow client acknowledges the frame.
+
 ## 0.4.31 — 2026-11-22 (async auth and filter operators)
 
 Tag `v0.4.31` · NuGet `0.4.837` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`
@@ -72,10 +90,6 @@ Tag `v0.4.31` · NuGet `0.4.837` · npm `@bifrostql/react` and `@bifrostql/types
 - **`bifrost doctor` refuses every config file `serve` and `config-validate` refuse,** checks `connectionStrings` even when `--connection-string` is given, and reports a file with no `connectionStrings.bifrost` with serve's message. It used to report "All checks passed" for a file serve then refused.
 - **`bifrost watch`, `schema`, `export`, `test` and `config-generate` read `--config`.** They accepted the flag and ignored it; they now take `connectionStrings.bifrost` from the file when `--connection-string` is absent and refuse a file serve refuses.
 - **`bifrost schema` and `export` build the model with the config file's metadata rules** through serve's own model build, so `schema --config` prints the schema `serve` would serve; a rule the database cannot satisfy is refused with exit 1 and the validator's message, pointing to `bifrost config-validate`. `bifrost config-generate` reads the database without the file's rules, so it bootstraps a fresh database and still detects tables the file hides.
-- **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
-- **`bifrost schema` and `export` point at `config-validate` only when metadata validation fails;** other build failures, such as a provider with no registered factory, no longer get that hint.
-- **Binary WebSocket transport: concurrent requests on one connection no longer race on the shared upgrade `HttpContext`.** On a mount with no auth middleware the first read of `User` installed a feature concurrently, which could fail a request with "Malformed or unprocessable frame" and close the connection. Each message now gets its own `HttpContext`, a copy of the upgrade request taken when the connection opens; that copy is what `IHttpContextAccessor`, auth-context factories and hooks see. `Items` written during one message no longer carry over to the next.
-- **Model-load metadata validation throws the new `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
 
 ### Fixed — filters
 

@@ -382,6 +382,30 @@ namespace BifrostQL.Mcp.Test
             FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();
         }
 
+        // ---- a resolver failing under the caller's cancelled token is a cancellation ----
+
+        [Fact]
+        public async Task ProjectionProvider_ResolverThrowsItsOwnTypeUnderACancelledToken_SurfacesAsCancellation()
+        {
+            // SqlClient raises SqlException, not OperationCanceledException, when the token cancels
+            // a command. MCP's identity funnel catches only its own refusal types, so that throw
+            // escaped as an unhandled driver exception instead of a cancellation.
+            using var aborted = new CancellationTokenSource();
+            var services = new ServiceCollection()
+                .AddBifrostGrantResolver((identity, sp, ct) =>
+                {
+                    aborted.Cancel();
+                    throw new InvalidOperationException("Operation cancelled by user.");
+                })
+                .BuildServiceProvider();
+
+            var act = () => BifrostMcpAdapter.CreateProjectionProviderAsync(
+                _host.Services.GetRequiredService<IBifrostAuthContextFactory>(), services, TenantPrincipal("user-a", "tenant-a"), aborted.Token);
+
+            (await act.Should().ThrowAsync<OperationCanceledException>())
+                .Which.CancellationToken.Should().Be(aborted.Token);
+        }
+
         private sealed class FixedAuthContextFactory : IBifrostAuthContextFactory
         {
             private readonly Func<IDictionary<string, object?>> _create;

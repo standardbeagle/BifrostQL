@@ -253,6 +253,32 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task CreateUserContextAsync_CallerCancelled_ResolverThrowsItsOwnType_SurfacesAsOperationCanceled()
+        {
+            // SqlClient raises SqlException for a cancelled command. Propagated as its own type, it
+            // reached seams that handle only OperationCanceledException (MCP) as an unhandled fault.
+            using var cancelled = new CancellationTokenSource();
+            var cause = new InvalidOperationException("Operation cancelled by user.");
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                    {
+                        cancelled.Cancel();
+                        throw cause;
+                    })
+                    .BuildServiceProvider(),
+            };
+
+            var thrown = await FluentActions.Awaiting(() => BifrostAuthContextFactory.Instance
+                    .CreateUserContextAsync(context, context.RequestServices, cancelled.Token).AsTask())
+                .Should().ThrowExactlyAsync<OperationCanceledException>();
+            thrown.Which.CancellationToken.Should().Be(cancelled.Token);
+            thrown.Which.InnerException.Should().BeSameAs(cause, "the driver's exception stays diagnosable");
+        }
+
+        [Fact]
         public async Task CreateUserContextAsync_ResolverCancelsOnItsOwn_StillFailsClosedToEmptyPermissions()
         {
             // The strict half: a resolver's own timeout, with the caller's token live, is a

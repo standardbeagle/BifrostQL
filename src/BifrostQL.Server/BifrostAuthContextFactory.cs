@@ -141,8 +141,9 @@ namespace BifrostQL.Server
         /// Fail closed (E9): a throwing resolver leaves the caller with an EMPTY
         /// permission set — the pre-resolver permissions are wiped — and logs a Warning
         /// naming the identity id; the exception never escapes, except any exception thrown while
-        /// <c>cancellationToken</c> is cancelled, which propagates (every gate maps it to a refused
-        /// identity) so a caller-cancelled projection is never served. A null result is an
+        /// <c>cancellationToken</c> is cancelled, which propagates as an
+        /// <see cref="OperationCanceledException"/> on that token, whatever its own type (every gate
+        /// maps it to a refused identity) so a caller-cancelled projection is never served. A null result is an
         /// empty grant set: nothing is unioned, the identity's own permissions remain.
         /// </summary>
         private static async ValueTask ApplyGrantResolverAsync(
@@ -166,6 +167,14 @@ namespace BifrostQL.Server
             // raises SqlException, not OperationCanceledException): a projection degraded by it is
             // no identity. Keyed on the token, not the exception type. A resolver's internal
             // timeout, under a live caller token, is a throw like any other.
+            // Surfaced as OperationCanceledException on the caller's token, so every seam (MCP
+            // catches only its own refusal types) sees a cancellation it already handles, never a
+            // driver exception. The resolver's own exception stays as the inner one.
+            catch (Exception ex) when (cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
+            {
+                throw new OperationCanceledException(
+                    "The grant resolver failed after the caller cancelled the projection.", ex, cancellationToken);
+            }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 services.GetService<ILoggerFactory>()

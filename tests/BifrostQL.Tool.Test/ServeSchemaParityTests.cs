@@ -20,7 +20,8 @@ namespace BifrostQL.Tool.Test;
 /// <summary>
 /// schema, export and config-generate built the model with no metadata rules, so
 /// `bifrost schema --config app.json` printed a schema serve never serves: a table the file
-/// hides was listed. They now build through serve's own model build.
+/// hides was listed. schema and export now build through serve's own model build; config-generate,
+/// the bootstrap tool, reads the database without the file's rules.
 /// </summary>
 public sealed class ServeSchemaParityTests : IDisposable
 {
@@ -64,6 +65,51 @@ public sealed class ServeSchemaParityTests : IDisposable
 
         exit.Should().Be(0, json.ToString());
         json.GetProperty("sdl").GetString().Should().Be(serveSdl).And.Contain("secrets");
+    }
+
+    // config-generate is the bootstrap tool: run against a database the file's rules do not match
+    // yet (the column the tenant rule names is not created), it threw from ModelConfigValidator.
+    // It reads the database alone, so a table the file hides is still counted and detected.
+    [Fact]
+    public async Task ConfigGenerate_WithRulesTheDatabaseDoesNotMatchYet_DetectsFromTheDatabaseAlone()
+    {
+        var (_, configPath) = await CreateDatabaseAndConfigAsync(
+            "main.orders { tenant-filter: org_id }", "main.secrets { visibility: hidden }");
+
+        var (exit, json) = await RunAsync(new ConfigGenerateCommand(), "config-generate", "--config", configPath);
+
+        exit.Should().Be(0, json.ToString());
+        json.GetProperty("tableCount").GetInt32().Should().Be(2, "the table the file hides is detected too");
+    }
+
+    [Fact]
+    public async Task ConfigGenerate_WithAHidingRule_StillDetectsTheHiddenTable()
+    {
+        var (_, configPath) = await CreateDatabaseAndConfigAsync("main.secrets { visibility: hidden }");
+
+        var (exit, json) = await RunAsync(new ConfigGenerateCommand(), "config-generate", "--config", configPath);
+
+        exit.Should().Be(0, json.ToString());
+        json.GetProperty("tableCount").GetInt32().Should().Be(2, "config-generate reads the database, not the file's view of it");
+    }
+
+    // schema and export keep serve's rules, so a rule the database cannot satisfy refuses the
+    // command as it refuses serve's startup: exit 1 with the validator's message, not a crash.
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("export")]
+    public async Task SchemaAndExport_WithARuleTheDatabaseCannotSatisfy_RefuseWithTheValidatorsMessage(string command)
+    {
+        var (_, configPath) = await CreateDatabaseAndConfigAsync("main.orders { tenant-filter: org_id }");
+        ICommand cmd = command == "schema" ? new SchemaCommand() : new ExportCommand();
+
+        var (exit, json) = await RunAsync(cmd, command, "--config", configPath);
+
+        exit.Should().Be(1);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("error").GetString().Should()
+            .StartWith("Invalid BifrostQL metadata configuration:").And.Contain("org_id");
+        json.GetProperty("hint").GetString().Should().Contain("bifrost config-validate");
     }
 
     private async Task<(string ConnectionString, string ConfigPath)> CreateDatabaseAndConfigAsync(params string[] rules)

@@ -43,7 +43,10 @@ public sealed class ExportCommand : ICommand
         try
         {
             // serve's own build, with the config file's metadata rules: the model serve serves.
-            var (model, _) = await ServeModel.BuildAsync(resolved.Value);
+            var built = await ServeModel.BuildOrRefuseAsync(resolved.Value, output);
+            if (built is null)
+                return 1;
+            var model = built.Value.Model;
 
             var result = format switch
             {

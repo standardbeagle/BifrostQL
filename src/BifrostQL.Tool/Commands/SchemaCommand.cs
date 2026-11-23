@@ -25,7 +25,10 @@ public sealed class SchemaCommand : ICommand
         try
         {
             // serve's own build, with the config file's metadata rules: the schema serve serves.
-            var (model, schema) = await ServeModel.BuildAsync(resolved.Value);
+            var built = await ServeModel.BuildOrRefuseAsync(resolved.Value, output);
+            if (built is null)
+                return 1;
+            var (model, schema) = built.Value;
 #pragma warning disable CS0618 // SchemaPrinter is the available printer API in this target package set.
             var sdl = new SchemaPrinter(schema).Print();
 #pragma warning restore CS0618

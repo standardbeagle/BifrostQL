@@ -23,8 +23,9 @@ public sealed class ConfigGenerateCommand : ICommand
 
         try
         {
-            // serve's own build, with the config file's metadata rules: the model serve serves.
-            var (model, _) = await ServeModel.BuildAsync(resolved.Value);
+            // The database alone: the file's rules may name tables that do not exist yet, and a
+            // table they hide is still a pattern to detect.
+            var model = await ServeModel.BuildWithoutConfigRulesAsync(resolved.Value);
 
             var detector = new ConfigPatternDetector();
             var results = detector.Detect(model);

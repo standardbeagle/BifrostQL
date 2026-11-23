@@ -131,7 +131,7 @@ dotnet tool uninstall --global BifrostQL.Tool
 | `bifrost config-generate` | Auto-generate config rules |
 | `bifrost init` | Create default config file |
 
-`serve`, `test`, `schema`, `watch`, `export` and `config-generate` take the connection string from `--connection-string`, or else from `connectionStrings.bifrost` in the config file (`--config <path>`, or `bifrostql.json` in the working directory). Either way, a config file that exists must pass the checks `serve` applies, and an explicit `--config` path that names no file is refused. `schema`, `export` and `config-generate` build the model through `serve`'s own model build, with the file's `Metadata` rules, so they show what `serve` would serve.
+`serve`, `test`, `schema`, `watch`, `export` and `config-generate` take the connection string from `--connection-string`, or else from `connectionStrings.bifrost` in the config file (`--config <path>`, or `bifrostql.json` in the working directory). Either way, a config file that exists must pass the checks `serve` applies, and an explicit `--config` path that names no file is refused. `schema` and `export` build the model through `serve`'s own model build, with the file's `Metadata` rules, so they show what `serve` would serve; a rule the database cannot satisfy refuses them (exit 1) with the validator's message, as it refuses `serve`'s startup. `config-generate` is the bootstrap tool: it reads the database without the file's `Metadata` rules, so it runs before those rules match the database and still detects tables the file hides.
 
 ### Debugging CLI Commands
 

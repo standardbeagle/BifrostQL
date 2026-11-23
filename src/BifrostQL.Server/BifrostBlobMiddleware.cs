@@ -5,7 +5,6 @@ using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -80,7 +79,6 @@ namespace BifrostQL.Server
 
         private readonly RequestDelegate _next;
         private readonly BifrostBlobOptions _options;
-        private readonly ILogger<BifrostBlobMiddleware>? _logger;
         private readonly bool _requiresAuth;
 
         /// <param name="next">The next middleware.</param>
@@ -90,14 +88,11 @@ namespace BifrostQL.Server
         /// <c>MountAuthRequirement</c> (or the explicit <see cref="BifrostBlobOptions.RequireAuth"/>
         /// override); it is required here so no construction path can default it.
         /// </param>
-        /// <param name="logger">Server-side diagnostics.</param>
-        public BifrostBlobMiddleware(
-            RequestDelegate next, BifrostBlobOptions options, bool requiresAuth, ILogger<BifrostBlobMiddleware>? logger = null)
+        public BifrostBlobMiddleware(RequestDelegate next, BifrostBlobOptions options, bool requiresAuth)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _requiresAuth = requiresAuth;
-            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -172,8 +167,12 @@ namespace BifrostQL.Server
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Blob read failed");
-                await WriteTextAsync(context, StatusCodes.Status500InternalServerError, "Blob read failed.");
+                // A read fault that is not a denial or absence (database down mid-read): a server
+                // fault. The sink logs it at Error with the driver exception attached; the detail
+                // is constant so the log never echoes driver text.
+                var error = BifrostErrorSink.ServerFault("Blob read failed.", "The blob read faulted.",
+                    $"{nameof(BifrostBlobMiddleware)}.{nameof(InvokeAsync)}", ex);
+                await WriteTextAsync(context, StatusCodes.Status500InternalServerError, error.Message);
             }
         }
 

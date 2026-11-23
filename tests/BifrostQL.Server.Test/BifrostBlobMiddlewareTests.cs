@@ -19,7 +19,10 @@ namespace BifrostQL.Server.Test
     /// the IDENTICAL 404, so the link surface adds no oracle the GraphQL surface does
     /// not have. Fixtures span a PK value of 0 and a composite PK per the
     /// key-addressed-path fixture rule.
+    /// <para>The read-fault facts capture <see cref="BifrostErrorSink.Logger"/>, which is
+    /// process-wide, so the class joins the non-parallel <see cref="ErrorSinkLoggerCollection"/>.</para>
     /// </summary>
+    [Collection(ErrorSinkLoggerCollection.Name)]
     public sealed class BifrostBlobMiddlewareTests : IAsyncLifetime
     {
         private static readonly byte[] Png =
@@ -337,19 +340,32 @@ namespace BifrostQL.Server.Test
 
         private const string SecretDetail = "connection to db-internal-7 refused";
 
-        private async Task<(int Status, string Body, FakeLogger<BifrostBlobMiddleware> Log)> RequestWithReadFaultAsync(Exception fault)
+        /// <summary>
+        /// Serves one read that faults with <paramref name="fault"/>, capturing what
+        /// <see cref="BifrostErrorSink"/> logs, the one sanitize-the-wire/log-the-detail seam.
+        /// </summary>
+        private async Task<(int Status, string Body, FakeLogger Log)> RequestWithReadFaultAsync(Exception fault)
         {
-            var log = new FakeLogger<BifrostBlobMiddleware>();
-            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, new BifrostBlobOptions(), requiresAuth: false, log);
-            var context = new DefaultHttpContext { RequestServices = new ReadsOverride(_harness.Services, new ThrowingReads(_harness.Reads, fault)) };
-            context.Request.Method = "GET";
-            context.Request.Path = "/_blob/files/data";
-            context.Request.QueryString = new QueryString("?k.id=0");
-            context.Response.Body = new MemoryStream();
-            await middleware.InvokeAsync(context);
-            context.Response.Body.Seek(0, SeekOrigin.Begin);
-            using var reader = new StreamReader(context.Response.Body);
-            return (context.Response.StatusCode, await reader.ReadToEndAsync(), log);
+            var log = new FakeLogger();
+            var previous = BifrostErrorSink.Logger;
+            BifrostErrorSink.Logger = log;
+            try
+            {
+                var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, new BifrostBlobOptions(), requiresAuth: false);
+                var context = new DefaultHttpContext { RequestServices = new ReadsOverride(_harness.Services, new ThrowingReads(_harness.Reads, fault)) };
+                context.Request.Method = "GET";
+                context.Request.Path = "/_blob/files/data";
+                context.Request.QueryString = new QueryString("?k.id=0");
+                context.Response.Body = new MemoryStream();
+                await middleware.InvokeAsync(context);
+                context.Response.Body.Seek(0, SeekOrigin.Begin);
+                using var reader = new StreamReader(context.Response.Body);
+                return (context.Response.StatusCode, await reader.ReadToEndAsync(), log);
+            }
+            finally
+            {
+                BifrostErrorSink.Logger = previous;
+            }
         }
 
         [Fact]
@@ -361,9 +377,13 @@ namespace BifrostQL.Server.Test
                 BifrostExecutionError.FromDatabaseException(new InvalidOperationException(SecretDetail)));
 
             status.Should().Be(500, "a database fault is a server fault, not a missing blob");
-            body.Should().NotContain(SecretDetail, "fault detail never reaches the wire (invariant 3)");
-            log.Collector.GetSnapshot().Should().Contain(e => e.Level == LogLevel.Error && e.Exception != null,
-                "an operator must see the fault above Debug");
+            body.Should().Be("Blob read failed.", "fault detail never reaches the wire (invariant 3)");
+            var fault = log.Collector.GetSnapshot()
+                .Should().ContainSingle(e => e.Message.Contains(nameof(BifrostBlobMiddleware)),
+                    "the sink, not a middleware-private logger, records the server fault").Subject;
+            fault.Level.Should().Be(LogLevel.Error, "an operator must see the fault above Debug");
+            fault.Exception.Should().NotBeNull("the driver exception is the operator's diagnosis");
+            fault.Message.Should().NotContain(SecretDetail, "the log template carries a constant detail");
         }
 
         [Theory]

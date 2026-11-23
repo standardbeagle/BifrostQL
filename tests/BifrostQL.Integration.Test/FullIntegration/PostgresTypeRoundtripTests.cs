@@ -60,7 +60,12 @@ public sealed class PostgresTypeRoundtripTests : FullIntegrationTestBase, IAsync
     {
         try
         {
-            _container = new PostgreSqlBuilder("postgres:16-alpine").Build();
+            // Labelled with the tman run that started it, so tman removes the container when that
+            // run ends even if this process is killed before DisposeAsync. Outside tman the label
+            // is empty and tman never touches it.
+            _container = new PostgreSqlBuilder("postgres:16-alpine")
+                .WithLabel("tman.run", Environment.GetEnvironmentVariable("TMAN_RUN_ID") ?? "")
+                .Build();
             await _container.StartAsync();
 
             var factory = new PostgresDbConnFactory(_container.GetConnectionString());

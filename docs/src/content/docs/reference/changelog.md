@@ -29,11 +29,19 @@ On `main` after v0.4.31; not yet on NuGet.
 
 - **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
 - **`IPolicyGateAccessor.GetAsync(userContext, ct)` answers for the identity the context holds at each call.** The build was keyed on the dictionary reference, so an endpoint that stripped a role or permission from its context and asked again got the gate built from the earlier, more privileged contents. The identity (user id, roles, permissions) is now read when you call, and a changed identity gets a new gate.
+- **SQL Server pivot values are always bound parameters.** The native T-SQL `PIVOT` path, which wrote each label into its `IN` list as an escaped identifier, is removed; SQL Server runs the same parameterized `CASE WHEN` cross-tab as every other dialect, so a pivot value never appears in SQL text.
+- **Saved-object owner partitions and plan-confirmation identities are keyed by the model's `tenant-context-key`,** not a fixed `tenant_id`. With `tenant-context-key: org_id`, two organisations whose identity providers issue the same subject shared one saved-object partition and could confirm each other's chat plans.
+- **Plan confirmations compose the caller's tenant and user injectively.** A tenant or user value containing `|` could produce the same identity key as a different caller.
+- **A multi-valued tenant claim is refused** with 401 on `/_saved-objects` and 403 on the chat confirmation route, instead of an unhandled 500.
 
 ### Breaking
 
 - **Binary WebSocket messages no longer see the upgrade request's session or host features.** Each message's `HttpContext` carries the endpoint, a copy of the route values, the TLS handshake, headers, principal and a shallow copy of `Items`, all taken when the connection opens; `ISession` and features a host middleware installed are not copied. The objects stored in `Items` are shared, not cloned.
 - **Host `AsyncLocal` state does not reach binary WebSocket messages.** Request tasks start without the connection's execution context, so OpenTelemetry Baggage, tenant or impersonation `AsyncLocal`s and logging scopes set by host middleware are absent; the current `Activity` and cultures are carried over. Put per-connection state in `HttpContext.Items` at upgrade instead.
+- **`ISqlDialect.BuildNativePivot` is removed and `PivotSqlGenerator.GenerateCaseWhenPivot` is renamed `GeneratePivot`;** `GenerateEmptyPivot` is no longer public. Dialect authors call `PivotSqlGenerator.GeneratePivot`.
+- **Saved objects stored under a renamed `tenant-context-key` get new owner tokens,** so objects saved before this change no longer appear for those callers. Deployments on the default `tenant_id` key keep their tokens.
+- **`UseBifrostSavedObjects` refuses to start when the endpoint it serves is ambiguous or unknown.** A host with several GraphQL endpoints must set the new `BifrostSavedObjectsOptions.GraphQlEndpoint`; a name that matches no registered endpoint fails startup instead of failing every request.
+- **`IChatConnector.ExecuteAsync` takes a `string? endpoint` before `authContext`,** `ChatToolSet.CreateExecutor` takes `(endpoint, authContext)`, and the built-in connectors drop their `endpoint` constructor parameter. The endpoint comes from `BifrostChatOptions.GraphQlEndpoint`.
 
 ### Fixed
 
@@ -42,6 +50,9 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Model-load metadata validation throws the new `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
 - **An `enum:` value column that does not exist is caught at model load** with the other config errors, and `bifrost schema` and `export` point at `config-validate` for it, instead of failing later in the schema build.
 - **A binary WebSocket message releases its DI scope before the response is sent,** while `IHttpContextAccessor` still answers the message, so scoped services (database connections, unit-of-work handles) no longer stay alive while a slow client acknowledges the frame.
+- **Chat tools (explore, media, plan) work on hosts with several GraphQL endpoints;** they asked for an unnamed endpoint and failed on every call.
+- **A model that fails to load on `/_saved-objects` answers 503 with fixed text** instead of an unhandled 500; the driver detail goes to the log only.
+- **`bifrost config-validate` reports a missing provider package or another load failure outside the file as `Validation failed: …`** (exit 1), not as an error in the config file. Only metadata validation failures are listed as config issues.
 
 ## 0.4.31 — 2026-11-22 (async auth and filter operators)
 

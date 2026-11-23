@@ -71,6 +71,7 @@ On `main` after v0.4.30; not yet on NuGet.
 
 - **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
 - **`bifrost schema` and `export` point at `config-validate` only when metadata validation fails;** other build failures, such as a provider with no registered factory, no longer get that hint.
+- **Binary WebSocket transport: concurrent requests on one connection no longer race on the shared upgrade `HttpContext`.** On a mount with no auth middleware the first read of `User` installed a feature concurrently, which could fail a request with "Malformed or unprocessable frame" and close the connection. Each message now gets its own `HttpContext`, a copy of the upgrade request taken when the connection opens; that copy is what `IHttpContextAccessor`, auth-context factories and hooks see. `Items` written during one message no longer carry over to the next.
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 
 Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`

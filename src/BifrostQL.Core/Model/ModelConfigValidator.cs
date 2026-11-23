@@ -76,6 +76,7 @@ namespace BifrostQL.Core.Model
                 ValidateCdcTokens(table, errors);
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
+                ValidateEnumTable(table, errors);
                 ValidateRetention(table, errors);
                 ValidateNumericWriteLimits(table, errors);
                 ValidateDeferred(table, errors);
@@ -549,6 +550,26 @@ namespace BifrostQL.Core.Model
             {
                 errors.Add(Problem(table, MetadataKeys.Fts.Search,
                     table.GetMetadataValue(MetadataKeys.Fts.Search), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for a lookup table's <c>enum</c> value column. An explicit column
+        /// that does not exist would otherwise throw only at schema build, with no pointer to
+        /// <c>bifrost config-validate</c>. Reuses <see cref="Schema.EnumTableConfig.ResolveValueColumn"/>
+        /// so validation cannot drift from the schema build; auto-detection finding no column is
+        /// not an error there, so it is not one here.
+        /// </summary>
+        private static void ValidateEnumTable(IDbTable table, List<string> errors)
+        {
+            try
+            {
+                Schema.EnumTableConfig.FromTable(table)?.ResolveValueColumn(table);
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add(Problem(table, MetadataKeys.Enum.Table,
+                    table.GetMetadataValue(MetadataKeys.Enum.Table), ex.Message));
             }
         }
 

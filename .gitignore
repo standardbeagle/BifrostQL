@@ -426,3 +426,6 @@ docs/videos/.work/
 # Local secrets for demo capture (never committed)
 .env.local
 .env.*.local
+
+# tman run logs, locks and failure digests (per-clone)
+/.tman/

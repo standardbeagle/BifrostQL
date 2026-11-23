@@ -27,12 +27,6 @@ namespace BifrostQL.Server
         public ClaimsPrincipal? User { get; init; }
 
         /// <summary>
-        /// Set when the grant resolver threw and this context carries the E9 empty permission set:
-        /// served to the call that projected it, never reused by the identity projection memo.
-        /// </summary>
-        internal bool GrantResolutionFailed { get; set; }
-
-        /// <summary>
         /// Keys compare case-insensitively, as every owned-key check and every downstream context
         /// copy (audit observer, workflow trigger and executor) does. With ordinal keys, raw claim
         /// types differing only in case, or a raw <c>User</c> claim beside <c>user</c>, made those

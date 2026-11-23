@@ -2,8 +2,8 @@ namespace BifrostQL.Core.Auth;
 
 /// <summary>
 /// Optional per-request grant loading hook. When an application registers an
-/// implementation (<c>AddBifrostGrantResolver</c>), it runs once per request at
-/// the point the user context is assembled, and its result is UNIONED into the
+/// implementation (<c>AddBifrostGrantResolver</c>), it runs every time the user
+/// context is assembled (at least once per request; nothing memoizes it), and its result is UNIONED into the
 /// <c>permissions</c> user-context key before any security module or transformer
 /// sees the context.
 ///

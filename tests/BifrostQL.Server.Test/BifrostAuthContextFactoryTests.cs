@@ -232,7 +232,7 @@ namespace BifrostQL.Server.Test
         public async Task CreateUserContextAsync_CallerCancelled_RethrowsInsteadOfDegradingToEmptyPermissions()
         {
             // A projection that lost its grants to the caller's own cancellation is no identity:
-            // degrading it to empty permissions made it a valid projection the request memo kept.
+            // degrading it to empty permissions served it as a valid projection.
             var context = new DefaultHttpContext
             {
                 User = AuthenticatedLocalPrincipal(),

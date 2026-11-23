@@ -20,8 +20,10 @@ namespace BifrostQL.Server
     /// The caller is projected in the accessor's OWN DI scope, not the
     /// HttpContext's: a hook resolving the accessor inside a binary per-message scope or a hub
     /// invocation scope reaches a connection-lifetime HttpContext through
-    /// <see cref="IHttpContextAccessor"/>, and projecting in that context's scope served one
-    /// connection-old identity to every message.
+    /// <see cref="IHttpContextAccessor"/>, whose RequestServices hold a connection-lifetime grant
+    /// resolver. The projection is not shared with the endpoint's own
+    /// <c>GetBifrostUserContextAsync</c> call: an endpoint that awaits both runs the grant
+    /// resolver twice.
     /// </summary>
     internal sealed class PolicyGateAccessor : IPolicyGateAccessor
     {
@@ -124,5 +126,26 @@ namespace BifrostQL.Server
             return await cache.GetFirstValueAsync()
                 ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
         }
+    }
+
+    /// <summary>
+    /// The root service provider, captured by a singleton (a singleton's injected
+    /// <see cref="IServiceProvider"/> is the root). A <see cref="PolicyGateAccessor"/> resolved
+    /// from the root lives for the process, so its memoized gate would be served to every caller.
+    /// </summary>
+    internal sealed class RootServiceProvider
+    {
+        private readonly IServiceProvider _root;
+
+        public RootServiceProvider(IServiceProvider root) => _root = root;
+
+        /// <summary>
+        /// True when <paramref name="provider"/> is the root provider (the host's
+        /// <c>app.Services</c>, or the provider injected into a root-resolved service). A scope
+        /// resolves <see cref="IServiceProvider"/> to itself, the root to the root.
+        /// </summary>
+        internal static bool IsRoot(IServiceProvider provider)
+            => provider.GetService(typeof(RootServiceProvider)) is RootServiceProvider marker
+               && ReferenceEquals(provider.GetService(typeof(IServiceProvider)), marker._root);
     }
 }

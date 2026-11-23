@@ -1,6 +1,5 @@
 using BifrostQL.Core.Auth;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -33,12 +32,7 @@ namespace BifrostQL.Server
     /// <summary>The outcome of <see cref="BifrostIdentityGate.ProjectAsync(HttpContext)"/> and the
     /// context it yields: empty for every outcome but <see cref="BifrostIdentityOutcome.Projected"/>.</summary>
     internal readonly record struct BifrostIdentityProjection(
-        BifrostIdentityOutcome Outcome, IDictionary<string, object?> UserContext)
-    {
-        /// <summary>The grant resolver threw and the context carries the E9 empty permission set:
-        /// served to this call, never reused by <see cref="IdentityProjectionMemo"/>.</summary>
-        public bool GrantResolutionFailed { get; init; }
-    }
+        BifrostIdentityOutcome Outcome, IDictionary<string, object?> UserContext);
 
     /// <summary>
     /// The one identity projection every HTTP surface in this assembly runs its callers
@@ -65,81 +59,33 @@ namespace BifrostQL.Server
         /// caller that ignores the outcome still cannot read an identity out of a refused request.
         /// Asynchronous because the default factory awaits the host's grant resolver here; it
         /// runs only on the requests a mount actually serves, never on health or static routes.
-        ///
-        /// <para>Memoized in the request's DI scope (<see cref="HttpContext.RequestServices"/>), see
-        /// <see cref="ProjectAsync(HttpContext, IServiceProvider?)"/>: an app endpoint that projects
-        /// the caller and then asks <see cref="PolicyGateAccessor"/> for its gate runs the factory,
-        /// and the grant resolver, once. Never memoized on a long-lived request
-        /// (<see cref="OutlivesOneRequest"/>): that HttpContext and its RequestServices span the
-        /// whole session, and identity is memoized per request, never per session
-        /// (invariant 13).</para>
+        /// Nothing is memoized: every call projects afresh and gets its own copy, so a grant
+        /// revoked between two calls takes effect on the next one.
         /// </summary>
         internal static ValueTask<BifrostIdentityProjection> ProjectAsync(HttpContext context)
-            => OutlivesOneRequest(context)
-                ? ProjectFreshAsync(context, context.RequestServices)
-                : ProjectAsync(context, context.RequestServices);
-
-        /// <summary>
-        /// True when <paramref name="context"/> serves many invocations: a WebSocket request, or an
-        /// endpoint that opted out of request timeouts. ASP.NET's <c>MapConnections</c> (behind
-        /// <c>MapHub</c> and <c>MapConnectionHandler</c>) puts <see cref="DisableRequestTimeoutAttribute"/>
-        /// on the SignalR transport route, so this covers SSE and long polling, whose HttpContext is
-        /// no WebSocket request (long polling's connection-lifetime clone carries the same endpoint).
-        /// A host endpoint that disables its own request timeout is long-lived by its own
-        /// declaration, and loses only the memo.
-        /// </summary>
-        private static bool OutlivesOneRequest(HttpContext context)
-            => context.WebSockets.IsWebSocketRequest
-               || context.GetEndpoint()?.Metadata.GetMetadata<DisableRequestTimeoutAttribute>() is not null;
+            => ProjectAsync(context, context.RequestServices);
 
         /// <summary>
         /// <see cref="ProjectAsync(HttpContext)"/> with the factory and the default factory's
-        /// scoped services (grant resolver) taken from <paramref name="scope"/>, memoized in that
-        /// scope's <see cref="IdentityProjectionMemo"/>: the binary transport passes each message's
-        /// own scope, so the message's projection and a hook's <see cref="PolicyGateAccessor"/> in
-        /// that scope share one resolver call, and the next message projects afresh. Without a
-        /// scope, in a scope with no registered memo, or in the ROOT provider, the projection is not
-        /// memoized: a scoped memo resolved from the root lives for the process, and a host whose
-        /// auth handler hands one cached principal to every request would be served the first
-        /// request's grants. The root is never asked for the scoped memo, so scope validation cannot
-        /// turn that lookup into an unhandled fault; the fresh projection there fails closed when the
-        /// scoped grant resolver cannot be resolved.
+        /// scoped services (grant resolver) taken from <paramref name="services"/>: the binary
+        /// transport passes each message's own scope, and <see cref="PolicyGateAccessor"/> the
+        /// scope it was resolved from.
         /// </summary>
-        internal static ValueTask<BifrostIdentityProjection> ProjectAsync(
-            HttpContext context, IServiceProvider? scope)
-        {
-            if (scope is null || RootServiceProvider.IsRoot(scope)
-                || !(context.User?.Identity?.IsAuthenticated ?? false)
-                || scope.GetService<IdentityProjectionMemo>() is not { } memo)
-                return ProjectFreshAsync(context, scope);
-            return memo.ProjectAsync(context, scope, BifrostAuthContextFactory.Resolve(scope));
-        }
-
-        /// <summary>The unmemoized projection, with the factory and its scoped services taken from
-        /// <paramref name="services"/>; <see cref="IdentityProjectionMemo"/> runs it once per scope.</summary>
-        internal static async ValueTask<BifrostIdentityProjection> ProjectFreshAsync(
+        internal static async ValueTask<BifrostIdentityProjection> ProjectAsync(
             HttpContext context, IServiceProvider? services)
         {
             if (!(context.User?.Identity?.IsAuthenticated ?? false))
                 return new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>());
 
             IDictionary<string, object?> projected;
-            bool grantResolutionFailed;
             try
             {
                 // Normalised once, here: a host factory may return an ordinal dictionary, and the
                 // surfaces that read the context directly must agree with the ones that copy it.
                 // Keys differing only in case throw inside this try and are refused like any
-                // other unprojectable identity. A snapshot, so the projection shares no collection
-                // value (a host's List<string>, the roles/permissions arrays) with the factory or
-                // with any other caller handed a copy of a memoized projection.
-                var created = await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
-                    context, services, context.RequestAborted);
-                // Read before the snapshot drops the type. A host factory that decorates the
-                // default one and returns a copy loses the flag, and its degraded projection is
-                // memoized for the scope as before.
-                grantResolutionFailed = created is BifrostContext { GrantResolutionFailed: true };
-                projected = UserContexts.Snapshot(created);
+                // other unprojectable identity.
+                projected = UserContexts.Copy(await BifrostAuthContextFactory.Resolve(services).CreateUserContextAsync(
+                    context, services, context.RequestAborted));
             }
             catch (Exception ex)
             {
@@ -155,7 +101,7 @@ namespace BifrostQL.Server
 
             return projected.Count == 0
                 ? new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>())
-                : new(BifrostIdentityOutcome.Projected, projected) { GrantResolutionFailed = grantResolutionFailed };
+                : new(BifrostIdentityOutcome.Projected, projected);
         }
 
         /// <summary>

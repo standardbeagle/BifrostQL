@@ -243,11 +243,9 @@ namespace BifrostQL.Server
                 // unauthenticated CreateUserContext returns, and the query ran under it. The
                 // refusal speaks only of the transport's auth requirement — it is identical for
                 // an unknown caller, a subject-less principal and an unmappable token, so it is
-                // no account-existence oracle. Unmemoized: this HttpContext and its
-                // RequestServices live for the whole session, and identity is memoized per
-                // request, never per session (each message memoizes in its own scope below).
+                // no account-existence oracle.
                 if (_requireAuthenticatedIdentity
-                    && (await BifrostIdentityGate.ProjectFreshAsync(context, context.RequestServices)).Outcome != BifrostIdentityOutcome.Projected)
+                    && (await BifrostIdentityGate.ProjectAsync(context)).Outcome != BifrostIdentityOutcome.Projected)
                 {
                     _logger.LogWarning(
                         "Closed binary WebSocket: the endpoint this mount serves requires authentication");

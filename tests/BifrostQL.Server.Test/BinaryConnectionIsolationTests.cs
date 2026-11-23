@@ -172,7 +172,11 @@ namespace BifrostQL.Server.Test
 
             var run = RunConnectionAsync(middleware, socket);
             await windowFull.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            for (var i = 0; i < 35 && !abandoned.Task.IsCompleted; i++)
+            // The ack timer starts only after the second chunk's send returns, which can lag the
+            // Sent event under load; a fixed number of steps could finish before the timer exists.
+            // Keep the fake clock moving until the response is abandoned, bounded by wall time.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (!abandoned.Task.IsCompleted && DateTime.UtcNow < deadline)
             {
                 clock.Advance(TimeSpan.FromSeconds(1));
                 await Task.Delay(1);

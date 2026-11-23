@@ -37,7 +37,8 @@ namespace BifrostQL.Server.Test
         }
 
         private static BifrostBinaryMiddleware CreateMiddleware(
-            int ackWindow = 64, TimeSpan? ackTimeout = null, TimeProvider? timeProvider = null)
+            int ackWindow = 64, TimeSpan? ackTimeout = null, TimeProvider? timeProvider = null,
+            TimeSpan idleTimeout = default)
         {
             return new BifrostBinaryMiddleware(
                 _ => Task.CompletedTask,
@@ -50,6 +51,7 @@ namespace BifrostQL.Server.Test
                 // Transport mechanics under an anonymous caller: this mount states the open
                 // posture explicitly, the way a DisableAuth endpoint's mount does.
                 requireAuthenticatedIdentity: false,
+                idleTimeout: idleTimeout,
                 timeProvider: timeProvider);
         }
 
@@ -156,7 +158,11 @@ namespace BifrostQL.Server.Test
             // abandoned with a CHUNK_ACK_TIMEOUT Error frame for its request, and the connection
             // stays open (it used to be closed with PolicyViolation and no frame saying why).
             var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
-            var middleware = CreateMiddleware(ackWindow: 2, ackTimeout: TimeSpan.FromSeconds(30), timeProvider: clock);
+            // The idle deadline runs on the same fake clock, and the loop below can advance it by
+            // thousands of fake seconds before the ack timer is armed: set it far beyond that
+            // budget, so only the ack timeout can end the response.
+            var middleware = CreateMiddleware(ackWindow: 2, ackTimeout: TimeSpan.FromSeconds(30), timeProvider: clock,
+                idleTimeout: TimeSpan.FromHours(24));
             var windowFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var abandoned = new TaskCompletionSource<BifrostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             var socket = new FakeWebSocket { HangWhenDrained = true };

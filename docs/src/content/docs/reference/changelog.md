@@ -23,7 +23,11 @@ their fixes are in the full changelog.
 
 ## Unreleased
 
-On `main` after v0.4.30; not yet on NuGet.
+On `main` after v0.4.31; not yet on NuGet.
+
+## 0.4.31 — 2026-11-22 (async auth and filter operators)
+
+Tag `v0.4.31` · NuGet `0.4.837` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`
 
 ### Security — async auth and identity projection
 
@@ -51,6 +55,10 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`bifrost doctor` refuses every config file `serve` and `config-validate` refuse,** checks `connectionStrings` even when `--connection-string` is given, and reports a file with no `connectionStrings.bifrost` with serve's message. It used to report "All checks passed" for a file serve then refused.
 - **`bifrost watch`, `schema`, `export`, `test` and `config-generate` read `--config`.** They accepted the flag and ignored it; they now take `connectionStrings.bifrost` from the file when `--connection-string` is absent and refuse a file serve refuses.
 - **`bifrost schema` and `export` build the model with the config file's metadata rules** through serve's own model build, so `schema --config` prints the schema `serve` would serve; a rule the database cannot satisfy is refused with exit 1 and the validator's message, pointing to `bifrost config-validate`. `bifrost config-generate` reads the database without the file's rules, so it bootstraps a fresh database and still detects tables the file hides.
+
+### Fixed — filters
+
+- **A column filter takes several operators at once.** `date: { _gte: "2026-11-16", _lte: "2026-11-22" }` failed with "unknown single-link relationship 'date'" wherever it appeared: at the top of a filter, beside another column, inside `or`, or inside a relationship sub-filter. Each operator is now its own predicate on the column, and they AND together.
 
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 

@@ -14,6 +14,7 @@ first reached NuGet with the next tag, and the section is headed by that tag.
 
 | Tag | Date | NuGet build |
 |-----|------|-------------|
+| v0.4.31 | 2026-11-22 | 0.4.837 |
 | v0.4.30 | 2026-11-22 | 0.4.831 |
 | v0.4.29 | 2026-11-22 | 0.4.819 |
 | v0.4.28 | 2026-11-09 | 0.4.740 |
@@ -39,7 +40,11 @@ apply each breaking or behaviour-change step on the way.
 
 ## Unreleased
 
-On `main` after v0.4.30; not yet on NuGet.
+On `main` after v0.4.31; not yet on NuGet.
+
+## 0.4.31 — 2026-11-22 (async auth and filter operators)
+
+Tag `v0.4.31` · NuGet `0.4.837` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`
 
 ### Security — async auth and identity projection
 

@@ -176,6 +176,27 @@ namespace BifrostQL.Server.Resp
         /// <summary>Generic, client-safe wording for a wire-framing / protocol violation before the connection closes.</summary>
         public const string ProtocolErrorPrefix = "ERR Protocol error: ";
 
+        /// <summary>
+        /// The one detail an unauthenticated frame refused for its shape or size carries, after
+        /// <see cref="ProtocolErrorPrefix"/>. Fixed text: it never quotes the client's bytes and
+        /// never says which limit tripped.
+        /// </summary>
+        public const string PreAuthFrameRefusedDetail = "unauthenticated command frame refused.";
+
+        /// <summary>
+        /// Most elements an unauthenticated command frame may carry. The longest command an
+        /// unauthenticated session can legitimately send is
+        /// <c>HELLO 3 AUTH user pass SETNAME name</c>: seven elements.
+        /// </summary>
+        public const int MaxPreAuthCommandElements = 7;
+
+        /// <summary>
+        /// Smallest <see cref="RespWireOptions.MaxPreAuthFrameLength"/> the listener accepts. The
+        /// framing of the seven-element <c>HELLO … AUTH … SETNAME</c> command is about 70 bytes;
+        /// 512 leaves over 400 bytes for the user name, password and client name together.
+        /// </summary>
+        public const int MinPreAuthFrameLength = 512;
+
         /// <summary>The Redis generic-error prefix for a client-facing, honestly-worded command error.</summary>
         public const string ErrPrefix = "ERR ";
 

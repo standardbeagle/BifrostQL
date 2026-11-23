@@ -19,6 +19,16 @@ namespace BifrostQL.Server.Resp
     }
 
     /// <summary>
+    /// An unauthenticated frame broke the pre-auth shape or size limits. Its message is the fixed
+    /// <see cref="RespProtocol.PreAuthFrameRefusedDetail"/>, so the reply never quotes client
+    /// bytes and never names the limit that tripped.
+    /// </summary>
+    internal sealed class RespPreAuthFrameException : RespProtocolException
+    {
+        public RespPreAuthFrameException() : base(RespProtocol.PreAuthFrameRefusedDetail) { }
+    }
+
+    /// <summary>
     /// Streaming RESP frame decoder over a byte <see cref="Stream"/>. Buffers reads so the
     /// same instance drives a real socket (tests, production) frame after frame. A hard
     /// per-frame cap on bulk length, line length, aggregate element count and nesting depth
@@ -39,6 +49,9 @@ namespace BifrostQL.Server.Resp
         private int _start;
         private int _end;
         private int _frameRemaining;
+        // The cap the current frame's budget was drawn from, and whether it is the pre-auth one.
+        private int _frameCap;
+        private bool _preAuthFrame;
         // Reused across lines; dropped after an unusually long line so one long inline command
         // does not pin its buffer for the life of the connection.
         private ArrayBufferWriter<byte> _line = new();
@@ -62,11 +75,59 @@ namespace BifrostQL.Server.Resp
             // The frame budget is reset HERE and only here — at a top-level frame boundary. An
             // inner element that reset it would let a hostile peer refill the budget forever and
             // defeat the cap entirely (the same reasoning as the nesting-depth counter).
-            _frameRemaining = _maxFrameLength;
+            StartFrame(_maxFrameLength, preAuth: false);
             var marker = await ReadRawByteAsync(ct);
             if (marker < 0)
                 return null; // clean EOF between frames
             return await ReadBodyAsync((byte)marker, depth: 0, ct);
+        }
+
+        /// <summary>
+        /// Reads the next frame from an UNAUTHENTICATED session, or <c>null</c> on a clean
+        /// end-of-stream between frames. Before AUTH the only commands worth sending are AUTH,
+        /// HELLO, PING, QUIT and RESET, so the frame must be a flat array of at most
+        /// <see cref="RespProtocol.MaxPreAuthCommandElements"/> non-null bulk strings, and the
+        /// whole frame must fit in <paramref name="maxFrameLength"/> bytes. Every check runs as
+        /// the bytes arrive: a wrong type marker is refused at that byte, and a bulk length that
+        /// exceeds the remaining budget is refused before its payload is read or allocated.
+        /// Each refusal raises <see cref="RespPreAuthFrameException"/>.
+        /// </summary>
+        public async Task<RespValue?> ReadUnauthenticatedCommandAsync(int maxFrameLength, CancellationToken ct)
+        {
+            StartFrame(maxFrameLength, preAuth: true);
+            var marker = await ReadRawByteAsync(ct);
+            if (marker < 0)
+                return null; // clean EOF between frames
+            if (marker != RespProtocol.Array)
+                throw new RespPreAuthFrameException(); // inline commands and bare values included
+            var count = ParsePreAuthLength(await ReadLineAsync(ct));
+            if (count < 0 || count > RespProtocol.MaxPreAuthCommandElements)
+                throw new RespPreAuthFrameException();
+            // Grows as elements arrive, never sized from the declared count (invariant 6).
+            var items = new List<RespValue>();
+            for (var i = 0; i < count; i++)
+            {
+                var elementMarker = await ReadRawByteAsync(ct);
+                if (elementMarker < 0)
+                    throw new RespProtocolException("unexpected end of stream reading aggregate element.");
+                if (elementMarker != RespProtocol.BulkString)
+                    throw new RespPreAuthFrameException(); // no nesting, no other element types
+                var length = ParsePreAuthLength(await ReadLineAsync(ct));
+                if (length < 0 || length > _maxBulkLength)
+                    throw new RespPreAuthFrameException();
+                // ReadExactAsync charges the declared length to the budget before allocating.
+                var data = await ReadExactAsync(length, ct);
+                await ExpectCrlfAsync(ct);
+                items.Add(new RespBulkString(data));
+            }
+            return new RespArray(items);
+        }
+
+        private void StartFrame(int cap, bool preAuth)
+        {
+            _frameCap = cap;
+            _frameRemaining = cap;
+            _preAuthFrame = preAuth;
         }
 
         private async Task<RespValue> ReadBodyAsync(byte marker, int depth, CancellationToken ct)
@@ -321,9 +382,17 @@ namespace BifrostQL.Server.Resp
         private void Consume(int count)
         {
             if (count > _frameRemaining)
-                throw new RespProtocolException($"frame exceeds maximum length {_maxFrameLength}.");
+                throw _preAuthFrame
+                    ? new RespPreAuthFrameException()
+                    : new RespProtocolException($"frame exceeds maximum length {_frameCap}.");
             _frameRemaining -= count;
         }
+
+        // Pre-auth twin of ParseInt: a bad length refuses with the fixed text instead of quoting it.
+        private static int ParsePreAuthLength(string text)
+            => int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)
+                ? value
+                : throw new RespPreAuthFrameException();
 
         private static long ParseLong(string text)
             => long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)

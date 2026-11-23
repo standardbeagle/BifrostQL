@@ -64,6 +64,22 @@ namespace BifrostQL.Server.Resp
         public int MaxFrameLength { get; set; } = 1 << 20;
 
         /// <summary>
+        /// Hard cap on the total byte length of one frame from a session that has not
+        /// authenticated, on a front door that requires authentication. Before AUTH the only
+        /// useful commands are AUTH, HELLO, PING, QUIT and RESET, so such a frame must also be a
+        /// flat array of at most seven bulk strings (<c>HELLO 3 AUTH user pass SETNAME name</c>).
+        /// Without this, any peer that can reach the port could make the server buffer a
+        /// <see cref="MaxFrameLength"/>-sized frame per connection before proving who it is.
+        ///
+        /// <para>Counted on received bytes as they arrive; a bulk length that exceeds the
+        /// remaining budget is refused before its payload is read. A refused frame answers a
+        /// fixed protocol error and the connection closes. After AUTH the regular caps apply.
+        /// Default 4 KiB. Must be at least 512 (room for the longest legal HELLO) and at most
+        /// <see cref="MaxFrameLength"/>; the listener refuses to start otherwise.</para>
+        /// </summary>
+        public int MaxPreAuthFrameLength { get; set; } = 4096;
+
+        /// <summary>
         /// Hard cap on the declared element count of any array/set/push/map, applied on the
         /// UNAUTHENTICATED path (DoS guard) so a huge multibulk count cannot pre-allocate an
         /// unbounded array. Default 1,048,576.

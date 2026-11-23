@@ -230,7 +230,12 @@ namespace BifrostQL.Server.Resp
 
                     try
                     {
-                        frame = await reader.ReadValueAsync(readToken);
+                        // Before the handshake the frame must look like AUTH/HELLO/PING/QUIT/RESET:
+                        // a flat bulk-string array within MaxPreAuthFrameLength. A peer with no
+                        // identity must not make the server buffer a MaxFrameLength frame.
+                        frame = pastHandshake
+                            ? await reader.ReadValueAsync(readToken)
+                            : await reader.ReadUnauthenticatedCommandAsync(_options.MaxPreAuthFrameLength, readToken);
                         if (frame is null)
                             return; // clean EOF: peer closed
 

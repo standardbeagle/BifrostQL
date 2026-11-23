@@ -43,6 +43,15 @@ namespace BifrostQL.Server.Resp
                 throw new ArgumentOutOfRangeException(nameof(RespWireOptions.WriteTimeout), _options.WriteTimeout,
                     "RespWireOptions.WriteTimeout must be positive and finite.");
 
+            // Below the floor the longest legal HELLO … AUTH … SETNAME cannot authenticate; above
+            // MaxFrameLength the pre-auth cap would be looser than the one it exists to tighten.
+            if (_options.MaxPreAuthFrameLength < RespProtocol.MinPreAuthFrameLength
+                || _options.MaxPreAuthFrameLength > _options.MaxFrameLength)
+                throw new ArgumentOutOfRangeException(nameof(RespWireOptions.MaxPreAuthFrameLength),
+                    _options.MaxPreAuthFrameLength,
+                    $"RespWireOptions.MaxPreAuthFrameLength must be between {RespProtocol.MinPreAuthFrameLength} " +
+                    "and MaxFrameLength.");
+
             if (!_options.RequireAuthentication)
                 _logger.LogWarning(
                     "resp front door on port {Port} started with authentication DISABLED — commands run " +

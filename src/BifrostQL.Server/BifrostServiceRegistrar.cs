@@ -527,7 +527,8 @@ namespace BifrostQL.Server
             // may trigger a model load.
             services.AddScoped<IPolicyGateAccessor, PolicyGateAccessor>();
             // Lets the accessor tell the root provider from a scope: a root-resolved accessor throws.
-            services.TryAddSingleton<RootServiceProvider>();
+            services.TryAddScoped<ScopeSentinel>();
+            services.TryAddSingleton<RootScopeSentinel>();
             // Single identity seam for every transport gate (HTTP, binary WebSocket,
             // protocol frontend, workflow endpoints). TryAdd so a host can substitute
             // its own factory before AddBifrostQL runs.

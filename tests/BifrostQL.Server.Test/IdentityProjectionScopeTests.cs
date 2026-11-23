@@ -141,7 +141,38 @@ public sealed class IdentityProjectionScopeTests
         host.ResolverCalls.Should().Be(0, "a captive accessor projects no one");
     }
 
+    [Fact]
+    public async Task ACaptiveGateAccessor_UnderAContainerThatWrapsItsProviderPerResolve_RefusesLoudly()
+    {
+        // Autofac hands out a new IServiceProvider wrapper on every resolve, so comparing the
+        // accessor's provider to the root by reference never matched: a captive accessor there
+        // served its first caller's gate to everyone. The container below builds the accessor the
+        // same way: every IServiceProvider it injects is a fresh wrapper.
+        var host = new Host(validateScopes: false);
+        var root = new PerResolveProviderWrapper(host.Root);
+        var captive = ActivatorUtilities.CreateInstance<PolicyGateAccessor>(root);
+
+        await using var request = host.Root.CreateAsyncScope();
+        host.RequestContext(request.ServiceProvider, userId: "user-1");
+        var first = async () => await captive.GetAsync();
+        (await first.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*resolved from the root service provider*");
+
+        // Control: the same container shape, resolving from a request scope, serves the gate.
+        var scoped = ActivatorUtilities.CreateInstance<PolicyGateAccessor>(new PerResolveProviderWrapper(request.ServiceProvider));
+        (await scoped.GetAsync()).CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        host.ResolverCalls.Should().Be(1, "only the scoped accessor projects");
+    }
+
     // ---- fixtures ----
+
+    /// <summary>A provider that, like Autofac's, answers <see cref="IServiceProvider"/> with a new
+    /// wrapper on every resolve; every other service comes from <c>inner</c>.</summary>
+    private sealed class PerResolveProviderWrapper(IServiceProvider inner) : IServiceProvider
+    {
+        public object? GetService(Type serviceType)
+            => serviceType == typeof(IServiceProvider) ? new PerResolveProviderWrapper(inner) : inner.GetService(serviceType);
+    }
 
     private sealed class Host
     {

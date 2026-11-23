@@ -30,13 +30,17 @@ namespace BifrostQL.Server
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly PathCache<Inputs> _models;
         private readonly IServiceProvider _scope;
+        private readonly bool _resolvedFromRoot;
         private Task<IPolicyGate>? _gate;
 
-        public PolicyGateAccessor(IHttpContextAccessor httpContextAccessor, PathCache<Inputs> models, IServiceProvider scope)
+        public PolicyGateAccessor(
+            IHttpContextAccessor httpContextAccessor, PathCache<Inputs> models, IServiceProvider scope,
+            ScopeSentinel sentinel, RootScopeSentinel root)
         {
             _httpContextAccessor = httpContextAccessor;
             _models = models;
             _scope = scope;
+            _resolvedFromRoot = root.IsRoot(sentinel);
         }
 
         /// <summary>
@@ -46,7 +50,7 @@ namespace BifrostQL.Server
         /// </summary>
         public ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default)
         {
-            if (RootServiceProvider.IsRoot(_scope))
+            if (_resolvedFromRoot)
                 throw new InvalidOperationException(
                     "IPolicyGateAccessor was resolved from the root service provider (a singleton captured it), " +
                     "so its gate would be shared by every caller. Resolve IPolicyGateAccessor from the request's " +
@@ -129,23 +133,38 @@ namespace BifrostQL.Server
     }
 
     /// <summary>
-    /// The root service provider, captured by a singleton (a singleton's injected
-    /// <see cref="IServiceProvider"/> is the root). A <see cref="PolicyGateAccessor"/> resolved
-    /// from the root lives for the process, so its memoized gate would be served to every caller.
+    /// A marker registered scoped: each DI scope holds its own instance, and the root provider,
+    /// asked for it, holds one for the process. A <see cref="PolicyGateAccessor"/> resolved from
+    /// the root (one a singleton captured) is injected the root's instance. Unlike comparing
+    /// providers by reference, this holds in any container that caches a root-resolved scoped
+    /// service in the root, including one (Autofac) that hands out a new
+    /// <see cref="IServiceProvider"/> wrapper per resolve.
     /// </summary>
-    internal sealed class RootServiceProvider
+    internal sealed class ScopeSentinel;
+
+    /// <summary>
+    /// The root provider's <see cref="ScopeSentinel"/>, held by a singleton (a singleton's
+    /// dependencies come from the root). Null when the root refuses a scoped service (scope
+    /// validation) or none is registered: then no accessor can have been resolved from the root.
+    /// </summary>
+    internal sealed class RootScopeSentinel
     {
-        private readonly IServiceProvider _root;
+        public RootScopeSentinel(IServiceProvider root)
+        {
+            try
+            {
+                Sentinel = root.GetService(typeof(ScopeSentinel)) as ScopeSentinel;
+            }
+            catch (InvalidOperationException)
+            {
+                // Scope validation refuses scoped services from the root, the accessor included.
+                Sentinel = null;
+            }
+        }
 
-        public RootServiceProvider(IServiceProvider root) => _root = root;
+        public ScopeSentinel? Sentinel { get; }
 
-        /// <summary>
-        /// True when <paramref name="provider"/> is the root provider (the host's
-        /// <c>app.Services</c>, or the provider injected into a root-resolved service). A scope
-        /// resolves <see cref="IServiceProvider"/> to itself, the root to the root.
-        /// </summary>
-        internal static bool IsRoot(IServiceProvider provider)
-            => provider.GetService(typeof(RootServiceProvider)) is RootServiceProvider marker
-               && ReferenceEquals(provider.GetService(typeof(IServiceProvider)), marker._root);
+        /// <summary>True when <paramref name="sentinel"/> is the root's own instance.</summary>
+        public bool IsRoot(ScopeSentinel sentinel) => ReferenceEquals(sentinel, Sentinel);
     }
 }

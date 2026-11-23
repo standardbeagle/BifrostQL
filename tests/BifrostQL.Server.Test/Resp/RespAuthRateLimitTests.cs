@@ -170,10 +170,14 @@ namespace BifrostQL.Server.Test.Resp
             var options = new RespWireOptions
             {
                 AllowCleartextAuth = true, // the loopback test transport is not TLS
-                // The pre-auth deadline shares this test's clock, and the window rollover below
-                // jumps past 30 seconds; a real budget here would close the connection for reasons
-                // that have nothing to do with the limiter under test.
+                // The pre-auth and write deadlines share this test's clock, and the window rollover
+                // below jumps 61 seconds; a real budget here would close the connection for reasons
+                // that have nothing to do with the limiter under test. The write deadline (1 minute
+                // by default) is armed per reply and disarmed after its flush, which can land after
+                // the client has read the reply: under a loaded full run the jump fired it and the
+                // next read found the connection closed.
                 AuthenticationTimeout = TimeSpan.FromHours(1),
+                WriteTimeout = TimeSpan.FromHours(1),
                 MaxAuthAttemptsPerSource = attemptsPerSource,
                 MaxAuthAttemptsPerAccount = attemptsPerSource,
                 AuthRateLimitWindow = Window,

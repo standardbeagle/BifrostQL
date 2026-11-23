@@ -211,6 +211,21 @@ namespace BifrostQL.Core.QueryModel
                     Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, table)).ToList(),
                     FilterType = FilterType.Or,
                 },
+                // Several operators on one column, `day: { _gte: a, _lte: b }`: each is its own
+                // leaf predicate on that column, ANDed. Stacked as one nested object they formed an
+                // AND wrapper under the column, which the renderer reads as a relationship sub-filter
+                // ("unknown single-link relationship 'day'"; harvest m1b's week read, 2026-11-22).
+                { Value: IDictionary<string, object?> ops } when ops.Count > 1 && ops.Keys.All(FilterOperators.IsColumnOperator) => new TableFilter
+                {
+                    And = ops.Select(op => new TableFilter
+                    {
+                        ColumnName = kv.Key!,
+                        Next = new TableFilter { RelationName = op.Key, Value = op.Value, FilterType = FilterType.Relation },
+                        Table = table,
+                        FilterType = FilterType.Join,
+                    }).ToList(),
+                    FilterType = FilterType.And,
+                },
                 { Value: IDictionary<string, object?> val } => new TableFilter
                 {
                     ColumnName = kv.Key!,

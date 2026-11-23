@@ -57,7 +57,47 @@ namespace BifrostQL.Server.Test
             public Task<WebSocket> AcceptAsync(WebSocketAcceptContext context) => Task.FromResult(_socket);
         }
 
+        /// <summary>
+        /// A feature collection that records every feature installed after <paramref name="readerStarted"/>
+        /// turns true. <see cref="HttpContext"/> is not thread-safe, and once the reader has taken a
+        /// frame the connection's request tasks share the context concurrently: an install then is a
+        /// write to a dictionary that other request tasks may be reading or writing at the same time.
+        /// </summary>
+        private sealed class RecordingFeatures : IFeatureCollection
+        {
+            private readonly FeatureCollection _inner = new();
+            private readonly Func<bool> _readerStarted;
+            public RecordingFeatures(Func<bool> readerStarted) => _readerStarted = readerStarted;
+
+            public ConcurrentQueue<Type> InstalledWhileServing { get; } = new();
+            public bool IsReadOnly => false;
+            public int Revision => _inner.Revision;
+
+            public object? this[Type key]
+            {
+                get => _inner[key];
+                set
+                {
+                    if (_readerStarted())
+                        InstalledWhileServing.Enqueue(key);
+                    _inner[key] = value;
+                }
+            }
+
+            public TFeature? Get<TFeature>() => (TFeature?)this[typeof(TFeature)];
+            public void Set<TFeature>(TFeature? instance) => this[typeof(TFeature)] = instance;
+            public IEnumerator<KeyValuePair<Type, object>> GetEnumerator() => _inner.GetEnumerator();
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        }
+
         private static Task RunAsync(IBifrostEngine engine, FakeWebSocket socket, int ackWindow = 64)
+        {
+            var context = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };
+            context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
+            return RunAsync(engine, context, ackWindow);
+        }
+
+        private static Task RunAsync(IBifrostEngine engine, HttpContext context, int ackWindow = 64)
         {
             var middleware = new BifrostBinaryMiddleware(
                 _ => Task.CompletedTask,
@@ -68,8 +108,6 @@ namespace BifrostQL.Server.Test
                 ackWindow: ackWindow,
                 ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: false);
-            var context = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };
-            context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
             return middleware.InvokeAsync(context).WaitAsync(TimeSpan.FromSeconds(10));
         }
 
@@ -144,6 +182,37 @@ namespace BifrostQL.Server.Test
             refusal.Errors.Should().ContainSingle().Which.Should().Contain("already in flight");
             sent.Should().ContainSingle(m => m.Type == BifrostMessageType.Result,
                 "the request that holds the id still answers");
+        }
+
+        [Fact]
+        public async Task ConcurrentRequests_NeverInstallFeaturesOnTheSharedHttpContext()
+        {
+            // The flake behind this fact: requests 5 and 6 ran at once on an anonymous mount, and
+            // each one's session check was the first read of HttpContext.User. That getter installs
+            // the authentication feature lazily, so both tasks wrote the context's feature
+            // dictionary at once and one got a NullReferenceException: its request failed with a
+            // second Error frame and closed the connection. Nothing a request task does may install
+            // a feature once the reader is serving; the race itself is too narrow to hit on demand,
+            // the install that feeds it is not.
+            var socket = new FakeWebSocket { Pipelined = true };
+            socket.EnqueueMessage(Query(1, "{ slow }"));
+            socket.EnqueueMessage(Query(2, "{ fast }"));
+            var features = new RecordingFeatures(() => socket.ReceiveCount > 0);
+            features.Set<IHttpRequestFeature>(new HttpRequestFeature());
+            features.Set<IHttpResponseFeature>(new HttpResponseFeature());
+            features.Set<IHttpResponseBodyFeature>(new StreamResponseBodyFeature(Stream.Null));
+            features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
+            var context = new DefaultHttpContext(features)
+            {
+                RequestServices = new ServiceCollection().BuildServiceProvider(),
+            };
+
+            await RunAsync(new GatedEngine(), context);
+
+            features.InstalledWhileServing.Should().BeEmpty(
+                "a feature installed while request tasks run races every other task on the context");
+            socket.SentMessages().Count(m => m.Type == BifrostMessageType.Result).Should().Be(2,
+                "both requests ran, so both read the shared context");
         }
 
         [Fact]

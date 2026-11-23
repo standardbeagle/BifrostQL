@@ -383,6 +383,12 @@ namespace BifrostQL.Server
                 Closing = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
                 InputEnded = CancellationTokenSource.CreateLinkedTokenSource(Closing.Token);
                 ReaderStop = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+                // HttpContext is not thread-safe, and every request task reads its User (the
+                // session check, the identity projection). The first read installs the
+                // authentication feature when no auth middleware ran, which writes the feature
+                // collection: two tasks doing that at once corrupt it. Read it here, before the
+                // reader starts any task, so the tasks only ever find it installed.
+                _ = httpContext.User;
             }
 
             public WebSocket WebSocket { get; }

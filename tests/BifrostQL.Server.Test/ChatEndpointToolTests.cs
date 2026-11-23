@@ -55,7 +55,7 @@ namespace BifrostQL.Server.Test
                 };
 
             public Task<ChatToolResult> ExecuteAsync(
-                string toolName, string inputJson, IDictionary<string, object?> authContext,
+                string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext,
                 CancellationToken cancellationToken)
             {
                 AuthContexts.Add(authContext);

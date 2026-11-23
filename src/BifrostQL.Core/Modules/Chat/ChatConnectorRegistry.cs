@@ -121,6 +121,7 @@ namespace BifrostQL.Core.Modules.Chat
         public Task<ChatToolResult> ExecuteAsync(
             string toolName,
             string inputJson,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
@@ -129,33 +130,35 @@ namespace BifrostQL.Core.Modules.Chat
             if (!_byName.TryGetValue(toolName, out var tool))
                 throw new ChatToolInputException(
                     $"Unknown chat tool '{toolName}'; no registered connector defines it.");
-            return tool.Connector.ExecuteAsync(toolName, inputJson ?? "{}", authContext, cancellationToken);
+            return tool.Connector.ExecuteAsync(toolName, inputJson ?? "{}", endpoint, authContext, cancellationToken);
         }
 
         /// <summary>
         /// Binds the caller's auth context into an executor the completion layer can
         /// invoke without holding an identity of its own.
         /// </summary>
-        public IChatToolExecutor CreateExecutor(IDictionary<string, object?> authContext)
+        public IChatToolExecutor CreateExecutor(string? endpoint, IDictionary<string, object?> authContext)
         {
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
-            return new BoundExecutor(this, authContext);
+            return new BoundExecutor(this, endpoint, authContext);
         }
 
         private sealed class BoundExecutor : IChatToolExecutor
         {
             private readonly ChatToolSet _tools;
+            private readonly string? _endpoint;
             private readonly IDictionary<string, object?> _authContext;
 
-            public BoundExecutor(ChatToolSet tools, IDictionary<string, object?> authContext)
+            public BoundExecutor(ChatToolSet tools, string? endpoint, IDictionary<string, object?> authContext)
             {
                 _tools = tools;
+                _endpoint = endpoint;
                 _authContext = authContext;
             }
 
             public Task<ChatToolResult> ExecuteAsync(string toolName, string inputJson, CancellationToken cancellationToken)
-                => _tools.ExecuteAsync(toolName, inputJson, _authContext, cancellationToken);
+                => _tools.ExecuteAsync(toolName, inputJson, _endpoint, _authContext, cancellationToken);
         }
     }
 }

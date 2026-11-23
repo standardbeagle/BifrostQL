@@ -122,7 +122,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
             },
             _provider);
 
-        _connector = new ExploreChatConnector(_reads, endpoint: EndpointPath);
+        _connector = new ExploreChatConnector(_reads);
     }
 
     public async Task DisposeAsync()
@@ -169,7 +169,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         string inputJson, IDictionary<string, object?> authContext, ExploreChatConnector? connector = null)
     {
         var result = await (connector ?? _connector)
-            .ExecuteAsync("explore_orders", inputJson, authContext, CancellationToken.None);
+            .ExecuteAsync("explore_orders", inputJson, EndpointPath, authContext, CancellationToken.None);
         result.IsError.Should().BeFalse();
         return JsonDocument.Parse(result.TextPayload);
     }
@@ -328,7 +328,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         for (var i = 1; i <= 8; i++)
             await SeedOrderAsync(1, $"customer-{i}", i);
         var capped = new ExploreChatConnector(
-            _reads, new ChatConnectorOptions { ExploreRowCap = 5 }, EndpointPath);
+            _reads, new ChatConnectorOptions { ExploreRowCap = 5 });
 
         using var payload = await ExecuteAsync("{}", Tenant(1), capped);
 
@@ -403,7 +403,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         for (var i = 1; i <= 5; i++)
             await SeedOrderAsync(1, $"customer-{i}-{new string('x', 80)}", i);
         var capped = new ExploreChatConnector(
-            _reads, new ChatConnectorOptions { ExplorePayloadCharCap = 350 }, EndpointPath);
+            _reads, new ChatConnectorOptions { ExplorePayloadCharCap = 350 });
 
         using var payload = await ExecuteAsync("""{"columns":["customer"]}""", Tenant(1), capped);
 
@@ -462,7 +462,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         // The model naming a hidden column gets the same rejection as a nonexistent
         // one — and the valid-columns feedback must not disclose the hidden name.
         Task Run(string inputJson) => _connector.ExecuteAsync(
-            "explore_orders", inputJson, Tenant(1), CancellationToken.None);
+            "explore_orders", inputJson, EndpointPath, Tenant(1), CancellationToken.None);
 
         foreach (var inputJson in new[]
         {
@@ -487,9 +487,9 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         // deep in execution as a sanitized server error; the connector must refuse it
         // validation-first with model-readable feedback so the model can recover.
         var filter = () => _connector.ExecuteAsync(
-            "explore_orders", """{"filters":{"card_number":{"_eq":"x"}}}""", Tenant(1), CancellationToken.None);
+            "explore_orders", """{"filters":{"card_number":{"_eq":"x"}}}""", EndpointPath, Tenant(1), CancellationToken.None);
         var sort = () => _connector.ExecuteAsync(
-            "explore_orders", """{"sort":{"column":"card_number"}}""", Tenant(1), CancellationToken.None);
+            "explore_orders", """{"sort":{"column":"card_number"}}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await filter.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Be("Column 'card_number' cannot be used in 'filters'; it is encrypted.");
@@ -501,7 +501,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
     public async Task Execute_UnknownFilterColumn_ThrowsNamingTheValidColumns()
     {
         var act = () => _connector.ExecuteAsync(
-            "explore_orders", """{"filters":{"nope":{"_eq":1}}}""", Tenant(1), CancellationToken.None);
+            "explore_orders", """{"filters":{"nope":{"_eq":1}}}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("'nope'")
@@ -513,7 +513,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
     {
         // _contains is a string operator; total is numeric.
         var act = () => _connector.ExecuteAsync(
-            "explore_orders", """{"filters":{"total":{"_contains":"x"}}}""", Tenant(1), CancellationToken.None);
+            "explore_orders", """{"filters":{"total":{"_contains":"x"}}}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("'_contains'").And.Contain("'total'")
@@ -524,7 +524,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
     public async Task Execute_MalformedArguments_AreModelVisibleErrors()
     {
         Task Run(string inputJson) => _connector.ExecuteAsync(
-            "explore_orders", inputJson, Tenant(1), CancellationToken.None);
+            "explore_orders", inputJson, EndpointPath, Tenant(1), CancellationToken.None);
 
         // Unknown top-level argument.
         (await ((Func<Task>)(() => Run("""{"limits":1}"""))).Should().ThrowAsync<ChatToolInputException>())
@@ -628,7 +628,7 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
             Tools = new ChatCompletionToolOptions
             {
                 Tools = toolSet.Definitions,
-                Executor = toolSet.CreateExecutor(Tenant(1)),
+                Executor = toolSet.CreateExecutor(EndpointPath, Tenant(1)),
             },
         };
 

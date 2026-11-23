@@ -78,7 +78,7 @@ namespace BifrostQL.Server.Test
                 => Array.Empty<ChatToolDefinition>();
 
             public Task<ChatToolResult> ExecuteAsync(
-                string toolName, string inputJson, IDictionary<string, object?> authContext,
+                string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext,
                 CancellationToken cancellationToken)
                 => Task.FromResult(new ChatToolResult { TextPayload = "{}" });
         }

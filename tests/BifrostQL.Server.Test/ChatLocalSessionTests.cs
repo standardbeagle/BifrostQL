@@ -210,7 +210,7 @@ namespace BifrostQL.Server.Test
                 => new[] { new ChatToolDefinition($"fake_{binding.Table.DbName}", "Rows.", """{"type":"object","properties":{}}""") };
 
             public Task<ChatToolResult> ExecuteAsync(
-                string toolName, string inputJson, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
+                string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
             {
                 Interlocked.Increment(ref _executions);
                 return Task.FromResult(new ChatToolResult { TextPayload = """{"rows":[]}""" });

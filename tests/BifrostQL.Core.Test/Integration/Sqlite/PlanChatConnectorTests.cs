@@ -174,7 +174,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
             _provider);
 
         _registry = new ChatPlanConfirmationRegistry();
-        _connector = new PlanChatConnector(_reads, _writes, _registry, endpoint: EndpointPath);
+        _connector = new PlanChatConnector(_reads, _writes, _registry);
     }
 
     public async Task DisposeAsync()
@@ -218,7 +218,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
         CancellationToken cancellationToken = default)
     {
         var result = await _connector.ExecuteAsync(
-            toolName, inputJson, caller ?? Caller(1), cancellationToken);
+            toolName, inputJson, EndpointPath, caller ?? Caller(1), cancellationToken);
         result.IsError.Should().BeFalse();
         result.ConfirmationRequest.Should().NotBeNull("a plan tool call must produce a write proposal");
         return result;
@@ -480,10 +480,9 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
     public async Task Timeout_DeniesTheProposal_NothingPersisted()
     {
         var quick = new PlanChatConnector(_reads, _writes, _registry,
-            new ChatConnectorOptions { PlanConfirmationTimeout = TimeSpan.FromMilliseconds(100) },
-            EndpointPath);
+            new ChatConnectorOptions { PlanConfirmationTimeout = TimeSpan.FromMilliseconds(100) });
         var result = await quick.ExecuteAsync(
-            "plan_insert_posts", TwoPostRows, Caller(1), CancellationToken.None);
+            "plan_insert_posts", TwoPostRows, EndpointPath, Caller(1), CancellationToken.None);
 
         var outcome = await result.ConfirmationRequest!.ResolveAsync(CancellationToken.None);
 
@@ -569,7 +568,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
     public async Task Execute_InvalidInputs_AreModelVisibleErrors()
     {
         Task Run(string toolName, string inputJson) =>
-            _connector.ExecuteAsync(toolName, inputJson, Caller(1), CancellationToken.None);
+            _connector.ExecuteAsync(toolName, inputJson, EndpointPath, Caller(1), CancellationToken.None);
 
         // A disallowed operation's tool does not exist.
         await ((Func<Task>)(() => Run("plan_update_drafts", """{"rows":[{"id":1,"title":"x"}]}""")))
@@ -619,7 +618,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
         var caller = new Dictionary<string, object?> { ["tenant_id"] = 1, ["user_id"] = "user-1" };
 
         var act = () => _connector.ExecuteAsync(
-            "plan_insert_posts", TwoPostRows, caller, CancellationToken.None);
+            "plan_insert_posts", TwoPostRows, EndpointPath, caller, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage($"*{ChatPlanConfirmationRegistry.ConversationContextKey}*");
@@ -696,7 +695,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
             Tools = new ChatCompletionToolOptions
             {
                 Tools = toolSet.Definitions,
-                Executor = toolSet.CreateExecutor(Caller(1)),
+                Executor = toolSet.CreateExecutor(EndpointPath, Caller(1)),
             },
         };
 
@@ -767,7 +766,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
             Tools = new ChatCompletionToolOptions
             {
                 Tools = toolSet.Definitions,
-                Executor = toolSet.CreateExecutor(Caller(1)),
+                Executor = toolSet.CreateExecutor(EndpointPath, Caller(1)),
             },
         };
 

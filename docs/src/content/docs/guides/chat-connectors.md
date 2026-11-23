@@ -239,7 +239,7 @@ public sealed class WeatherChatConnector : IChatConnector
     }
 
     public async Task<ChatToolResult> ExecuteAsync(
-        string toolName, string inputJson,
+        string toolName, string inputJson, string? endpoint,
         IDictionary<string, object?> authContext, CancellationToken cancellationToken)
     {
         // inputJson is MODEL input — re-validate it. Throw ChatToolInputException
@@ -248,8 +248,10 @@ public sealed class WeatherChatConnector : IChatConnector
         var input = ParseAndValidate(inputJson);
 
         // Reads/writes must ride the intent executors with authContext so the
-        // caller's tenant scope and policy apply — never an ambient identity.
-        var forecast = await LookUpAsync(input, authContext, cancellationToken);
+        // caller's tenant scope and policy apply — never an ambient identity —
+        // and set the intent's Endpoint to `endpoint`, the chat mount's
+        // BifrostChatOptions.GraphQlEndpoint (null on a single-endpoint host).
+        var forecast = await LookUpAsync(input, endpoint, authContext, cancellationToken);
         return new ChatToolResult { TextPayload = forecast };
     }
 }

@@ -435,7 +435,7 @@ public class ChatToolLoopTests
             Tools = new ChatCompletionToolOptions
             {
                 Tools = toolSet.Definitions,
-                Executor = toolSet.CreateExecutor(new Dictionary<string, object?>()),
+                Executor = toolSet.CreateExecutor(null, new Dictionary<string, object?>()),
             },
         };
         var (service, requests) = ServiceOverTurns(
@@ -463,7 +463,7 @@ public class ChatToolLoopTests
             => new[] { new ChatToolDefinition("explore_documents", "Query documents.", """{"type":"object"}""") };
 
         public Task<ChatToolResult> ExecuteAsync(
-            string toolName, string inputJson, IDictionary<string, object?> authContext,
+            string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
             => Task.FromResult(new ChatToolResult { TextPayload = "{}" });
     }

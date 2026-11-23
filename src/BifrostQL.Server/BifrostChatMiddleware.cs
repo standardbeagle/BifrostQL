@@ -30,7 +30,9 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// The registered GraphQL endpoint path whose schema (and chat table pair) the
-        /// chat endpoints serve. Null uses the single registered endpoint.
+        /// chat endpoints serve. Chat connector tools (explore, media, plan) build from
+        /// and run against this endpoint, and plan confirmations key their identity by
+        /// its model. Null uses the single registered endpoint.
         /// </summary>
         public string? GraphQlEndpoint { get; set; }
 
@@ -635,7 +637,8 @@ namespace BifrostQL.Server
                 Tools = new ChatCompletionToolOptions
                 {
                     Tools = toolSet.Definitions,
-                    Executor = new SessionBoundToolExecutor(toolSet.CreateExecutor(toolContext), session),
+                    Executor = new SessionBoundToolExecutor(
+                        toolSet.CreateExecutor(_options.GraphQlEndpoint, toolContext), session),
                     MaxToolIterations = _options.MaxToolIterations,
                 },
             };

@@ -45,7 +45,7 @@ public class ChatConnectorRegistryTests
 
         public ChatToolResult Result { get; set; } = new() { TextPayload = """{"ok":true}""" };
 
-        public List<(string ToolName, string InputJson, IDictionary<string, object?> AuthContext)> Executions { get; } = new();
+        public List<(string ToolName, string InputJson, string? Endpoint, IDictionary<string, object?> AuthContext)> Executions { get; } = new();
 
         public IReadOnlyList<ChatToolDefinition> GetToolDefinitions(IDbModel model, ChatConnectorBinding binding)
             => _toolNames
@@ -56,9 +56,9 @@ public class ChatConnectorRegistryTests
                 .ToList();
 
         public Task<ChatToolResult> ExecuteAsync(
-            string toolName, string inputJson, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
+            string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
         {
-            Executions.Add((toolName, inputJson, authContext));
+            Executions.Add((toolName, inputJson, endpoint, authContext));
             return Task.FromResult(Result);
         }
     }
@@ -78,7 +78,7 @@ public class ChatConnectorRegistryTests
         }
 
         public Task<ChatToolResult> ExecuteAsync(
-            string toolName, string inputJson, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
+            string toolName, string inputJson, string? endpoint, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
             => throw new NotSupportedException();
     }
 
@@ -199,13 +199,14 @@ public class ChatConnectorRegistryTests
         var authContext = new Dictionary<string, object?> { ["sub"] = "user-1" };
 
         var result = await tools.ExecuteAsync(
-            "plan_documents", """{"op":"insert"}""", authContext, CancellationToken.None);
+            "plan_documents", """{"op":"insert"}""", "/graphql", authContext, CancellationToken.None);
 
         result.TextPayload.Should().Be("""{"ok":true}""");
         explore.Executions.Should().BeEmpty();
         plan.Executions.Should().ContainSingle();
         plan.Executions[0].ToolName.Should().Be("plan_documents");
         plan.Executions[0].InputJson.Should().Be("""{"op":"insert"}""");
+        plan.Executions[0].Endpoint.Should().Be("/graphql");
         plan.Executions[0].AuthContext.Should().BeSameAs(authContext);
     }
 
@@ -218,7 +219,7 @@ public class ChatConnectorRegistryTests
             .BuildToolSet(ConnectorModel());
 
         var act = () => tools.ExecuteAsync(
-            "not_a_tool", "{}", new Dictionary<string, object?>(), CancellationToken.None);
+            "not_a_tool", "{}", null, new Dictionary<string, object?>(), CancellationToken.None);
 
         await act.Should().ThrowAsync<ChatToolInputException>().WithMessage("*not_a_tool*");
     }
@@ -233,10 +234,11 @@ public class ChatConnectorRegistryTests
             .BuildToolSet(ConnectorModel());
         var authContext = new Dictionary<string, object?> { ["tenant"] = "tenant-a" };
 
-        var executor = tools.CreateExecutor(authContext);
+        var executor = tools.CreateExecutor("/graphql", authContext);
         await executor.ExecuteAsync("explore_documents", "{}", CancellationToken.None);
 
-        connector.Executions.Should().ContainSingle()
-            .Which.AuthContext.Should().BeSameAs(authContext);
+        var execution = connector.Executions.Should().ContainSingle().Which;
+        execution.AuthContext.Should().BeSameAs(authContext);
+        execution.Endpoint.Should().Be("/graphql", "the executor carries the transport's endpoint into every call");
     }
 }

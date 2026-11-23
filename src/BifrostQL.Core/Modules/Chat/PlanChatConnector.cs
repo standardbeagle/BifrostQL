@@ -57,21 +57,18 @@ namespace BifrostQL.Core.Modules.Chat
         private readonly ChatPlanConfirmationRegistry _confirmations;
         private readonly ChatConnectorOptions _options;
         private readonly ILogger _logger;
-        private readonly string? _endpoint;
 
         public PlanChatConnector(
             IQueryIntentExecutor reads,
             IMutationIntentExecutor writes,
             ChatPlanConfirmationRegistry confirmations,
             ChatConnectorOptions? options = null,
-            string? endpoint = null,
             ILogger<PlanChatConnector>? logger = null)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _writes = writes ?? throw new ArgumentNullException(nameof(writes));
             _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
             _options = options ?? new ChatConnectorOptions();
-            _endpoint = endpoint;
             _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PlanChatConnector>.Instance;
         }
 
@@ -110,13 +107,14 @@ namespace BifrostQL.Core.Modules.Chat
         public async Task<ChatToolResult> ExecuteAsync(
             string toolName,
             string inputJson,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
 
-            var model = await _reads.GetModelAsync(_endpoint);
+            var model = await _reads.GetModelAsync(endpoint);
             var (binding, operation) = ResolvePlanTool(model, toolName);
             var table = RequireServableTable(binding);
             var rows = ParseRows(table, operation, inputJson ?? "{}");
@@ -150,7 +148,7 @@ namespace BifrostQL.Core.Modules.Chat
                     Rows = rows.Select(r => (IReadOnlyDictionary<string, object?>)r.Display).ToList(),
                     Summary = summary,
                     ResolveAsync = ct => ResolveProposalAsync(
-                        toolName, table, operation, rows, authContext, pending, ct),
+                        toolName, table, operation, rows, endpoint, authContext, pending, ct),
                 },
             };
         }
@@ -162,6 +160,7 @@ namespace BifrostQL.Core.Modules.Chat
             IDbTable table,
             MutationType operation,
             IReadOnlyList<ProposedRow> rows,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             PendingPlanConfirmation pending,
             CancellationToken cancellationToken)
@@ -196,7 +195,7 @@ namespace BifrostQL.Core.Modules.Chat
                         .Select(r => new MutationBatchAction(ToIntentAction(operation), r.Data))
                         .ToList(),
                     UserContext = authContext,
-                    Endpoint = _endpoint,
+                    Endpoint = endpoint,
                 }, cancellationToken).ConfigureAwait(false);
 
                 var approved = new JsonObject

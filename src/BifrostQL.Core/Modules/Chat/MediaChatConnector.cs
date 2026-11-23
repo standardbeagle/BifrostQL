@@ -60,14 +60,11 @@ namespace BifrostQL.Core.Modules.Chat
 
         private readonly IQueryIntentExecutor _reads;
         private readonly ChatConnectorOptions _options;
-        private readonly string? _endpoint;
 
-        public MediaChatConnector(
-            IQueryIntentExecutor reads, ChatConnectorOptions? options = null, string? endpoint = null)
+        public MediaChatConnector(IQueryIntentExecutor reads, ChatConnectorOptions? options = null)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _options = options ?? new ChatConnectorOptions();
-            _endpoint = endpoint;
         }
 
         /// <inheritdoc />
@@ -105,20 +102,21 @@ namespace BifrostQL.Core.Modules.Chat
         public async Task<ChatToolResult> ExecuteAsync(
             string toolName,
             string inputJson,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
 
-            var model = await _reads.GetModelAsync(_endpoint);
+            var model = await _reads.GetModelAsync(endpoint);
             var binding = ResolveMediaBinding(model, toolName);
             var (table, config) = RequireServableBinding(binding);
             var input = ParseInput(table, config, inputJson ?? "{}");
 
             return input.ViewImageId is not null
-                ? await ViewImageAsync(table, config, input.ViewImageId, authContext, cancellationToken)
-                : await LookupAsync(table, config, input, authContext, cancellationToken);
+                ? await ViewImageAsync(table, config, input.ViewImageId, endpoint, authContext, cancellationToken)
+                : await LookupAsync(table, config, input, endpoint, authContext, cancellationToken);
         }
 
         // ---- binding rules (fail-fast configuration faults) ------------------------
@@ -312,6 +310,7 @@ namespace BifrostQL.Core.Modules.Chat
             IDbTable table,
             ChatConnectorConfig config,
             MediaInput input,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
@@ -329,7 +328,7 @@ namespace BifrostQL.Core.Modules.Chat
                     // One row past the cap proves more rows exist without a count query.
                     limit: input.EffectiveLimit + 1, offset: input.Offset),
                 UserContext = authContext,
-                Endpoint = _endpoint,
+                Endpoint = endpoint,
             }, cancellationToken);
 
             var hasMore = result.Rows.Count > input.EffectiveLimit;
@@ -394,6 +393,7 @@ namespace BifrostQL.Core.Modules.Chat
             IDbTable table,
             ChatConnectorConfig config,
             object viewImageId,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
@@ -411,7 +411,7 @@ namespace BifrostQL.Core.Modules.Chat
                     sortTokens: new[] { $"{key.GraphQlName}_{ConnectorQuerySchema.SortAscending}" },
                     limit: 1, offset: 0),
                 UserContext = authContext,
-                Endpoint = _endpoint,
+                Endpoint = endpoint,
             }, cancellationToken);
 
             if (result.Rows.Count == 0)

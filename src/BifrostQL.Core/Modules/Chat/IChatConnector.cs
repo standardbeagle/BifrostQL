@@ -42,11 +42,16 @@ namespace BifrostQL.Core.Modules.Chat
         /// (never null, <c>{}</c> when the model sent no arguments) and must be
         /// re-validated — the model is an untrusted caller. Failures may throw: the
         /// tool loop converts exceptions into an <c>is_error</c> tool result fed back
-        /// to the model, never a crashed stream.
+        /// to the model, never a crashed stream. <paramref name="endpoint"/> is the
+        /// GraphQL endpoint the transport serves (the chat mount's
+        /// <c>GraphQlEndpoint</c>), the one whose model the tool set was built from:
+        /// pass it as the <c>Endpoint</c> of every intent and model lookup, so a
+        /// multi-endpoint host runs the tool against the database it advertised.
         /// </summary>
         Task<ChatToolResult> ExecuteAsync(
             string toolName,
             string inputJson,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken);
     }
@@ -195,7 +200,7 @@ namespace BifrostQL.Core.Modules.Chat
 
     /// <summary>
     /// Executes tool calls for ONE request: implementations are bound to a caller's
-    /// auth context at creation (<see cref="ChatToolSet.CreateExecutor"/>), so the
+    /// endpoint and auth context at creation (<see cref="ChatToolSet.CreateExecutor"/>), so the
     /// completion layer can run tools without ever holding an identity of its own.
     /// </summary>
     public interface IChatToolExecutor

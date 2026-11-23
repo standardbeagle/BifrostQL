@@ -154,6 +154,37 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task Confirm_RoundTrip_OnAMultiEndpointHost_RunsAgainstTheChatMountsEndpoint()
+        {
+            // Two endpoints; the chat mount names /graphql. The plan connector was built with no
+            // endpoint, so its proposal resolved the unnamed endpoint, which a multi-endpoint host
+            // refuses: the plan tool failed on every call while the mount offered it.
+            var client = await _h.StartAsync(
+                extraMetadata: PlanMetadata, secondEndpointPath: "/other",
+                configureChat: o => o.GraphQlEndpoint = "/graphql");
+            ScriptPlanCall();
+            var conversationId = await _h.CreateConversationAsync(client, "tenant-a");
+
+            using var response = await _h.PostMessageAsync(
+                client, conversationId, "Schedule the launch note",
+                completion: HttpCompletionOption.ResponseHeadersRead);
+            var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+            SseEvent parked;
+            do
+                parked = await SseReader.ReadNextAsync(reader);
+            while (parked.Name is not ("confirmation" or "error"));
+            parked.Name.Should().Be("confirmation", parked.Data.ToString());
+
+            var confirmationId = parked.Data.GetProperty("confirmationId").GetString()!;
+            using var approve = await ResolveAsync(client, conversationId, confirmationId, new { approve = true });
+            approve.StatusCode.Should().Be(HttpStatusCode.OK, "the confirm route keys the identity by the same endpoint");
+            while ((await SseReader.ReadNextAsync(reader)).Name != "done") { }
+            (await _h.ScalarAsync(
+                "SELECT COUNT(*) FROM posts WHERE title = 'Launch note' AND tenant_id = 'tenant-a'"))
+                .Should().Be(1L, "the approved write ran against the chat mount's endpoint");
+        }
+
+        [Fact]
         public async Task Deny_PersistsNothing_ModelContinues_AndTheTranscriptRecordsTheReason()
         {
             var client = await _h.StartAsync(extraMetadata: PlanMetadata);

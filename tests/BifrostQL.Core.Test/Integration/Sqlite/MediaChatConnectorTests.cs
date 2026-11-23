@@ -145,7 +145,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
             },
             _provider);
 
-        _connector = new MediaChatConnector(_reads, endpoint: EndpointPath);
+        _connector = new MediaChatConnector(_reads);
     }
 
     public async Task DisposeAsync()
@@ -188,7 +188,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
         MediaChatConnector? connector = null)
     {
         var result = await (connector ?? _connector)
-            .ExecuteAsync(toolName, inputJson, authContext, CancellationToken.None);
+            .ExecuteAsync(toolName, inputJson, EndpointPath, authContext, CancellationToken.None);
         result.IsError.Should().BeFalse();
         return result;
     }
@@ -354,7 +354,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
         for (var i = 1; i <= 4; i++)
             await SeedLinkAsync(1, $"link-{i}", $"https://example.com/{i}");
         var capped = new MediaChatConnector(
-            _reads, new ChatConnectorOptions { ExploreRowCap = 2 }, EndpointPath);
+            _reads, new ChatConnectorOptions { ExploreRowCap = 2 });
 
         var result = await ExecuteAsync("media_links", "{}", Tenant(1), capped);
 
@@ -371,9 +371,9 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
     public async Task MediaColumn_IsRejectedAsPredicate_WithAnAuthoredMessage()
     {
         var filter = () => _connector.ExecuteAsync(
-            "media_links", """{"filters":{"url":{"_eq":"x"}}}""", Tenant(1), CancellationToken.None);
+            "media_links", """{"filters":{"url":{"_eq":"x"}}}""", EndpointPath, Tenant(1), CancellationToken.None);
         var sort = () => _connector.ExecuteAsync(
-            "media_links", """{"sort":{"column":"url"}}""", Tenant(1), CancellationToken.None);
+            "media_links", """{"sort":{"column":"url"}}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await filter.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Be("Column 'url' cannot be used in 'filters'; it is the media content column.");
@@ -386,9 +386,9 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
     {
         // Hidden: rejected as unknown without disclosure; encrypted: authored rejection.
         var hidden = () => _connector.ExecuteAsync(
-            "media_documents", """{"filters":{"internal_notes":{"_eq":"x"}}}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"filters":{"internal_notes":{"_eq":"x"}}}""", EndpointPath, Tenant(1), CancellationToken.None);
         var encrypted = () => _connector.ExecuteAsync(
-            "media_documents", """{"sort":{"column":"owner_ssn"}}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"sort":{"column":"owner_ssn"}}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await hidden.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("Unknown column 'internal_notes'").And.NotContain("hidden");
@@ -400,9 +400,9 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
     public async Task UnknownArguments_NameTheValidOnes_PerVisionMode()
     {
         var visionOn = () => _connector.ExecuteAsync(
-            "media_documents", """{"columns":["caption"]}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"columns":["caption"]}""", EndpointPath, Tenant(1), CancellationToken.None);
         var visionOff = () => _connector.ExecuteAsync(
-            "media_links", """{"view_image_id":1}""", Tenant(1), CancellationToken.None);
+            "media_links", """{"view_image_id":1}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await visionOn.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("'columns'")
@@ -417,7 +417,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
     public async Task ViewImageId_CombinedWithLookupArguments_IsRejected()
     {
         var act = () => _connector.ExecuteAsync(
-            "media_documents", """{"view_image_id":1,"limit":5}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":1,"limit":5}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("cannot be combined");
@@ -455,9 +455,9 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
         await SeedDocumentAsync(2, "theirs", PngBytes);
 
         Task Run() => _connector.ExecuteAsync(
-            "media_documents", """{"view_image_id":1}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":1}""", EndpointPath, Tenant(1), CancellationToken.None);
         Task RunMissing() => _connector.ExecuteAsync(
-            "media_documents", """{"view_image_id":999}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":999}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         var crossTenant = (await ((Func<Task>)Run).Should().ThrowAsync<ChatToolInputException>()).Which.Message;
         var missing = (await ((Func<Task>)RunMissing).Should().ThrowAsync<ChatToolInputException>()).Which.Message;
@@ -470,10 +470,10 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
     {
         await SeedDocumentAsync(1, "big", PngBytes);
         var capped = new MediaChatConnector(
-            _reads, new ChatConnectorOptions { MediaVisionByteCap = 16 }, EndpointPath);
+            _reads, new ChatConnectorOptions { MediaVisionByteCap = 16 });
 
         var act = () => capped.ExecuteAsync(
-            "media_documents", """{"view_image_id":1}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":1}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>()).Which.Message.Should().Be(
             $"The image is {PngBytes.Length} bytes, over the 16-byte vision cap; " +
@@ -486,7 +486,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
         await SeedDocumentAsync(1, "not an image", new byte[] { 0x50, 0x4B, 0x03, 0x04, 0x00, 0x00 });
 
         var act = () => _connector.ExecuteAsync(
-            "media_documents", """{"view_image_id":1}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":1}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Contain("not a recognized image format (png, jpeg, gif, webp)");
@@ -498,7 +498,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
         await SeedDocumentAsync(1, "empty", null);
 
         var act = () => _connector.ExecuteAsync(
-            "media_documents", """{"view_image_id":1}""", Tenant(1), CancellationToken.None);
+            "media_documents", """{"view_image_id":1}""", EndpointPath, Tenant(1), CancellationToken.None);
 
         (await act.Should().ThrowAsync<ChatToolInputException>())
             .Which.Message.Should().Be("The documents row with id = '1' has no media content.");
@@ -578,7 +578,7 @@ public sealed class MediaChatConnectorTests : IAsyncLifetime
             Tools = new ChatCompletionToolOptions
             {
                 Tools = toolSet.Definitions,
-                Executor = toolSet.CreateExecutor(Tenant(1)),
+                Executor = toolSet.CreateExecutor(EndpointPath, Tenant(1)),
             },
         };
 

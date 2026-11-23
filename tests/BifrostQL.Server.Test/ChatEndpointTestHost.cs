@@ -98,7 +98,7 @@ namespace BifrostQL.Server.Test
             IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false,
             string[]? extraMetadata = null, Action<IServiceCollection>? configureServices = null,
             Action<BifrostChatOptions>? configureChat = null, string? defaultAuthScheme = null,
-            Action<IApplicationBuilder>? configureApp = null)
+            Action<IApplicationBuilder>? configureApp = null, string? secondEndpointPath = null)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -132,6 +132,16 @@ namespace BifrostQL.Server.Test
                             }.Concat(extraMetadata ?? Array.Empty<string>()).ToArray();
                             e.DisableAuth = true;
                         });
+                        // A second endpoint over the same database makes the host multi-endpoint:
+                        // an unnamed endpoint no longer resolves, so the chat mount must name its own.
+                        if (secondEndpointPath is not null)
+                            o.AddEndpoint(e =>
+                            {
+                                e.ConnectionString = _connString;
+                                e.Provider = "sqlite";
+                                e.Path = secondEndpointPath;
+                                e.DisableAuth = true;
+                            });
                         if (observers is not null)
                             o.AddQueryObservers(observers);
                     });

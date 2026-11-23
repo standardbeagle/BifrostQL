@@ -43,14 +43,11 @@ namespace BifrostQL.Core.Modules.Chat
 
         private readonly IQueryIntentExecutor _reads;
         private readonly ChatConnectorOptions _options;
-        private readonly string? _endpoint;
 
-        public ExploreChatConnector(
-            IQueryIntentExecutor reads, ChatConnectorOptions? options = null, string? endpoint = null)
+        public ExploreChatConnector(IQueryIntentExecutor reads, ChatConnectorOptions? options = null)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _options = options ?? new ChatConnectorOptions();
-            _endpoint = endpoint;
         }
 
         /// <inheritdoc />
@@ -81,13 +78,14 @@ namespace BifrostQL.Core.Modules.Chat
         public async Task<ChatToolResult> ExecuteAsync(
             string toolName,
             string inputJson,
+            string? endpoint,
             IDictionary<string, object?> authContext,
             CancellationToken cancellationToken)
         {
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
 
-            var model = await _reads.GetModelAsync(_endpoint);
+            var model = await _reads.GetModelAsync(endpoint);
             var table = ResolveExploreTable(model, toolName);
             var input = ParseInput(table, inputJson ?? "{}");
 
@@ -95,7 +93,7 @@ namespace BifrostQL.Core.Modules.Chat
             {
                 Query = BuildQuery(table, input),
                 UserContext = authContext,
-                Endpoint = _endpoint,
+                Endpoint = endpoint,
             }, cancellationToken);
 
             return BuildResult(result.Rows, input.EffectiveLimit);

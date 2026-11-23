@@ -55,7 +55,7 @@ namespace BifrostQL.Server.Test.Pgwire
         public async Task StalledPreAuthConnection_IsDroppedByTheHandshakeDeadline_AndReleasesItsSlot()
         {
             // The deadline is driven by an injected clock, never by the host's wall clock: the
-            // timeout is far longer than the harness's 5 s wait, so only advancing the fake
+            // timeout is far longer than the harness's 30 s wait, so only advancing the fake
             // provider can drop the staller. A handler that fell back to the system clock would
             // keep the slot and fail the wait below (revert-proven RED).
             var clock = new FakeTimeProvider();

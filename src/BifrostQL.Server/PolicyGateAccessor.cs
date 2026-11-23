@@ -8,8 +8,10 @@ namespace BifrostQL.Server
 {
     /// <summary>
     /// Default <see cref="IPolicyGateAccessor"/>, registered scoped. The gate is built lazily on
-    /// the first <see cref="GetAsync"/> and memoized for the request (invariant 13: per request,
-    /// never per session). Nothing runs at construction, so a request whose endpoint never awaits
+    /// the first <c>GetAsync</c> and memoized for the accessor's scope, keyed on the context it was
+    /// built from (invariant 13): the self-projected build has one key, and each caller-supplied
+    /// user context is its own key, compared by reference, so one context is never served
+    /// another's gate. The identity itself is never memoized. Nothing runs at construction, so a request whose endpoint never awaits
     /// the accessor (a health check, a static file) triggers no identity projection and no schema
     /// load. That matters because <see cref="PathCache{T}"/> drops a faulted load and retries it:
     /// a down database would otherwise make every request on every route retry the load.
@@ -21,9 +23,12 @@ namespace BifrostQL.Server
     /// HttpContext's: a hook resolving the accessor inside a binary per-message scope or a hub
     /// invocation scope reaches a connection-lifetime HttpContext through
     /// <see cref="IHttpContextAccessor"/>, whose RequestServices hold a connection-lifetime grant
-    /// resolver. The projection is not shared with the endpoint's own
-    /// <c>GetBifrostUserContextAsync</c> call: an endpoint that awaits both runs the grant
-    /// resolver twice.
+    /// resolver. An endpoint that already holds the caller's context (from
+    /// <c>GetBifrostUserContextAsync</c>) passes it to <c>GetAsync(userContext)</c>, so the gate
+    /// and the endpoint's write answer for one projection and the resolver runs once.
+    /// The captive-accessor check rests on one assumption about the container: the singleton
+    /// <see cref="RootScopeSentinel"/> receives the root provider, so the sentinel it holds is
+    /// the one a root-resolved accessor is injected.
     /// </summary>
     internal sealed class PolicyGateAccessor : IPolicyGateAccessor
     {
@@ -31,7 +36,7 @@ namespace BifrostQL.Server
         private readonly PathCache<Inputs> _models;
         private readonly IServiceProvider _scope;
         private readonly bool _resolvedFromRoot;
-        private Task<IPolicyGate>? _gate;
+        private GateBuild? _build;
 
         public PolicyGateAccessor(
             IHttpContextAccessor httpContextAccessor, PathCache<Inputs> models, IServiceProvider scope,
@@ -49,51 +54,73 @@ namespace BifrostQL.Server
         /// every later caller. Resolve the accessor per request instead.
         /// </summary>
         public ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default)
+            => GetAsync(SelfProjected, cancellationToken);
+
+        /// <inheritdoc cref="GetAsync(CancellationToken)"/>
+        public ValueTask<IPolicyGate> GetAsync(
+            IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(userContext);
             if (_resolvedFromRoot)
                 throw new InvalidOperationException(
                     "IPolicyGateAccessor was resolved from the root service provider (a singleton captured it), " +
                     "so its gate would be shared by every caller. Resolve IPolicyGateAccessor from the request's " +
                     "scope (HttpContext.RequestServices or an injected scoped service) on each request.");
-            return new(CurrentBuild().WaitAsync(cancellationToken));
+            return new(CurrentBuild(userContext).WaitAsync(cancellationToken));
         }
 
+        /// <summary>The key of the build that projects the caller itself; never a caller's context.</summary>
+        private static readonly IDictionary<string, object?> SelfProjected = new Dictionary<string, object?>();
+
+        /// <summary>A published build and the context it answers for.</summary>
+        private sealed record GateBuild(IDictionary<string, object?> UserContext, Task<IPolicyGate> Gate);
+
         /// <summary>
-        /// The request's shared build, starting one when none exists or the last one faulted or was
-        /// canceled. A candidate is created unstarted and published by compare-exchange; only the
-        /// caller whose candidate won starts it.
+        /// The shared build for <paramref name="userContext"/>, starting one when none exists, the
+        /// last one faulted or was canceled, or the last one was built from a different context.
+        /// A candidate is created unstarted and published by compare-exchange; only the caller
+        /// whose candidate won starts it.
         /// </summary>
-        private Task<IPolicyGate> CurrentBuild()
+        private Task<IPolicyGate> CurrentBuild(IDictionary<string, object?> userContext)
         {
             while (true)
             {
-                var current = Volatile.Read(ref _gate);
-                if (current is { IsFaulted: false, IsCanceled: false })
-                    return current;
+                var current = Volatile.Read(ref _build);
+                if (current is not null && ReferenceEquals(current.UserContext, userContext)
+                    && current.Gate is { IsFaulted: false, IsCanceled: false })
+                    return current.Gate;
 
                 var http = _httpContextAccessor.HttpContext
                     ?? throw new InvalidOperationException("IPolicyGateAccessor requires an active HttpContext.");
-                var start = new Task<Task<IPolicyGate>>(() => BuildAsync(http));
-                var candidate = start.Unwrap();
-                if (ReferenceEquals(Interlocked.CompareExchange(ref _gate, candidate, current), current))
+                var start = new Task<Task<IPolicyGate>>(() => BuildAsync(http, userContext));
+                var candidate = new GateBuild(userContext, start.Unwrap());
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _build, candidate, current), current))
                 {
                     start.RunSynchronously();
-                    return candidate;
+                    return candidate.Gate;
                 }
             }
         }
 
-        private async Task<IPolicyGate> BuildAsync(HttpContext http)
+        private async Task<IPolicyGate> BuildAsync(HttpContext http, IDictionary<string, object?> suppliedContext)
         {
             // One identity decision per assembly (M13): the gate runs the caller through
             // BifrostIdentityGate like every HTTP mount does, never through a second
             // CreateUserContext call that would drift from it. A caller the gate cannot
             // project — anonymous, or a principal whose claims map to nothing — gets the
             // gate that refuses everything, so the endpoint answers ACCESS_DENIED the way
-            // the GraphQL mount refuses that same caller. Identity comes first, so a refused
-            // caller never triggers a model load.
-            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(http, _scope);
-            if (outcome != BifrostIdentityOutcome.Projected)
+            // the GraphQL mount refuses that same caller. A supplied context came from that same
+            // projection, and an empty one is the projection's refusal, so it is refused here too.
+            // Identity comes first, so a refused caller never triggers a model load.
+            var userContext = suppliedContext;
+            if (ReferenceEquals(suppliedContext, SelfProjected))
+            {
+                var (outcome, projected) = await BifrostIdentityGate.ProjectAsync(http, _scope);
+                if (outcome != BifrostIdentityOutcome.Projected)
+                    return PolicyGate.Refused;
+                userContext = projected;
+            }
+            else if (suppliedContext.Count == 0)
                 return PolicyGate.Refused;
             http.RequestAborted.ThrowIfCancellationRequested();
             var inputs = await ResolveModelInputsAsync(_models, http);

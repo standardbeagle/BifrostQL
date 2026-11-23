@@ -394,6 +394,18 @@ was resolved from the root service provider (a singleton that captured it): such
 would be shared by every caller, so it refuses instead. `IPolicyGate` itself
 is not registered in DI: resolving it there could only block on those two steps.
 
+An endpoint that also runs writes under the caller's context should build the gate from that
+same context, so the pre-flight and the write answer for one identity and the resolver runs once:
+
+```csharp
+var userContext = await http.GetBifrostUserContextAsync();
+var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
+// ... run the workflow under userContext
+```
+
+The gate built from a context is shared while you pass the same dictionary; a different dictionary
+gets its own gate. An empty context gets the gate that refuses everything.
+
 ## Related
 
 - [GraphQL API Authentication and OIDC](/BifrostQL/guides/authentication/) — establishing

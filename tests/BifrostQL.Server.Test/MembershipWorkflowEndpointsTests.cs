@@ -3,10 +3,13 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using BifrostQL.Core.Auth;
 using BifrostQL.Samples.HostedSpa;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -444,6 +447,26 @@ public class MembershipWorkflowEndpointsTests
         (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task RecordPayment_GateAndWrite_ShareOneProjection_SoAGrantChangeMidRequestCannotSplitThem()
+    {
+        // The endpoint projected the caller for the write, then the policy gate projected again.
+        // A grant change between the two made the pre-flight answer for a different identity than
+        // the write ran under. The resolver below grants on its first run and revokes after, so a
+        // second projection in the request is visible as a 403 and a second resolver run.
+        await using var factory = new GrantFlipWorkflowFactory();
+        var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Finance);
+        factory.ResetResolverCalls();
+
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/record-payment", new { invoiceId = 1, amountCents = 12000 });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "the pre-flight gate answers for the same identity the write runs under");
+        factory.ResolverCalls.Should().Be(1, "one request projects the caller once");
+    }
+
     private static object ValidBodyFor(string route) => route switch
     {
         "/workflows/membership/record-payment" => new { invoiceId = 1, amountCents = 12000 },
@@ -558,5 +581,38 @@ public class MembershipWorkflowEndpointsTests
     public sealed class SubjectlessWorkflowFactory : WorkflowFactory
     {
         protected override bool SubjectlessPrincipal => true;
+    }
+
+    /// <summary>
+    /// A <see cref="WorkflowFactory"/> whose grant resolver counts its runs and, after
+    /// <see cref="ResetResolverCalls"/>, grants the sample's grants on the first run only.
+    /// </summary>
+    public sealed class GrantFlipWorkflowFactory : WorkflowFactory
+    {
+        private int _resolverCalls;
+
+        public int ResolverCalls => Volatile.Read(ref _resolverCalls);
+
+        public void ResetResolverCalls() => Interlocked.Exchange(ref _resolverCalls, 0);
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                var sample = services.Last(d => d.ServiceType == typeof(IGrantResolver));
+                services.Remove(sample);
+                services.AddScoped<IGrantResolver>(sp => new FirstRunOnly(
+                    (IGrantResolver)sample.ImplementationFactory!(sp), this));
+            });
+        }
+
+        private sealed class FirstRunOnly(IGrantResolver sample, GrantFlipWorkflowFactory factory) : IGrantResolver
+        {
+            public async ValueTask<IReadOnlyCollection<string>> ResolveAsync(AppIdentity identity, CancellationToken ct)
+            {
+                var grants = await sample.ResolveAsync(identity, ct);
+                return Interlocked.Increment(ref factory._resolverCalls) == 1 ? grants : Array.Empty<string>();
+            }
+        }
     }
 }

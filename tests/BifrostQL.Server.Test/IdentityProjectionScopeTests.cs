@@ -90,6 +90,35 @@ public sealed class IdentityProjectionScopeTests
     }
 
     [Fact]
+    public async Task GateFromASuppliedContext_ProjectsNoOne_AndEachContextGetsItsOwnGate()
+    {
+        // An endpoint that already projected the caller hands that context to the gate. The gate
+        // must not project again, and a build shared per accessor must be keyed on the context:
+        // a second context in the same scope never gets the first context's gate.
+        var host = new Host();
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+        var accessor = request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>();
+
+        var granted = await http.GetBifrostUserContextAsync();
+        host.Revoked = true;
+        var revoked = await http.GetBifrostUserContextAsync();
+
+        var grantedGate = await accessor.GetAsync(granted);
+        (await accessor.GetAsync(granted)).Should().BeSameAs(grantedGate, "one context shares one build");
+        var revokedGate = await accessor.GetAsync(revoked);
+        var grantedAgain = await accessor.GetAsync(granted);
+        var empty = await accessor.GetAsync(new Dictionary<string, object?>());
+
+        grantedGate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        revokedGate.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeFalse(
+            "a different context never gets another context's gate");
+        grantedAgain.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        empty.Should().BeSameAs(PolicyGate.Refused, "an empty context is the projection's refusal");
+        host.ResolverCalls.Should().Be(2, "only the endpoint's own two projections ran the resolver");
+    }
+
+    [Fact]
     public async Task AResolverThrowingANonCancellationException_UnderACancelledToken_IsRefused_NotDegraded()
     {
         // SqlClient raises SqlException ("Operation cancelled by user"), not an
@@ -138,6 +167,9 @@ public sealed class IdentityProjectionScopeTests
         var second = async () => await accessor.GetAsync();
         await second.Should().ThrowAsync<InvalidOperationException>(
             "a captive accessor never serves one caller's gate to another");
+        var supplied = async () => await accessor.GetAsync(new Dictionary<string, object?> { ["user_id"] = "user-2" });
+        await supplied.Should().ThrowAsync<InvalidOperationException>(
+            "the supplied-context overload refuses a captive accessor too");
         host.ResolverCalls.Should().Be(0, "a captive accessor projects no one");
     }
 

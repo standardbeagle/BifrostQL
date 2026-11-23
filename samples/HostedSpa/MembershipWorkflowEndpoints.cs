@@ -17,7 +17,9 @@ namespace BifrostQL.Samples.HostedSpa;
 /// apply — and each endpoint also runs a pre-flight gate through the shared
 /// <see cref="IPolicyGate"/>, awaited from <see cref="IPolicyGateAccessor"/> (the same evaluator and metadata the GraphQL door
 /// runs) so the whole operation is rejected up front rather than failing
-/// partway through. Every operation writes exactly one
+/// partway through. The gate is built from the same user context the workflow
+/// runs under, so the pre-flight and the writes answer for one projection of
+/// the caller. Every operation writes exactly one
 /// <c>audit_log</c> row naming the action (<c>payment.recorded</c>,
 /// <c>membership.renewed</c>).
 ///
@@ -119,7 +121,7 @@ public static class MembershipWorkflowEndpoints
         var (userContext, identityRefusal) = await GetUserContextAsync(http);
         if (identityRefusal is not null)
             return identityRefusal;
-        var policy = await policyGates.GetAsync(http.RequestAborted);
+        var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
@@ -167,7 +169,7 @@ public static class MembershipWorkflowEndpoints
         var (userContext, identityRefusal) = await GetUserContextAsync(http);
         if (identityRefusal is not null)
             return identityRefusal;
-        var policy = await policyGates.GetAsync(http.RequestAborted);
+        var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
@@ -208,7 +210,7 @@ public static class MembershipWorkflowEndpoints
         var (userContext, identityRefusal) = await GetUserContextAsync(http);
         if (identityRefusal is not null)
             return identityRefusal;
-        var policy = await policyGates.GetAsync(http.RequestAborted);
+        var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
@@ -250,7 +252,7 @@ public static class MembershipWorkflowEndpoints
         var (userContext, identityRefusal) = await GetUserContextAsync(http);
         if (identityRefusal is not null)
             return identityRefusal;
-        var policy = await policyGates.GetAsync(http.RequestAborted);
+        var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be

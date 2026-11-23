@@ -17,4 +17,15 @@ public interface IPolicyGateAccessor
     /// root service provider (a singleton captured it), whose gate every caller would share.
     /// </summary>
     ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The gate for <paramref name="userContext"/>, a context the endpoint already projected
+    /// (<c>GetBifrostUserContextAsync</c>), built without projecting the caller again: the gate and
+    /// the write the endpoint runs under that context answer for one identity, and the grant
+    /// resolver runs once. The build is shared for the request while callers pass the same
+    /// dictionary instance; a different instance gets its own build, never another context's gate.
+    /// An empty context (the projection's refusal) gets a gate that refuses everything. Throws as
+    /// <see cref="GetAsync(CancellationToken)"/> does.
+    /// </summary>
+    ValueTask<IPolicyGate> GetAsync(IDictionary<string, object?> userContext, CancellationToken cancellationToken = default);
 }

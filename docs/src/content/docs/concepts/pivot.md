@@ -79,13 +79,17 @@ cannot see. The resolver runs the tenant-isolation and soft-delete filter
 transformers **before** the distinct-value discovery query, so a cross-tenant
 pivot value never appears as an output column. This is the same fail-closed
 filter path the row and [aggregate](/BifrostQL/guides/aggregate-queries/) queries
-use. Table and column identifiers are schema-derived, and filter values and the
-null label are parameterized. Pivot *values* are data, not schema: on every
-dialect each one is bound as a parameter in its own `CASE WHEN` arm and never
-appears in the SQL text. Output columns are aliased by position (`__pivot_0`,
+use. Table and column identifiers are schema-derived, and filter values are
+parameterized. Pivot *values* are data, not schema: on every dialect each one is
+bound as a parameter in its own `CASE WHEN` arm and never appears in the SQL
+text; a NULL pivot value is matched with `IS NULL`, and the null label only names
+its key in the result. Output columns are aliased by position (`__pivot_0`,
 `__pivot_1`, …), so no label ever becomes an identifier. An empty label, a label
-of any length, and labels that a collation would fold together all pivot the same
-way, and the server matches each one under the pivot column's own collation.
+of any length, and labels that differ only in accents, kana type or width each
+get their own column, matched under the pivot column's own collation. Labels
+equal ignoring case (`A` and `a`, or a NULL beside a value equal to the null
+label) would name one result key twice, so the pivot is refused with an error
+naming the label.
 
 ## Cardinality cap
 

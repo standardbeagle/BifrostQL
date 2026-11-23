@@ -37,6 +37,23 @@ namespace BifrostQL.Core.QueryModel
         public const string Null = "_null";
 
         /// <summary>
+        /// Every COLUMN-scoped operator above, in the order a column's filter input lists them:
+        /// the keys a <c>column: { _op: value, ... }</c> object may carry. <see cref="Search"/> is
+        /// table-scoped and not one of them.
+        /// </summary>
+        public static readonly IReadOnlyList<string> ColumnOperators = new[]
+        {
+            Eq, Neq, Lt, Lte, Gt, Gte,
+            Contains, NContains, StartsWith, NStartsWith, EndsWith, NEndsWith,
+            Like, NLike, In, NIn, Between, NBetween, Null,
+        };
+
+        private static readonly HashSet<string> ColumnOperatorSet = new(ColumnOperators, StringComparer.Ordinal);
+
+        /// <summary>Whether <paramref name="key"/> is one of <see cref="ColumnOperators"/>.</summary>
+        public static bool IsColumnOperator(string key) => ColumnOperatorSet.Contains(key);
+
+        /// <summary>
         /// Cross-dialect full-text search operator. Unlike every operator above — each of
         /// which is COLUMN-scoped (it appears on a column's <c>FilterType…Input</c>) —
         /// <c>_search</c> is TABLE-scoped: it matches a single query string against the set

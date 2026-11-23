@@ -16,20 +16,6 @@ namespace BifrostQL.Mcp
     /// </summary>
     internal static partial class QueryToolCompiler
     {
-        /// <summary>Full existing filter-operator vocabulary; the compiler maps, never invents.</summary>
-        private static readonly string[] SupportedOperators =
-        {
-            FilterOperators.Eq, FilterOperators.Neq,
-            FilterOperators.Lt, FilterOperators.Lte, FilterOperators.Gt, FilterOperators.Gte,
-            FilterOperators.Contains, FilterOperators.NContains,
-            FilterOperators.StartsWith, FilterOperators.NStartsWith,
-            FilterOperators.EndsWith, FilterOperators.NEndsWith,
-            FilterOperators.Like, FilterOperators.NLike,
-            FilterOperators.In, FilterOperators.NIn,
-            FilterOperators.Between, FilterOperators.NBetween,
-            FilterOperators.Null,
-        };
-
         private static readonly HashSet<string> ListOperators = new()
         {
             FilterOperators.In, FilterOperators.NIn, FilterOperators.Between, FilterOperators.NBetween,
@@ -98,10 +84,10 @@ namespace BifrostQL.Mcp
             foreach (var property in value.EnumerateObject())
             {
                 var op = property.Name;
-                if (!SupportedOperators.Contains(op, StringComparer.Ordinal))
+                if (!FilterOperators.IsColumnOperator(op))
                     throw new ToolPromptException(
                         $"Unknown filter operator '{op}' on column '{column.ColumnName}'. " +
-                        $"Supported operators: {string.Join(", ", SupportedOperators)}. " +
+                        $"Supported operators: {string.Join(", ", FilterOperators.ColumnOperators)}. " +
                         $"Example: {{\"{column.ColumnName}\":{{\"_eq\":\"value\"}}}} or {{\"{column.ColumnName}\":{{\"_in\":[1,2,3]}}}}.");
 
                 var clrValue = ToClrValue(property.Value);

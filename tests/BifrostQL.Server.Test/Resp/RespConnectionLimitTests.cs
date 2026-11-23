@@ -5,6 +5,7 @@ using BifrostQL.Server;
 using BifrostQL.Server.Resp;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Resp
@@ -56,15 +57,21 @@ namespace BifrostQL.Server.Test.Resp
         [Fact]
         public async Task StalledUnauthenticatedConnection_IsDroppedByTheAuthDeadline_AndReleasesItsSlot()
         {
+            // The deadline runs on an injected clock, far past the harness's wait, so only advancing
+            // it drops the staller. A real 400 ms deadline raced the poll that checks the slot was
+            // taken: on a loaded host the connection was dropped before the poll ever saw it held.
+            var clock = new FakeTimeProvider();
             await using var harness = new RespLimitHarness(
-                maxConnections: 1, authenticationTimeout: TimeSpan.FromMilliseconds(400));
+                maxConnections: 1, authenticationTimeout: TimeSpan.FromMinutes(10), timeProvider: clock);
 
             // A peer that connects and never authenticates. With the slot taken at accept and no
             // deadline, this one silent socket owns the entire front door forever.
             var staller = await harness.ConnectAsync();
             await harness.WaitForConnectionCountAsync(1);
 
-            await harness.WaitForConnectionCountAsync(0);
+            // Advanced per poll: the slot is taken at accept, ahead of the timer being armed.
+            await harness.WaitForConnectionCountAsync(0,
+                beforeEachPoll: () => clock.Advance(TimeSpan.FromMinutes(11)));
 
             var revived = await harness.ConnectAsync();
             await revived.SendCommandAsync("PING");
@@ -88,7 +95,7 @@ namespace BifrostQL.Server.Test.Resp
 
             public RespConnectionLimiter Limiter { get; }
 
-            public RespLimitHarness(int maxConnections, TimeSpan? authenticationTimeout = null)
+            public RespLimitHarness(int maxConnections, TimeSpan? authenticationTimeout = null, TimeProvider? timeProvider = null)
             {
                 var options = new RespWireOptions
                 {
@@ -103,7 +110,7 @@ namespace BifrostQL.Server.Test.Resp
                 _handler = new RespConnectionHandler(
                     store, BifrostAuthContextFactory.Instance,
                     new ServiceCollection().BuildServiceProvider(), options,
-                    dataHandlers: null, logger: null, connectionLimiter: Limiter);
+                    dataHandlers: null, logger: null, connectionLimiter: Limiter, timeProvider: timeProvider);
 
                 _listener = new TcpListener(IPAddress.Loopback, 0);
                 _listener.Start();
@@ -135,11 +142,17 @@ namespace BifrostQL.Server.Test.Resp
                 return new RespConnectionHandle(client);
             }
 
-            public async Task WaitForConnectionCountAsync(int expected)
+            // 30 s bounds only a failing wait; a passing one returns at the first poll that matches.
+            // 5 s gave up on a slot release still in flight under a loaded full run.
+            public async Task WaitForConnectionCountAsync(int expected, Action? beforeEachPoll = null)
             {
-                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+                beforeEachPoll?.Invoke();
                 while (Limiter.Count != expected && DateTime.UtcNow < deadline)
+                {
                     await Task.Delay(20);
+                    beforeEachPoll?.Invoke();
+                }
                 Limiter.Count.Should().Be(expected);
             }
 

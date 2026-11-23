@@ -14,7 +14,7 @@ namespace BifrostQL.Server.Test.Pgwire
         [Fact]
         public async Task Authenticated_peer_that_stops_reading_is_closed_by_the_write_timeout_and_frees_its_slot()
         {
-            // The timeout is far beyond the harness's 5 s wait, so only advancing the injected clock
+            // The timeout is far beyond the harness's 30 s wait, so only advancing the injected clock
             // can end the session; a handler timing writes on the system clock (or not at all)
             // keeps the slot and fails the wait.
             var clock = new FakeTimeProvider();

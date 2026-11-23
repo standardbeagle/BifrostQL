@@ -124,9 +124,11 @@ namespace BifrostQL.Server.Test.Pgwire
         /// advance its fake clock, because the slot is taken at accept BEFORE the handshake timer
         /// is armed, so a single advance can land before the timer exists and never fire it.
         /// </summary>
+        // 30 s bounds only a failing wait; a passing one returns at the first poll that matches.
+        // 5 s gave up on a write-timeout close still in flight under a loaded full run.
         public async Task WaitForConnectionCountAsync(int expected, Action? beforeEachPoll = null)
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
             beforeEachPoll?.Invoke();
             while (Limiter.Count != expected && DateTime.UtcNow < deadline)
             {

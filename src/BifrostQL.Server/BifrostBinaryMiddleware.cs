@@ -498,10 +498,18 @@ namespace BifrostQL.Server
                 // The task starts without the reader's execution context. That context holds the
                 // upgrade request in IHttpContextAccessor's async-local, so with it every message
                 // would read the shared context through the accessor (the engine's profile
-                // resolution, the policy gate, host hooks), and the accessor cannot be pointed
-                // elsewhere without clearing it for the whole request. Each message sets its own
-                // context there instead (ExecuteInMessageScopeAsync). The trace parent and the cultures are
-                // carried over by hand; logging scopes pushed on the upgrade request are not.
+                // resolution, the policy gate, host hooks). It cannot be repointed while flowing:
+                // ASP.NET Core's accessor keeps one holder object per request in its async-local,
+                // and its setter nulls the current holder before installing a new one, so a
+                // message setting its own context would clear the upgrade request's for every
+                // flow sharing that holder, the upgrade request's own middleware included. With no
+                // way to drop one async-local from a flowing context, the context is not flowed,
+                // and each message sets its own (ExecuteInMessageScopeAsync).
+                // The cost: no host AsyncLocal set before the upgrade reaches a message (OpenTelemetry
+                // Baggage.Current, a host's tenant or impersonation AsyncLocal, logging scopes). The
+                // trace parent and the cultures are carried over by hand; Activity baggage rides on
+                // the Activity. Per-connection host state belongs in HttpContext.Items, which every
+                // message's context copies (binary-transport guide).
                 var activity = System.Diagnostics.Activity.Current;
                 var culture = System.Globalization.CultureInfo.CurrentCulture;
                 var uiCulture = System.Globalization.CultureInfo.CurrentUICulture;

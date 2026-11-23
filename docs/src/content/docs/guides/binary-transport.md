@@ -143,9 +143,16 @@ upgrade time is shared state, and must be thread-safe or left unmodified. The co
 response to write to and no session: `ISession` is per request and not thread-safe, so
 `HttpContext.Session` throws inside a request. Features your host added to the upgrade request
 itself are not copied. Requests never read the upgrade request's own context, because
-`HttpContext` is not thread-safe and they run concurrently. Logging scopes your host pushed on
-the upgrade request do not carry over to request logs; the trace parent (`Activity.Current`)
-and the cultures do.
+`HttpContext` is not thread-safe and they run concurrently.
+
+Requests do not run under the upgrade request's execution context, so `AsyncLocal` state set
+before the upgrade does not reach them: OpenTelemetry `Baggage.Current`, a host's own tenant or
+impersonation `AsyncLocal`, and logging scopes pushed on the upgrade request are all absent. That
+context carries the upgrade request in `IHttpContextAccessor`, and ASP.NET Core's accessor cannot
+be pointed at a request's copy without clearing it for the upgrade request too. The trace parent
+(`Activity.Current`, with its Activity baggage) and the cultures are carried over. Put
+per-connection state a request needs in `Items` at upgrade time, or derive it from the request's
+`HttpContext` (`User`, route values, headers).
 
 Chunked uploads grow from the bytes that actually arrive. The `total_bytes` a client
 declares bounds the transfer and feeds the admission caps (64 MB per transfer, 128 MB

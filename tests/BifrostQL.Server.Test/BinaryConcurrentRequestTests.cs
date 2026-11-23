@@ -411,6 +411,53 @@ namespace BifrostQL.Server.Test
                 "the message's scope ends before its Result goes out");
         }
 
+        private static readonly AsyncLocal<string?> HostAmbient = new();
+
+        /// <summary>Records the ambient state a message runs under, then answers as <see cref="GatedEngine"/>.</summary>
+        private sealed class AmbientProbeEngine : IBifrostEngine
+        {
+            private readonly GatedEngine _gate = new();
+            public ConcurrentQueue<(string? HostAmbient, string? ActivityId, string Culture)> Seen { get; } = new();
+
+            public Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+            {
+                Seen.Enqueue((HostAmbient.Value, System.Diagnostics.Activity.Current?.Id,
+                    System.Globalization.CultureInfo.CurrentCulture.Name));
+                return _gate.ExecuteAsync(request, endpointPath);
+            }
+        }
+
+        [Fact]
+        public async Task Message_RunsWithoutTheUpgradeExecutionContext_ButWithItsTraceParentAndCulture()
+        {
+            // Pins what the binary-transport guide documents: a message task does not flow the
+            // upgrade request's execution context (it would carry the upgrade request's
+            // IHttpContextAccessor holder), so a host AsyncLocal set before the upgrade is not
+            // visible in a message; Activity.Current and the cultures are carried over by hand.
+            var engine = new AmbientProbeEngine();
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(Query(1, "{ fast }"));
+            var culture = System.Globalization.CultureInfo.CurrentCulture;
+            using var activity = new System.Diagnostics.Activity("upgrade").Start();
+            try
+            {
+                HostAmbient.Value = "host-tenant";
+                System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("fr-FR");
+
+                await RunAsync(engine, socket);
+            }
+            finally
+            {
+                HostAmbient.Value = null;
+                System.Globalization.CultureInfo.CurrentCulture = culture;
+            }
+
+            var seen = engine.Seen.Should().ContainSingle().Which;
+            seen.HostAmbient.Should().BeNull("host AsyncLocal state does not reach a message");
+            seen.ActivityId.Should().Be(activity.Id, "the trace parent is carried over");
+            seen.Culture.Should().Be("fr-FR", "the culture is carried over");
+        }
+
         [Fact]
         public async Task RequestPastTheConcurrencyCap_IsRefused()
         {

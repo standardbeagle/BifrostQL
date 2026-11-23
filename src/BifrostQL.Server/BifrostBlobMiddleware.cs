@@ -147,10 +147,12 @@ namespace BifrostQL.Server
             {
                 // The endpoint itself was checked at mount (UseBifrostBlobs), so what is left is
                 // its model failing to load (database unreachable): a server condition, not a
-                // data one — map it distinctly, detail server-side only.
-                _logger?.LogError(ex, "Blob endpoint could not load its GraphQL endpoint's model");
-                await WriteTextAsync(context, StatusCodes.Status503ServiceUnavailable,
-                    "The blob endpoint is temporarily unavailable.");
+                // data one — map it distinctly. The sink logs it at Error with the driver exception
+                // attached; the detail is constant so the log never echoes the connection string.
+                var error = BifrostErrorSink.ServerFault("The blob endpoint is temporarily unavailable.",
+                    "The served model could not be loaded.",
+                    $"{nameof(BifrostBlobMiddleware)}.{nameof(InvokeAsync)}", ex);
+                await WriteTextAsync(context, StatusCodes.Status503ServiceUnavailable, error.Message);
                 return;
             }
 

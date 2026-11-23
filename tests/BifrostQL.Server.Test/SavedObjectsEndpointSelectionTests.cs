@@ -24,6 +24,7 @@ namespace BifrostQL.Server.Test;
 /// masked the typo) and then throw on every signed-in request as an unhandled 500. A model that
 /// cannot load answers the sanitized 503, never a raw 500.
 /// </summary>
+[Collection(ErrorSinkLoggerCollection.Name)]
 public sealed class SavedObjectsEndpointSelectionTests : IAsyncLifetime
 {
     private const string UserHeader = "X-Test-User";

@@ -173,7 +173,8 @@ namespace BifrostQL.Core.Modules.Chat
 
         /// <summary>
         /// The identity a proposal is bound to: the caller's tenant + user id from the
-        /// auth context. <paramref name="tenantContextKey"/> is the model's
+        /// auth context, composed injectively (each part length-prefixed).
+        /// <paramref name="tenantContextKey"/> is the model's
         /// <c>tenant-context-key</c>, resolved with
         /// <see cref="TenantFilterTransformer.ResolveTenantContextKey"/>: the claim the
         /// tenant filter scopes rows by. Reading the fixed default key instead bound two
@@ -195,7 +196,9 @@ namespace BifrostQL.Core.Modules.Chat
                     "A plan confirmation requires an authenticated identity " +
                     $"('{tenantContextKey}'/'{MetadataKeys.Auth.DefaultUserIdContextKey}' " +
                     "in the auth context); refusing to gate a write on an anonymous caller.");
-            return $"{tenantKey}|{userKey}";
+            // Length-prefixed, like SavedObjectOwner: a separator join gave tenant "a|b" + user "c"
+            // and tenant "a" + user "b|c" the same key, so one confirmed the other's proposal.
+            return $"t{tenantKey?.Length ?? -1}:{tenantKey}\nu{userKey?.Length ?? -1}:{userKey}";
         }
 
         /// <summary>

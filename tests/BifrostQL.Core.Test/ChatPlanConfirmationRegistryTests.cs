@@ -104,18 +104,44 @@ public class ChatPlanConfirmationRegistryTests
         {
             ["tenant_id"] = "t-9",
             ["user_id"] = "u-3",
-        }, "tenant_id").Should().Be("t-9|u-3");
+        }, "tenant_id").Should().Be("t3:t-9\nu3:u-3");
 
         // Either half suffices (single-tenant deployments have no tenant claim) …
         ChatPlanConfirmationRegistry.RequireIdentityKey(new Dictionary<string, object?>
         {
             ["user_id"] = "u-3",
-        }, "tenant_id").Should().Be("|u-3");
+        }, "tenant_id").Should().Be("t-1:\nu3:u-3");
 
         // … but an anonymous context cannot gate a write.
         ((Action)(() => ChatPlanConfirmationRegistry.RequireIdentityKey(
                 new Dictionary<string, object?>(), "tenant_id")))
             .Should().Throw<InvalidOperationException>().WithMessage("*anonymous*");
+    }
+
+    [Fact]
+    public void IdentityKey_SeparatesIdentities_WhoseValuesContainTheSeparator()
+    {
+        // Tenant "a|b" + user "c" and tenant "a" + user "b|c" are different identities. A
+        // separator-joined key gave both "a|b|c", so one confirmed the other's parked write.
+        var first = ChatPlanConfirmationRegistry.RequireIdentityKey(new Dictionary<string, object?>
+        {
+            ["tenant_id"] = "a|b",
+            ["user_id"] = "c",
+        }, "tenant_id");
+        var second = ChatPlanConfirmationRegistry.RequireIdentityKey(new Dictionary<string, object?>
+        {
+            ["tenant_id"] = "a",
+            ["user_id"] = "b|c",
+        }, "tenant_id");
+
+        first.Should().NotBe(second, "the identity key must compose tenant and user injectively");
+
+        var registry = new ChatPlanConfirmationRegistry();
+        var pending = registry.Register(first, "42", LongTimeout, CancellationToken.None);
+        registry.TryResolve(pending.ConfirmationId, second, "42", new ChatPlanDecision(true, null))
+            .Should().BeFalse("the other identity cannot resolve the proposal");
+        registry.TryResolve(pending.ConfirmationId, first, "42", new ChatPlanDecision(true, null))
+            .Should().BeTrue("control: the proposing identity resolves it");
     }
 
     [Fact]
@@ -134,7 +160,7 @@ public class ChatPlanConfirmationRegistryTests
         var globex = ChatPlanConfirmationRegistry.RequireIdentityKey(Caller("globex"), "org_id");
 
         acme.Should().NotBe(globex, "the binding is keyed by the model's tenant claim");
-        acme.Should().Be("acme|same-subject");
+        acme.Should().Be("t4:acme\nu12:same-subject");
 
         // The registry refuses the other org's resolve end to end.
         var registry = new ChatPlanConfirmationRegistry();

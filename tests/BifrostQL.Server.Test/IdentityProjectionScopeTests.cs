@@ -119,6 +119,34 @@ public sealed class IdentityProjectionScopeTests
     }
 
     [Fact]
+    public async Task GateFromASuppliedContext_AnswersForWhatTheContextHoldsAtEachCall_NotForItsFirstContents()
+    {
+        // The build used to be keyed on the dictionary's reference: an endpoint that stripped a
+        // grant from its context and asked again got the gate built from the context's first,
+        // more privileged contents.
+        var host = new Host();
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+        var accessor = request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>();
+        var userContext = await http.GetBifrostUserContextAsync();
+
+        var granted = await accessor.GetAsync(userContext);
+        var grantedPermissions = userContext[MetadataKeys.Auth.DefaultPermissionsContextKey];
+        userContext[MetadataKeys.Auth.DefaultPermissionsContextKey] = Array.Empty<string>();
+        var stripped = await accessor.GetAsync(userContext);
+        userContext[MetadataKeys.Auth.DefaultPermissionsContextKey] = grantedPermissions;
+        var restored = await accessor.GetAsync(userContext);
+
+        granted.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        stripped.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeFalse(
+            "the gate answers for the grants the context holds at the call");
+        granted.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue(
+            "a gate already handed out keeps answering for the identity it was built from");
+        restored.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue();
+        host.ResolverCalls.Should().Be(1, "only the endpoint's own projection ran the resolver");
+    }
+
+    [Fact]
     public async Task AFaultedGateBuild_IsNotMemoized_TheNextCallInTheSameScopeRetriesIt()
     {
         // The gate build is memoized per accessor scope, but a failure never is: a model load that

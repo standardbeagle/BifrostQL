@@ -403,8 +403,11 @@ var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 // ... run the workflow under userContext
 ```
 
-The gate built from a context is shared while you pass the same dictionary; a different dictionary
-gets its own gate. An empty context gets the gate that refuses everything.
+The gate answers for the identity the context holds when you call `GetAsync`: its user id, roles
+and permissions are read at the call, so a change you make to the dictionary afterwards does not
+change what that gate answers. Calls with the same identity share one gate; a call after you
+changed the identity (say, you removed a permission) gets a new gate for the new contents, never
+the earlier one. An empty context gets the gate that refuses everything.
 
 ## Related
 

@@ -22,8 +22,10 @@ public interface IPolicyGateAccessor
     /// The gate for <paramref name="userContext"/>, a context the endpoint already projected
     /// (<c>GetBifrostUserContextAsync</c>), built without projecting the caller again: the gate and
     /// the write the endpoint runs under that context answer for one identity, and the grant
-    /// resolver runs once. The build is shared for the request while callers pass the same
-    /// dictionary instance; a different instance gets its own build, never another context's gate.
+    /// resolver runs once. The gate answers for the identity (user id, roles, permissions) the
+    /// context holds at this call: a later change to the dictionary does not change that gate, and
+    /// a call after such a change gets a gate for the new contents, never the earlier one. Calls
+    /// with the same identity share one build for the request.
     /// An empty context (the projection's refusal) gets a gate that refuses everything. Throws as
     /// <see cref="GetAsync(CancellationToken)"/> does.
     /// </summary>

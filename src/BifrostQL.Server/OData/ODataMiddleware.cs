@@ -122,9 +122,9 @@ namespace BifrostQL.Server.OData
         }
 
         /// <summary>
-        /// Routes an authenticated request to the discovery document it asks for. The endpoint
-        /// root serves the service document; <c>$metadata</c> serves the EDMX; anything else is a
-        /// clean 501 (entity reads/query options are later slices). The path is relative to the
+        /// Routes an authenticated request. The endpoint root serves the service document;
+        /// <c>$metadata</c> serves the EDMX; any other path is an entity-set collection read. The
+        /// path is relative to the
         /// mounted route prefix (the prefix lives on <see cref="HttpRequest.PathBase"/>).
         /// </summary>
         private async Task DispatchAsync(HttpContext context, IDictionary<string, object?> userContext)
@@ -148,7 +148,7 @@ namespace BifrostQL.Server.OData
 
         /// <summary>
         /// Serves an entity-set collection read. The path's single segment names the entity set; a
-        /// key predicate (<c>Orders(1)</c>) or a navigation segment is a later slice and answers a
+        /// key predicate (<c>Orders(1)</c>) or a navigation segment is not supported and answers a
         /// clean 501. The entity set is resolved against the identity-filtered projection, so an
         /// unknown OR unauthorized set is a 404 alike (no existence oracle). The read crosses
         /// <see cref="IQueryIntentExecutor"/> with NO adapter-built predicate — tenant/soft-delete

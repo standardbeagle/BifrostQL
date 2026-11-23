@@ -154,8 +154,8 @@ namespace BifrostQL.Server
             // IHttpContextAccessor the HTTP path uses.
             var httpContext = services.GetService<IHttpContextAccessor>()?.HttpContext;
             var userContext = request.UserContext;
-            // A binary socket shares one HttpContext across its messages, so each execution gets
-            // its own correlation id rather than the socket's TraceIdentifier.
+            // Every message on a binary socket carries the upgrade request's TraceIdentifier, so
+            // each execution gets its own correlation id rather than the socket's.
             var (setup, error) = await BifrostExecutionPipeline.PrepareAsync(
                 services, httpContext, loadEndpoint, userContext, Guid.NewGuid().ToString("N"),
                 // Wire entries merge with the model in hand: the identity-owned key set (which

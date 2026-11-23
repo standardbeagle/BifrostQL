@@ -377,22 +377,33 @@ namespace BifrostQL.Server
                 _timeProvider = timeProvider;
                 _logger = logger;
                 WebSocket = webSocket;
-                HttpContext = httpContext;
                 ChunkSender = chunkSender;
                 ChunkBuffer = chunkBuffer;
                 Closing = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
                 InputEnded = CancellationTokenSource.CreateLinkedTokenSource(Closing.Token);
                 ReaderStop = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
-                // HttpContext is not thread-safe, and every request task reads its User (the
-                // session check, the identity projection). The first read installs the
-                // authentication feature when no auth middleware ran, which writes the feature
-                // collection: two tasks doing that at once corrupt it. Read it here, before the
-                // reader starts any task, so the tasks only ever find it installed.
-                _ = httpContext.User;
+                // Taken before the reader starts any request task: from here on the tasks read the
+                // snapshot and never the shared context (see BinaryUpgradeSnapshot).
+                Upgrade = BinaryUpgradeSnapshot.Capture(httpContext);
+                _user = Upgrade.User;
             }
 
             public WebSocket WebSocket { get; }
-            public HttpContext HttpContext { get; }
+
+            /// <summary>The upgrade request's state, copied once; each message builds its context from it.</summary>
+            public BinaryUpgradeSnapshot Upgrade { get; }
+
+            private volatile System.Security.Claims.ClaimsPrincipal _user;
+
+            /// <summary>
+            /// The connection's principal: the upgrade request's, until a session check refreshes it.
+            /// Each message reads it once, into its own context.
+            /// </summary>
+            public System.Security.Claims.ClaimsPrincipal User
+            {
+                get => _user;
+                set => _user = value;
+            }
             public ChunkReceiver ChunkReceiver { get; }
             public ChunkSender ChunkSender { get; }
             public ChunkBuffer ChunkBuffer { get; }
@@ -484,19 +495,36 @@ namespace BifrostQL.Server
                     }
                 }
 
-                var task = Task.Run(async () =>
+                // The task starts without the reader's execution context. That context holds the
+                // upgrade request in IHttpContextAccessor's async-local, so with it every message
+                // would read the shared context through the accessor (the engine's profile
+                // resolution, the policy gate, host hooks), and the accessor cannot be pointed
+                // elsewhere without clearing it for the whole request. Each message sets its own
+                // context there instead (RunRequestAsync). The trace parent and the cultures are
+                // carried over by hand; logging scopes pushed on the upgrade request are not.
+                var activity = System.Diagnostics.Activity.Current;
+                var culture = System.Globalization.CultureInfo.CurrentCulture;
+                var uiCulture = System.Globalization.CultureInfo.CurrentUICulture;
+                Task task;
+                using (ExecutionContext.SuppressFlow())
                 {
-                    try
+                    task = Task.Run(async () =>
                     {
-                        if (priorWork != null)
-                            await priorWork;
-                        await work();
-                    }
-                    finally
-                    {
-                        _inFlight.TryRemove(new KeyValuePair<uint, InFlightRequest>(requestId, entry));
-                    }
-                });
+                        System.Diagnostics.Activity.Current = activity;
+                        System.Globalization.CultureInfo.CurrentCulture = culture;
+                        System.Globalization.CultureInfo.CurrentUICulture = uiCulture;
+                        try
+                        {
+                            if (priorWork != null)
+                                await priorWork;
+                            await work();
+                        }
+                        finally
+                        {
+                            _inFlight.TryRemove(new KeyValuePair<uint, InFlightRequest>(requestId, entry));
+                        }
+                    });
+                }
                 entry.Work = task;
                 _running[task] = 0;
                 _ = task.ContinueWith(static (t, state) => ((ConcurrentDictionary<Task, byte>)state!).TryRemove(t, out _),
@@ -706,6 +734,8 @@ namespace BifrostQL.Server
                 _chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, timeProvider: _timeProvider);
             using var connection = new BinaryConnection(
                 webSocket, httpContext, CreateChunkReceiver(), chunkSender, chunkBuffer, _writeTimeout, _timeProvider, _logger);
+            // Read once, with the snapshot: request tasks may be running when the reader checks it.
+            var requestAborted = httpContext.RequestAborted;
 
             try
             {
@@ -733,7 +763,7 @@ namespace BifrostQL.Server
                         (messageBytes, messageType, fragments) = await ReadFullMessageAsync(webSocket, buffer, connection.ReaderStop.Token);
                     }
                     catch (OperationCanceledException) when (connection.ReaderStop.IsCancellationRequested
-                        && !httpContext.RequestAborted.IsCancellationRequested)
+                        && !requestAborted.IsCancellationRequested)
                     {
                         _logger.LogDebug("Binary peer did not echo the close frame; dropping the connection");
                         webSocket.Abort();
@@ -970,19 +1000,39 @@ namespace BifrostQL.Server
         /// <summary>
         /// One request's task: runs it, maps its faults, and releases its reassembly charge
         /// (if it arrived chunked) as its last step.
+        ///
+        /// Each message gets its own DI scope and its own HttpContext, built from the connection's
+        /// <see cref="BinaryUpgradeSnapshot"/>. A connection runs several messages at once and lives
+        /// for many, so the upgrade request's scope would share scoped services (a host's grant
+        /// resolver and the DbContext it reads) across concurrent messages, and its HttpContext,
+        /// which is not thread-safe, would be read by all of them at once. The message's context is
+        /// also what <see cref="IHttpContextAccessor"/> returns inside the message.
         /// </summary>
         private async Task RunRequestAsync(BifrostMessage request, BinaryConnection connection, int heldReassemblyBytes)
         {
+            IHttpContextAccessor? accessor = null;
             try
             {
                 try
                 {
-                    if (!await SessionStillLiveAsync(connection))
+                    // Inside the catch-all: a host with no request services is a wiring fault that
+                    // closes the connection, as any other request fault does.
+                    await using var scope = connection.Upgrade.RequestServices
+                        .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+                    var message = connection.Upgrade.CreateMessageContext(
+                        connection.User, scope.ServiceProvider, connection.Token);
+                    // The task started without the reader's execution context (TryStart), so this
+                    // sets the accessor for this message only and leaves the upgrade request's alone.
+                    accessor = scope.ServiceProvider.GetService<IHttpContextAccessor>();
+                    if (accessor != null)
+                        accessor.HttpContext = message;
+
+                    if (!await SessionStillLiveAsync(connection, message))
                         return;
                     if (request.Type == BifrostMessageType.Resume)
                         await HandleResumeAsync(request, connection);
                     else
-                        await HandleQueryAsync(request, connection);
+                        await HandleQueryAsync(request, connection, message);
                 }
                 catch (OperationCanceledException) when (connection.InputEnded.IsCancellationRequested)
                 {
@@ -1002,6 +1052,8 @@ namespace BifrostQL.Server
             }
             finally
             {
+                if (accessor != null)
+                    accessor.HttpContext = null;
                 if (heldReassemblyBytes > 0)
                     connection.ChunkReceiver.ReleaseAssembled(heldReassemblyBytes);
             }
@@ -1017,10 +1069,9 @@ namespace BifrostQL.Server
         /// same way: the socket is not an enrollment endpoint. Principals from other providers are not
         /// governed by local sessions.
         /// </summary>
-        private static async Task<bool> SessionStillLiveAsync(BinaryConnection connection)
+        private static async Task<bool> SessionStillLiveAsync(BinaryConnection connection, HttpContext message)
         {
-            var http = connection.HttpContext;
-            var check = await LocalAuthEndpoint.RevalidateSessionAsync(http.User, http, connection.Token);
+            var check = await LocalAuthEndpoint.RevalidateSessionAsync(message.User, message, connection.Token);
             switch (check.Verdict)
             {
                 case LocalSessionVerdict.Rejected:
@@ -1030,7 +1081,8 @@ namespace BifrostQL.Server
                     await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Second factor required");
                     return false;
                 case LocalSessionVerdict.Refreshed:
-                    http.User = check.Principal!;
+                    connection.User = check.Principal!;
+                    message.User = check.Principal!;
                     return true;
                 case LocalSessionVerdict.NotLocal:
                 case LocalSessionVerdict.Live:
@@ -1149,9 +1201,9 @@ namespace BifrostQL.Server
         /// Executes a Query/Mutation request and sends the response, chunking it when it
         /// exceeds the chunk threshold.
         /// </summary>
-        private async Task HandleQueryAsync(BifrostMessage request, BinaryConnection connection)
+        private async Task HandleQueryAsync(BifrostMessage request, BinaryConnection connection, HttpContext message)
         {
-            var response = await ExecuteRequestAsync(request, connection.HttpContext, connection.Token);
+            var response = await ExecuteRequestAsync(request, message, connection.Token);
 
             if (connection.ChunkSender.RequiresChunking(response))
             {
@@ -1218,7 +1270,7 @@ namespace BifrostQL.Server
         }
 
         private async Task<BifrostMessage> ExecuteRequestAsync(
-            BifrostMessage request, HttpContext httpContext, CancellationToken cancellationToken)
+            BifrostMessage request, HttpContext message, CancellationToken cancellationToken)
         {
             var response = new BifrostMessage
             {
@@ -1240,18 +1292,13 @@ namespace BifrostQL.Server
                 return response;
             }
 
-            // Each message gets its own DI scope. A connection runs several messages at once
-            // and lives for many, so the upgrade request's scope would share scoped services
-            // (a host's grant resolver and the DbContext it reads) across concurrent requests
-            // and memoize them for the whole session. Outside the catch-all below: a host with
-            // no request services is a wiring fault, not a failed query.
-            await using var scope = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>()
-                .CreateAsyncScope();
+            // The message's own scope (RunRequestAsync).
+            var services = message.RequestServices;
 
             IReadOnlyDictionary<string, object?>? variables;
             try
             {
-                variables = ParseVariables(request.VariablesJson, scope.ServiceProvider);
+                variables = ParseVariables(request.VariablesJson, services);
             }
             catch (JsonException)
             {
@@ -1267,7 +1314,7 @@ namespace BifrostQL.Server
                 // OIDC issuer, subject-less principal) becomes an error frame here instead
                 // of escaping the message loop (M13). It projects against this message's scope,
                 // so a scoped grant resolver is never shared by two concurrent messages.
-                var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(httpContext, scope.ServiceProvider);
+                var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(message, services);
                 if (outcome == BifrostIdentityOutcome.Unprojectable)
                 {
                     response.Type = BifrostMessageType.Error;
@@ -1280,7 +1327,7 @@ namespace BifrostQL.Server
                     Query = request.Query,
                     Variables = variables,
                     UserContext = userContext,
-                    RequestServices = scope.ServiceProvider,
+                    RequestServices = services,
                     CancellationToken = cancellationToken,
                 };
 
@@ -1309,7 +1356,7 @@ namespace BifrostQL.Server
 
                 if (result.Data != null)
                 {
-                    response.Payload = await SerializeResultPayloadAsync(result, scope.ServiceProvider, cancellationToken);
+                    response.Payload = await SerializeResultPayloadAsync(result, services, cancellationToken);
                 }
             }
             catch (Exception ex)

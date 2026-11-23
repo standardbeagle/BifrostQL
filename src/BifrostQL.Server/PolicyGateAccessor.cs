@@ -20,10 +20,10 @@ namespace BifrostQL.Server
     /// on the request's own <c>RequestAborted</c>; each caller's token abandons only that caller's
     /// wait, so one caller's cancellation never faults the build the others await.
     /// The caller is projected in the accessor's OWN DI scope, not the
-    /// HttpContext's: a hook resolving the accessor inside a binary per-message scope or a hub
-    /// invocation scope reaches a connection-lifetime HttpContext through
-    /// <see cref="IHttpContextAccessor"/>, whose RequestServices hold a connection-lifetime grant
-    /// resolver. An endpoint that already holds the caller's context (from
+    /// HttpContext's: a hook resolving the accessor inside a hub invocation scope reaches a
+    /// connection-lifetime HttpContext through <see cref="IHttpContextAccessor"/>, whose
+    /// RequestServices hold a connection-lifetime grant resolver. (A binary message's context is
+    /// its own, with the message's scope as RequestServices.) An endpoint that already holds the caller's context (from
     /// <c>GetBifrostUserContextAsync</c>) passes it to <c>GetAsync(userContext)</c>, so the gate
     /// and the endpoint's write answer for one projection and the resolver runs once.
     /// The captive-accessor check rests on one assumption about the container: the singleton

@@ -58,36 +58,74 @@ namespace BifrostQL.Server.Test
         }
 
         /// <summary>
-        /// A feature collection that records every feature installed after <paramref name="readerStarted"/>
-        /// turns true. <see cref="HttpContext"/> is not thread-safe, and once the reader has taken a
-        /// frame the connection's request tasks share the context concurrently: an install then is a
-        /// write to a dictionary that other request tasks may be reading or writing at the same time.
+        /// The upgrade request's feature collection, which refuses every access once
+        /// <paramref name="readerStarted"/> turns true. <see cref="HttpContext"/> is not thread-safe,
+        /// and once the reader has taken a frame the connection's request tasks run concurrently: any
+        /// read of the shared context from one of them can race another's lazy feature install. A
+        /// refused access is recorded (the throw itself may be swallowed into an Error frame) and throws.
         /// </summary>
-        private sealed class RecordingFeatures : IFeatureCollection
+        private sealed class SealedOnServingFeatures : IFeatureCollection
         {
             private readonly FeatureCollection _inner = new();
             private readonly Func<bool> _readerStarted;
-            public RecordingFeatures(Func<bool> readerStarted) => _readerStarted = readerStarted;
+            public SealedOnServingFeatures(Func<bool> readerStarted) => _readerStarted = readerStarted;
 
-            public ConcurrentQueue<Type> InstalledWhileServing { get; } = new();
+            public ConcurrentQueue<string> AccessedWhileServing { get; } = new();
             public bool IsReadOnly => false;
-            public int Revision => _inner.Revision;
+
+            public int Revision
+            {
+                get
+                {
+                    Guard("Revision");
+                    return _inner.Revision;
+                }
+            }
 
             public object? this[Type key]
             {
-                get => _inner[key];
+                get
+                {
+                    Guard(key.Name);
+                    return _inner[key];
+                }
                 set
                 {
-                    if (_readerStarted())
-                        InstalledWhileServing.Enqueue(key);
+                    Guard(key.Name);
                     _inner[key] = value;
                 }
+            }
+
+            private void Guard(string what)
+            {
+                if (!_readerStarted())
+                    return;
+                AccessedWhileServing.Enqueue(what + " at " + Environment.StackTrace);
+                throw new InvalidOperationException("A request task read the shared upgrade HttpContext.");
             }
 
             public TFeature? Get<TFeature>() => (TFeature?)this[typeof(TFeature)];
             public void Set<TFeature>(TFeature? instance) => this[typeof(TFeature)] = instance;
             public IEnumerator<KeyValuePair<Type, object>> GetEnumerator() => _inner.GetEnumerator();
             System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        }
+
+        /// <summary>
+        /// Gates like <see cref="GatedEngine"/>, and records what each request sees through
+        /// <see cref="IHttpContextAccessor"/>: the engine's own route to the HttpContext.
+        /// </summary>
+        private sealed class AccessorProbeEngine : IBifrostEngine
+        {
+            private readonly GatedEngine _gate = new();
+            public ConcurrentQueue<(HttpContext? Context, string? Header, object? Item, string? User, bool OwnServices)> Seen { get; } = new();
+
+            public async Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+            {
+                var http = request.RequestServices!.GetRequiredService<IHttpContextAccessor>().HttpContext;
+                Seen.Enqueue((http, http?.Request.Headers["X-Probe"].ToString(), http?.Items["probe"],
+                    http?.User.Identity?.Name, http != null && ReferenceEquals(http.RequestServices, request.RequestServices)));
+                return await _gate.ExecuteAsync(request, endpointPath);
+            }
         }
 
         private static Task RunAsync(IBifrostEngine engine, FakeWebSocket socket, int ackWindow = 64)
@@ -185,34 +223,52 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ConcurrentRequests_NeverInstallFeaturesOnTheSharedHttpContext()
+        public async Task ConcurrentRequests_NeverReadTheSharedHttpContext()
         {
             // The flake behind this fact: requests 5 and 6 ran at once on an anonymous mount, and
             // each one's session check was the first read of HttpContext.User. That getter installs
             // the authentication feature lazily, so both tasks wrote the context's feature
-            // dictionary at once and one got a NullReferenceException: its request failed with a
-            // second Error frame and closed the connection. Nothing a request task does may install
-            // a feature once the reader is serving; the race itself is too narrow to hit on demand,
-            // the install that feeds it is not.
+            // dictionary at once and one got a NullReferenceException. Every request-task read of
+            // the shared context (the session check, the identity projection, and the engine's
+            // IHttpContextAccessor route) is the same race, so once the reader is serving, the
+            // upgrade request's features refuse any access at all.
             var socket = new FakeWebSocket { Pipelined = true };
             socket.EnqueueMessage(Query(1, "{ slow }"));
             socket.EnqueueMessage(Query(2, "{ fast }"));
-            var features = new RecordingFeatures(() => socket.ReceiveCount > 0);
+            var features = new SealedOnServingFeatures(() => socket.ReceiveCount > 0);
             features.Set<IHttpRequestFeature>(new HttpRequestFeature());
             features.Set<IHttpResponseFeature>(new HttpResponseFeature());
             features.Set<IHttpResponseBodyFeature>(new StreamResponseBodyFeature(Stream.Null));
             features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
-            var context = new DefaultHttpContext(features)
+            var services = new ServiceCollection().AddHttpContextAccessor().BuildServiceProvider();
+            var upgrade = new DefaultHttpContext(features)
             {
-                RequestServices = new ServiceCollection().BuildServiceProvider(),
+                RequestServices = services,
+                User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                    new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "probe-user") },
+                    "test")),
             };
+            upgrade.Request.Headers["X-Probe"] = "probe-header";
+            upgrade.Items["probe"] = "probe-item";
+            // Hosting points the accessor at the upgrade request, as it does for every request.
+            services.GetRequiredService<IHttpContextAccessor>().HttpContext = upgrade;
+            var engine = new AccessorProbeEngine();
 
-            await RunAsync(new GatedEngine(), context);
+            await RunAsync(engine, upgrade);
 
-            features.InstalledWhileServing.Should().BeEmpty(
-                "a feature installed while request tasks run races every other task on the context");
+            features.AccessedWhileServing.Should().BeEmpty(
+                "a request task that reads the shared context races every other task on it");
             socket.SentMessages().Count(m => m.Type == BifrostMessageType.Result).Should().Be(2,
-                "both requests ran, so both read the shared context");
+                "both requests ran, so both read their context");
+            engine.Seen.Should().HaveCount(2).And.OnlyContain(seen =>
+                seen.Context != null && !ReferenceEquals(seen.Context, upgrade)
+                && seen.Header == "probe-header" && Equals(seen.Item, "probe-item") && seen.User == "probe-user"
+                && seen.OwnServices,
+                "each message reads a copy of the upgrade request, with its own services");
+            engine.Seen.Select(seen => seen.Context).Distinct().Should().HaveCount(2,
+                "two messages never share one context");
+            services.GetRequiredService<IHttpContextAccessor>().HttpContext.Should().BeSameAs(upgrade,
+                "a message points the accessor at its own context for itself only, never clearing the upgrade request's");
         }
 
         [Fact]

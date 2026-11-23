@@ -123,20 +123,21 @@ namespace BifrostQL.Server
                 // No explicit path match. Falling back to the first registered endpoint is
                 // only safe with a single endpoint (single-DB deployment) — the same rule the
                 // HTTP path enforces (see BifrostHttpMiddleware, UnknownBifrostEndpointException).
-                // With multiple endpoints, "first" is nondeterministic, so a binary client with
-                // the default graphqlPath would execute against an arbitrary database. Refuse
-                // instead (returned as a result error, consistent with the profile-gate path
-                // above): the host must pass an explicit graphqlPath to UseBifrostBinary when
-                // more than one GraphQL endpoint is registered.
+                // With multiple endpoints, "first" is nondeterministic, so refuse instead
+                // (returned as a result error, consistent with the profile-gate path below).
+                // UseBifrostBinary cannot get here: it refuses an unset or unknown graphqlPath on
+                // a multi-endpoint host at mount time (MountAuthRequirement.RequireOneServedEndpoint).
+                // What reaches it is a protocol frontend (UseBifrostFrontend / UseBifrostGraphQL)
+                // mounted at a path that is not a registered endpoint, so the text names that mount.
                 if (_pathCache.Count > 1)
                     return new BifrostResult
                     {
                         Data = null,
                         Errors = new[] { new BifrostResultError
                         {
-                            Message = "The binary transport could not resolve a target database: more than one " +
-                                "GraphQL endpoint is registered. Configure UseBifrostBinary with an explicit " +
-                                "graphqlPath so the binary transport targets a specific database.",
+                            Message = "This mount's path is not a registered GraphQL endpoint and more than one endpoint is " +
+                                "registered, so it has no target database. Mount UseBifrostFrontend / UseBifrostGraphQL " +
+                                "at the path of the endpoint it serves.",
                         }},
                     };
 

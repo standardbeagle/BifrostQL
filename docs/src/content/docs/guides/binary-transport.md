@@ -125,16 +125,25 @@ The codes are public as `BinaryErrorCode` in both `BifrostQL.Server` and `@bifro
 GraphQL execution errors carry no frame code; they arrive in `errors` as on the HTTP endpoint.
 
 Each request runs in its own DI scope, so scoped services are not shared between the requests
-of one connection. Each request also gets its own `HttpContext`, and that is the one your
+of one connection.
+
+Each request also gets its own `HttpContext`, and that is the one your
 `IBifrostAuthContextFactory`, grant resolver, hooks and `IHttpContextAccessor` see. It is a copy
 of the upgrade request, taken once when the connection opens: method, path, query string,
-headers, connection addresses, client certificate, trace identifier, and a fresh copy of
+headers, connection addresses, client certificate, TLS handshake (`ITlsHandshakeFeature`),
+trace identifier, endpoint (`GetEndpoint()`), route values (each request gets its own copy, so
+a mount at `/{tenant}/bifrost-ws` reads `RouteValues["tenant"]`), and a shallow copy of
 `Items`. Its `RequestServices` is the request's scope, and its `User` is the connection's
-principal, refreshed when the local session check reissues it. A value one request writes to
-`Items` is not seen by the next, and the copy has no response to write to. Requests never read
-the upgrade request's own context, because `HttpContext` is not thread-safe and they run
-concurrently. Logging scopes your host pushed on the upgrade request do not carry over to
-request logs; the trace parent (`Activity.Current`) and the cultures do.
+principal, refreshed when the local session check reissues it. `Items` is a new dictionary per
+request, so a key one request adds or replaces is not seen by the next, but the values are the
+upgrade request's objects, shared by reference across requests: a mutable value stored there at
+upgrade time is shared state, and must be thread-safe or left unmodified. The copy has no
+response to write to and no session: `ISession` is per request and not thread-safe, so
+`HttpContext.Session` throws inside a request. Features your host added to the upgrade request
+itself are not copied. Requests never read the upgrade request's own context, because
+`HttpContext` is not thread-safe and they run concurrently. Logging scopes your host pushed on
+the upgrade request do not carry over to request logs; the trace parent (`Activity.Current`)
+and the cultures do.
 
 Chunked uploads grow from the bytes that actually arrive. The `total_bytes` a client
 declares bounds the transfer and feeds the admission caps (64 MB per transfer, 128 MB

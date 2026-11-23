@@ -4,6 +4,7 @@ using BifrostQL.Server;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.WebSockets;
@@ -269,6 +270,90 @@ namespace BifrostQL.Server.Test
                 "two messages never share one context");
             services.GetRequiredService<IHttpContextAccessor>().HttpContext.Should().BeSameAs(upgrade,
                 "a message points the accessor at its own context for itself only, never clearing the upgrade request's");
+        }
+
+        /// <summary>
+        /// Records what a host's identity factory reads from each message's context: the route a
+        /// mount like <c>/{tenant}/bifrost-ws</c> matched, the endpoint, the TLS handshake and the
+        /// session. It then overwrites the tenant route value, which a later message must not see.
+        /// </summary>
+        private sealed class RouteProbeFactory : IBifrostAuthContextFactory
+        {
+            public ConcurrentQueue<(object? Tenant, string? Endpoint, System.Security.Authentication.SslProtocols? Tls,
+                string? TlsHost, bool HasSession, bool SharesRouteValues)> Seen { get; } = new();
+            public RouteValueDictionary? UpgradeRouteValues;
+
+            public IDictionary<string, object?> CreateUserContext(HttpContext context)
+            {
+                var tls = context.Features.Get<Microsoft.AspNetCore.Connections.Features.ITlsHandshakeFeature>();
+                Seen.Enqueue((context.GetRouteValue("tenant"), context.GetEndpoint()?.DisplayName, tls?.Protocol,
+                    tls?.HostName, context.Features.Get<Microsoft.AspNetCore.Http.Features.ISessionFeature>() != null,
+                    ReferenceEquals(context.Request.RouteValues, UpgradeRouteValues)));
+                context.Request.RouteValues["tenant"] = "overwritten-by-a-message";
+                return new Dictionary<string, object?> { ["user_id"] = "probe-user" };
+            }
+        }
+
+#pragma warning disable SYSLIB0058 // the handshake's legacy algorithm members are obsolete in net10
+        private sealed class TlsHandshake : Microsoft.AspNetCore.Connections.Features.ITlsHandshakeFeature
+        {
+            public System.Security.Authentication.SslProtocols Protocol { get; init; }
+            public string HostName { get; init; } = "";
+            public System.Security.Authentication.CipherAlgorithmType CipherAlgorithm => default;
+            public int CipherStrength => 0;
+            public System.Security.Authentication.HashAlgorithmType HashAlgorithm => default;
+            public int HashStrength => 0;
+            public System.Security.Authentication.ExchangeAlgorithmType KeyExchangeAlgorithm => default;
+            public int KeyExchangeStrength => 0;
+        }
+#pragma warning restore SYSLIB0058
+
+        [Fact]
+        public async Task EachMessage_SeesTheUpgradeRouteEndpointAndTls_ButNoSession()
+        {
+            // A mount at /{tenant}/bifrost-ws whose identity factory reads RouteValues["tenant"]
+            // got null inside every message: the message context carried no endpoint, no route
+            // values and no TLS handshake. The session is deliberately absent (per request, not
+            // thread-safe). The serial fake delivers message 2 only after message 1 answered, so
+            // message 1's write to its route values has happened before message 2 reads its own.
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(Query(1, "{ fast }"));
+            socket.EnqueueMessage(Query(2, "{ fast }"));
+            var factory = new RouteProbeFactory();
+            var services = new ServiceCollection()
+                .AddSingleton<IBifrostAuthContextFactory>(factory)
+                .BuildServiceProvider();
+            var upgrade = new DefaultHttpContext
+            {
+                RequestServices = services,
+                User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                    new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "probe-user") },
+                    "test")),
+            };
+            upgrade.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
+            upgrade.SetEndpoint(new Endpoint(null, null, "tenant-mount"));
+            upgrade.Request.RouteValues["tenant"] = "acme";
+            factory.UpgradeRouteValues = upgrade.Request.RouteValues;
+            upgrade.Features.Set<Microsoft.AspNetCore.Connections.Features.ITlsHandshakeFeature>(new TlsHandshake
+            {
+                Protocol = System.Security.Authentication.SslProtocols.Tls13,
+                HostName = "acme.example",
+            });
+            upgrade.Features.Set<Microsoft.AspNetCore.Http.Features.ISessionFeature>(
+                NSubstitute.Substitute.For<Microsoft.AspNetCore.Http.Features.ISessionFeature>());
+
+            await RunAsync(new GatedEngine(), upgrade);
+
+            socket.SentMessages().Count(m => m.Type == BifrostMessageType.Result).Should().Be(2);
+            factory.Seen.Should().HaveCount(2).And.OnlyContain(seen =>
+                Equals(seen.Tenant, "acme") && seen.Endpoint == "tenant-mount"
+                && seen.Tls == System.Security.Authentication.SslProtocols.Tls13 && seen.TlsHost == "acme.example",
+                "each message sees the upgrade request's route, endpoint and TLS handshake, unchanged by an earlier message");
+            factory.Seen.Should().OnlyContain(seen => !seen.SharesRouteValues,
+                "each message reads its own copy of the route values");
+            factory.Seen.Should().OnlyContain(seen => !seen.HasSession,
+                "the session is per request and not thread-safe, so no message gets it");
+            upgrade.Request.RouteValues["tenant"].Should().Be("acme", "a message never writes the upgrade request's routes");
         }
 
         [Fact]

@@ -44,9 +44,19 @@ defaults {
 // pass through, so `./test tests/BifrostQL.Server.Test` scopes it to one project.
 // Deliberately not `npm run test` — this repo is pnpm-only, and the root test
 // script bypasses the epic/release tier split these scripts exist to enforce.
+//
+// cores/mem are a floor under the queue's measured history, which sees only
+// this run's process tree. The integration suites' SQL work runs in the
+// docker-compose.test.yml containers under dockerd, and reused MSBuild nodes /
+// VBCSCompiler compile outside the tree too. Measured on build3 (32 cores),
+// 2026-11-23, steady-state run: tree 339 cpu-s, peak 7525MB; the three
+// databases' cgroups 127 cpu-s and +634MB; 37s wall = 12.8 cores (40%),
+// 8159MB. A percentage, because MSBuild and the test hosts fan out per core.
 alias "test" {
     command "./scripts/test-epic.sh"
     max-time "30m"
+    cores "40%"
+    mem "8159m"
 }
 
 // JS workspace only: 7 packages, ~1800 vitest tests. Useful when a change is
@@ -60,27 +70,52 @@ alias "test-js" {
 // Release tier: the full net8.0/net9.0/net10.0 matrix plus the Fuzz category,
 // gated before pack-publish. The script brings up docker-compose.test.yml first;
 // the Integration project reads the connection strings from its runsettings.
+//
+// Floor: the epic tier's measured cost (see `test`), a lower bound, since this
+// tier runs the same suites against the same containers for three TFMs. The
+// release tier itself could not be measured: on build3 (32 cores) both runs
+// were culled at the defaults block's max-mem 8192 while building (8228MB and
+// 8377MB tree peaks, 2026-11-23).
 alias "test-release" {
     command "./scripts/test-release.sh"
     max-time "90m"
+    cores "40%"
+    mem "8159m"
 }
 
+// Floor: reused MSBuild nodes and VBCSCompiler do this build's compiling outside
+// the run's tree. Measured on build3 (32 cores), 2026-11-23, a clean build with
+// node reuse and shared compilation off so all of it stayed in the tree:
+// 669 cpu-s over 35s = 19.3 cores (60%), peak 7995MB.
 alias "build" {
     command "dotnet"
     args "build" "BifrostQL.sln"
     max-time "30m"
+    cores "60%"
+    mem "7995m"
 }
 
 // Test inventory: every test name in the repo, both stacks, one per line on
 // stdout. The automation loop diffs a plan's declared test names against this
 // without knowing what a test framework is.
+//
+// Floor: its `dotnet build` compiles in reused MSBuild nodes outside the tree.
+// Measured on build3, 2026-11-23, incremental build with reuse off: 15 cpu-s
+// over 13s = 1.2 cores, peak 4719MB (the vitest half failed in that fresh
+// clone, so this covers the .NET half; vitest runs in the tree).
 alias "list-tests" {
     command "./scripts/list-tests.sh"
     max-time "30m"
+    cores 1.2
+    mem "4719m"
 }
 
 // Run exactly the test(s) named by $1, an exact name as printed by list-tests.
+// Floor, same reason as list-tests. Measured on build3, 2026-11-23, one .NET
+// test with node reuse off: 11 cpu-s over 7s = 1.6 cores, peak 5521MB.
 alias "test-by-name" {
     command "./scripts/test-by-name.sh"
     max-time "30m"
+    cores 1.6
+    mem "5521m"
 }

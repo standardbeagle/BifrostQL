@@ -22,7 +22,7 @@ internal static class ServeModel
     /// <summary>
     /// The model serve serves, with the config file's metadata rules. A rule the live schema
     /// cannot satisfy (a table or column that does not exist yet) fails <c>ModelConfigValidator</c>
-    /// as serve's startup would: the refusal, with its message and a pointer to
+    /// (<see cref="ModelConfigValidationException"/>) as serve's startup would: the refusal, with its message and a pointer to
     /// <c>bifrost config-validate</c>, is written to <paramref name="output"/> and null is returned.
     /// </summary>
     public static async Task<(IDbModel Model, ISchema Schema)?> BuildOrRefuseAsync(
@@ -32,7 +32,9 @@ internal static class ServeModel
         {
             return await BuildAsync(resolved, resolved.ConfigSection?.Metadata ?? Array.Empty<string>());
         }
-        catch (InvalidOperationException ex)
+        // Only the validator's refusal: any other failed build (a provider with no registered
+        // factory, a pool timeout) is not something config-validate can fix.
+        catch (ModelConfigValidationException ex)
         {
             const string hint = "Run 'bifrost config-validate' to check the config file's rules against the database.";
             if (output.IsJsonMode)

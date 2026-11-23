@@ -112,6 +112,35 @@ public sealed class ServeSchemaParityTests : IDisposable
         json.GetProperty("hint").GetString().Should().Contain("bifrost config-validate");
     }
 
+    // Only the validator's refusal points at config-validate. A provider with no registered
+    // factory (this test assembly registers no MySQL factory) is an InvalidOperationException
+    // too, and config-validate cannot fix it, so it must not be told to run it.
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("export")]
+    public async Task SchemaAndExport_ANonValidationFailure_GetsNoConfigValidateHint(string command)
+    {
+        var configPath = Path.Combine(_dir, "bifrostql.json");
+        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new
+        {
+            ConnectionStrings = new { bifrost = "Server=127.0.0.1;Port=3306;Database=app;Uid=app" },
+            BifrostQL = new { Path = "/graphql", Metadata = Array.Empty<string>() },
+        }));
+        var router = new CommandRouter().Register(new SchemaCommand()).Register(new ExportCommand());
+
+        var writer = new StringWriter();
+        var exit = await router.ExecuteAsync(
+            ToolConfig.Parse(new[] { command, "--config", configPath, "--json" }),
+            new OutputFormatter(writer, jsonMode: true));
+        var json = JsonDocument.Parse(writer.ToString()).RootElement;
+
+        exit.Should().Be(1);
+        json.GetProperty("error").GetString().Should().Contain("No factory registered",
+            "control: the build failed on the provider, not on a rule");
+        json.TryGetProperty("hint", out _).Should().BeFalse(
+            "config-validate cannot fix a missing provider package");
+    }
+
     private async Task<(string ConnectionString, string ConfigPath)> CreateDatabaseAndConfigAsync(params string[] rules)
     {
         var connectionString = $"Data Source={Path.Combine(_dir, "parity.db")}";

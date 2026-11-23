@@ -23,7 +23,7 @@ namespace BifrostQL.Core.Model
     /// Fail-fast validation for stringly-typed metadata configs. Runs once, after
     /// the model is fully built (so <c>ColumnLookup</c>/<c>GraphQlLookup</c> and all
     /// applied metadata are available), and aggregates every structural problem into
-    /// a single descriptive <see cref="InvalidOperationException"/> rather than letting
+    /// a single descriptive <see cref="ModelConfigValidationException"/> rather than letting
     /// a typo surface only as a runtime <see cref="BifrostExecutionError"/> on the
     /// first query.
     ///
@@ -121,7 +121,7 @@ namespace BifrostQL.Core.Model
 
             if (errors.Count > 0)
             {
-                throw new InvalidOperationException(
+                throw new ModelConfigValidationException(
                     "Invalid BifrostQL metadata configuration:" + Environment.NewLine +
                     string.Join(Environment.NewLine, errors));
             }

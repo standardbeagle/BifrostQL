@@ -21,9 +21,8 @@ namespace BifrostQL.Server
         /// <summary>
         /// Overrides whether a caller must present an identity that projects to a non-empty
         /// Bifrost user context (otherwise 401). Null (the default) inherits the requirement from
-        /// <c>MountAuthRequirement</c>: the single registered GraphQL endpoint's (required unless
-        /// it sets <c>DisableAuth</c>), and required whenever no endpoint, or more than one, is
-        /// registered.
+        /// <c>MountAuthRequirement</c>: the endpoint <see cref="GraphQlEndpoint"/> selects (required
+        /// unless it sets <c>DisableAuth</c>), and required when no endpoint is registered.
         ///
         /// <para>This endpoint carries PUT and DELETE. Anonymous callers share ONE owner partition,
         /// so <c>false</c> (or inheriting from an anonymous endpoint) is a choice for a
@@ -42,8 +41,9 @@ namespace BifrostQL.Server
         /// <summary>
         /// The registered GraphQL endpoint path whose model names the tenant claim
         /// (<c>tenant-context-key</c>) the owner partition is keyed by, and whose auth requirement
-        /// the mount inherits. Null selects the single registered endpoint; with several
-        /// registered and none named, a request with an identity fails rather than guess.
+        /// the mount inherits. Null selects the single registered endpoint. With several registered
+        /// and none named, or a path no endpoint is registered under, <c>UseBifrostSavedObjects</c>
+        /// refuses to mount rather than guess.
         /// </summary>
         public string? GraphQlEndpoint { get; set; }
     }
@@ -71,6 +71,9 @@ namespace BifrostQL.Server
         private readonly RequestDelegate _next;
         private readonly BifrostSavedObjectsOptions _options;
         private readonly bool _requiresAuth;
+
+        /// <summary>Constant wire text for a model that could not be loaded to key the owner partition.</summary>
+        private const string ModelUnavailableMessage = "Saved objects are temporarily unavailable.";
 
         /// <param name="next">The next middleware.</param>
         /// <param name="options">Endpoint options.</param>
@@ -113,9 +116,26 @@ namespace BifrostQL.Server
             // no stable owner key is refused rather than treated as a shared/global owner, which
             // would merge every such caller into one bucket. The anonymous partition is reachable
             // only when the mount does not require auth (an anonymous endpoint, or RequireAuth=false).
-            var owner = outcome == BifrostIdentityOutcome.Projected
-                ? SavedObjectOwner.FromUserContext(userContext, await ResolveTenantContextKeyAsync(context))
-                : SavedObjectOwner.Anonymous;
+            string? owner = SavedObjectOwner.Anonymous;
+            if (outcome == BifrostIdentityOutcome.Projected)
+            {
+                // The owner partition needs the served model's tenant claim key. A model that cannot
+                // load (database unreachable) leaves no partition to scope by: refuse as unavailable,
+                // detail to the log, never the driver text on the wire.
+                string tenantContextKey;
+                try
+                {
+                    tenantContextKey = await ResolveTenantContextKeyAsync(context);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    var error = BifrostErrorSink.Sanitized(ModelUnavailableMessage, ex.ToString(),
+                        $"{nameof(BifrostSavedObjectsMiddleware)}.{nameof(ResolveTenantContextKeyAsync)}");
+                    await WriteError(context, StatusCodes.Status503ServiceUnavailable, error.Message);
+                    return;
+                }
+                owner = SavedObjectOwner.FromUserContext(userContext, tenantContextKey);
+            }
             if (owner == null)
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -158,7 +178,8 @@ namespace BifrostQL.Server
         /// The tenant claim key the owner partition is keyed by: the served model's
         /// <c>tenant-context-key</c>, through the same resolver the tenant filter scopes rows by,
         /// so a deployment that renames the key (<c>org_id</c>) partitions saved objects by the
-        /// claim it isolates data by. A registered data path whose model cannot be resolved throws.
+        /// claim it isolates data by. A registered data path whose model cannot be loaded throws;
+        /// the caller answers that 503.
         /// A host with no Bifrost data path at all (no <see cref="IQueryIntentExecutor"/>) has no
         /// model to carry a <c>tenant-context-key</c>, so the key is the one every model defaults
         /// to.

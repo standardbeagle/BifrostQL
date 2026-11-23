@@ -48,6 +48,7 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 | `EnableWrites` | `false` | Master gate for the write surface (SET/HSET/MSET/DEL). Off by default: every write is refused with a clean `-ERR` and executes nothing until a deployment opts in. |
 | `MaxBulkLength` | `1048576` (1 MiB) | DoS guard on the unauthenticated path: a bulk/inline length prefix beyond this is refused, never allocated. |
 | `MaxFrameLength` | `1048576` (1 MiB) | DoS guard on the total byte length of one top-level frame, elements of nested aggregates included. The per-element caps bound only single parts; without this a frame built from individually legal parts could reach roughly 1 TiB, all of it retained until the frame completes. Charged per consumed byte and checked before any payload is allocated; reset at each top-level frame. |
+| `MaxPreAuthFrameLength` | `4096` (4 KiB) | Total byte cap on one frame before the session authenticates. Until AUTH succeeds a frame must also be a flat array of at most seven bulk strings (`HELLO 3 AUTH user pass SETNAME name` is the longest legal command); nested aggregates, other element types and inline commands are refused. Counted on received bytes, and a bulk length past the remaining budget is refused before its payload is read. A refused frame answers the fixed `ERR Protocol error: unauthenticated command frame refused.` and closes the connection. Must be between 512 and `MaxFrameLength`, or the listener refuses to start. Does not apply when `RequireAuthentication` is `false`. |
 | `MaxAggregateElements` | `1048576` | DoS guard: a declared array/map element count beyond this is refused, so a huge multibulk count cannot pre-allocate an unbounded array. |
 | `MaxNestingDepth` | `32` | DoS guard: how deeply aggregates may nest before the decoder refuses to descend (prevents a stack-overflow teardown of the host). |
 | `MaxConnections` | `100` | Concurrent connections admitted. The slot is reserved at ACCEPT — before the TLS handshake and before AUTH — so a peer that never completes a handshake cannot force work outside the cap. |
@@ -298,8 +299,11 @@ Everything above rolls up to a short list a security reviewer can check:
 - **Sanitized errors.** An out-of-subset command is a clean `-ERR` and the connection
   survives; an internal fault is a generic `ERR internal error`, no DB internals on the
   wire.
-- **Bounded decoder.** The unauthenticated codec caps bulk length, aggregate element
-  count, and nesting depth, so a hostile frame cannot exhaust memory or crash the host.
+- **Bounded decoder.** The codec caps bulk length, aggregate element count, nesting depth
+  and total frame length, so a hostile frame cannot exhaust memory or crash the host.
+  Before AUTH it accepts only a flat array of at most seven bulk strings within
+  `MaxPreAuthFrameLength` (4 KiB), so an unauthenticated peer cannot make the server
+  buffer a 1 MiB frame.
 
 ## Connecting clients
 

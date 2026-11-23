@@ -119,6 +119,25 @@ public sealed class IdentityProjectionScopeTests
     }
 
     [Fact]
+    public async Task AFaultedGateBuild_IsNotMemoized_TheNextCallInTheSameScopeRetriesIt()
+    {
+        // The gate build is memoized per accessor scope, but a failure never is: a model load that
+        // faulted once (database down) must not answer every later call in the scope.
+        var host = new Host(failingModelLoads: 1);
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+        var accessor = request.ServiceProvider.GetRequiredService<IPolicyGateAccessor>();
+        var userContext = await http.GetBifrostUserContextAsync();
+
+        var first = async () => await accessor.GetAsync(userContext);
+        (await first.Should().ThrowAsync<InvalidOperationException>()).WithMessage("database down");
+        var retried = await accessor.GetAsync(userContext);
+
+        retried.CanAct("main.payments", PolicyAction.Create).Allowed.Should().BeTrue(
+            "the faulted build was dropped and the next call rebuilt it");
+    }
+
+    [Fact]
     public async Task AResolverThrowingANonCancellationException_UnderACancelledToken_IsRefused_NotDegraded()
     {
         // SqlClient raises SqlException ("Operation cancelled by user"), not an
@@ -211,13 +230,16 @@ public sealed class IdentityProjectionScopeTests
         private readonly HttpContextHolder _accessor = new();
         private int _resolverCalls;
 
-        public Host(Action<int, CancellationToken>? onResolve = null, bool validateScopes = true)
+        public Host(Action<int, CancellationToken>? onResolve = null, bool validateScopes = true,
+            int failingModelLoads = 0)
         {
             var services = new ServiceCollection();
             BifrostServiceRegistrar.RegisterGraphQlAndAuth(services, false, null, 10, null, null);
             var models = new PathCache<Inputs>();
-            models.AddLoader("/graphql", () =>
-                Task.FromResult(new Inputs(new Dictionary<string, object?> { ["model"] = PaymentsModel() })));
+            var modelLoads = 0;
+            models.AddLoader("/graphql", () => Interlocked.Increment(ref modelLoads) <= failingModelLoads
+                ? Task.FromException<Inputs>(new InvalidOperationException("database down"))
+                : Task.FromResult(new Inputs(new Dictionary<string, object?> { ["model"] = PaymentsModel() })));
             services.AddSingleton(models);
             services.AddSingleton<IHttpContextAccessor>(_accessor);
             services.AddBifrostGrantResolver((identity, sp, ct) =>

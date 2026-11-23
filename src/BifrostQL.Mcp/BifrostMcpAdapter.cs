@@ -327,51 +327,6 @@ namespace BifrostQL.Mcp
         }
 
         /// <summary>
-        /// Builds a projection-ONLY user-context provider for one HTTP session from an
-        /// already-resolved principal (no credential exchange runs inside it). HTTP identity is
-        /// fixed for the session by the bearer presented at the initialize request, so the
-        /// principal is projected through <paramref name="authContextFactory"/> ONCE here — while
-        /// <paramref name="services"/> is a LIVE scope — and each tool call returns a fresh copy of
-        /// that snapshot. Snapshotting is essential: the MCP session outlives the initiating request
-        /// whose scope this projection reads (the OIDC claim-mapper registry), so deferring the
-        /// projection to tool-call time would touch a disposed scope on later requests. A null
-        /// principal snapshots an EMPTY context, which is NOT fail-closed — it gates only tables
-        /// declaring tenant metadata — so no shipped caller reaches this with a null principal; the
-        /// refusal happens at the seam that decides identity. An unmapped issuer throws here and the
-        /// throw is deferred to each tool call so the handler sanitizes it onto the wire — never an
-        /// empty/anonymous context. Asynchronous because the projection awaits the host's
-        /// grant resolver.
-        /// </summary>
-        internal static async Task<Func<IDictionary<string, object?>>> CreateProjectionProviderAsync(
-            IBifrostAuthContextFactory authContextFactory, IServiceProvider services, ClaimsPrincipal? principal,
-            CancellationToken cancellationToken = default)
-        {
-            // Project inside a dedicated child scope: <paramref name="services"/> is the
-            // session-initiating request's scope, but a child scope keeps the scoped
-            // IGrantResolver (S2) resolution correct regardless of which provider the
-            // caller hands in, and the snapshot below outlives both.
-            await using var scope = services.CreateAsyncScope();
-            var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
-            if (principal is not null)
-                carrier.User = principal;
-
-            IDictionary<string, object?> frozen;
-            try
-            {
-                frozen = NormalizeProjection(await authContextFactory.CreateUserContextAsync(
-                    carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception ex) when (ex is UnmappedOidcIssuerException or McpIdentityException)
-            {
-                // Fail closed, sanitized: rethrow on every tool call so the handler maps it to a
-                // generic MCP error (invariant 3) instead of ever yielding an anonymous context.
-                return () => throw ex;
-            }
-
-            return () => UserContexts.Copy(frozen);
-        }
-
-        /// <summary>
         /// Reads the raw credential for the session/request. The per-transport
         /// <see cref="McpAuthOptions.CredentialSource"/> is authoritative when configured — it
         /// alone knows WHERE the credential lives (stdio env/handshake vs HTTP Authorization

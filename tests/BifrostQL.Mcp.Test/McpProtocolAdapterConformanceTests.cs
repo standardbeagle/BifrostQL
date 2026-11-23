@@ -191,12 +191,12 @@ namespace BifrostQL.Mcp.Test
             var mutation = Host.Services.GetRequiredService<IMutationIntentExecutor>();
             var factory = Host.Services.GetRequiredService<IBifrostAuthContextFactory>();
 
-            // Host.Services is the root provider (never disposed), so a null principal projects an
-            // empty (fail-closed) context and a tenant principal projects its scope — the same shared
-            // factory seam every transport uses.
-            var provider = await BifrostMcpAdapter.CreateProjectionProviderAsync(factory, Host.Services, principal);
+            // The stdio adapter's production projection, run per tool call: a null principal is the
+            // AnonymousDev opt-in (an empty context, fail-closed on tenant tables) and a tenant
+            // principal projects its scope — the same shared factory seam every transport uses.
+            var provider = McpTestIdentities.ProviderFor(factory, Host.Services, principal);
             var options = BifrostMcpServerFactory.CreateServerOptions(
-                executor, EndpointPath, userContextProvider: provider,
+                executor, EndpointPath, userContextProviderAsync: provider,
                 mutationExecutor: mutation, enableWrites: enableWrites);
 
             var clientToServer = new Pipe();

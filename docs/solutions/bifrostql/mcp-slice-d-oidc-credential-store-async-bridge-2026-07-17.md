@@ -160,3 +160,5 @@ throw-vs-null credential-store gap flagged as finding (b) above is
 unchanged by this update — HTTP path still relies on the same
 `ResolveBearerPrincipalAsync`/`UnmappedOidcIssuerException` sanitization
 invariant 3 already covers, not a new fix.
+
+> **Update 2026-11-23:** the once-per-session snapshot described in step 3 is gone. HTTP MCP identity is now re-derived on every request by `McpHttpSessionIdentity.RevalidateAsync` (`src/BifrostQL.Mcp/BifrostMcpHttpExtensions.cs`), which projects through the current request scope, and `BifrostMcpAdapter.CreateProjectionProviderAsync` has been removed.

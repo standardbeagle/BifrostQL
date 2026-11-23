@@ -125,7 +125,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Anonymous_SchemaOverview_OmitsReadDeniedTableAndReadDeniedColumn()
         {
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var payload = (await CallAsync(client, "bifrost_schema_overview",
                     new Dictionary<string, object?> { ["detail"] = "full" })).StructuredContent!.Value;
@@ -149,7 +149,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Anonymous_SchemaOverview_DropsRelationshipEdgesPointingAtAHiddenTable()
         {
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var payload = (await CallAsync(client, "bifrost_schema_overview",
                     new Dictionary<string, object?> { ["detail"] = "summary" })).StructuredContent!.Value;
@@ -167,7 +167,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Anonymous_DescribeTable_ReadDeniedTable_IsIndistinguishableFromNonExistent()
         {
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var denied = await CallAsync(client, "bifrost_describe_table",
                     new Dictionary<string, object?> { ["table"] = "ledger_entries" });
@@ -196,7 +196,7 @@ namespace BifrostQL.Mcp.Test
             // shape — an introspection oracle (invariant 4). They now resolve through the caller's
             // readable projection, so a denied table is "Unknown table", exactly as
             // bifrost_describe_table answers, and no column or key detail leaks.
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var calls = new[]
                 {
@@ -229,7 +229,7 @@ namespace BifrostQL.Mcp.Test
             // staff is READABLE but its ssn column is read-denied. An aggregate measure on ssn must
             // be "Unknown column" — a denied column is indistinguishable from a non-existent one —
             // and the suggestion names only readable columns (invariant 4), never ssn.
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var result = await CallAsync(client, "bifrost_aggregate", new Dictionary<string, object?>
                 {
@@ -256,7 +256,7 @@ namespace BifrostQL.Mcp.Test
             // "Unknown column" exactly like a measure or groupBy on it — otherwise the filter is a
             // column-existence oracle and a way to constrain results by the values of a hidden
             // column (invariant 4). The suggestion names only readable columns, never ssn.
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var result = await CallAsync(client, "bifrost_aggregate", new Dictionary<string, object?>
                 {
@@ -289,7 +289,7 @@ namespace BifrostQL.Mcp.Test
             // the denial surfaced as a different condition than a non-existent name. Its siblings
             // (aggregate/search/row_context) already answer "Unknown table" — invariant 9 wants the
             // SAME condition to carry the SAME shape across every op class of one seam.
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var denied = await CallAsync(client, "bifrost_query",
                     new Dictionary<string, object?> { ["table"] = "ledger_entries" });
@@ -331,7 +331,7 @@ namespace BifrostQL.Mcp.Test
                     break;
             }
 
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var result = await CallAsync(client, "bifrost_query", args);
 
@@ -355,7 +355,7 @@ namespace BifrostQL.Mcp.Test
             // — outside the funnel's mapped condition set, hence a different wire shape than the read
             // tools give for the same condition (invariants 9/10). Resolving through ToolJson.ResolveTable
             // makes both op classes emit the IDENTICAL visibility-scoped prompt.
-            await WithClientAsync(await AnonymousProviderAsync(), enableWrites: true, async client =>
+            await WithClientAsync(AnonymousProvider(), enableWrites: true, async client =>
             {
                 var read = await CallAsync(client, "bifrost_query",
                     new Dictionary<string, object?> { ["table"] = "no_such_table" });
@@ -377,7 +377,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Anonymous_DescribeTable_OmitsReadDeniedColumn()
         {
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var payload = (await CallAsync(client, "bifrost_describe_table",
                     new Dictionary<string, object?> { ["table"] = "staff" })).StructuredContent!.Value;
@@ -391,7 +391,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Anonymous_Resources_HideTheReadDeniedTable_AndRefuseItsUri()
         {
-            await WithClientAsync(await AnonymousProviderAsync(), async client =>
+            await WithClientAsync(AnonymousProvider(), async client =>
             {
                 var resources = await client.ListResourcesAsync();
                 resources.Select(r => r.Uri).Should().BeEquivalentTo(
@@ -410,7 +410,7 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task Admin_SeesEveryTableAndColumn()
         {
-            await WithClientAsync(await RoleProviderAsync("admin"), async client =>
+            await WithClientAsync(RoleProvider("admin"), async client =>
             {
                 var payload = (await CallAsync(client, "bifrost_schema_overview",
                     new Dictionary<string, object?> { ["detail"] = "full" })).StructuredContent!.Value;
@@ -432,26 +432,21 @@ namespace BifrostQL.Mcp.Test
             => await client.CallToolAsync(tool, args);
 
         /// <summary>The default fail-closed posture: no principal, so an empty user context.</summary>
-        private Task<Func<IDictionary<string, object?>>> AnonymousProviderAsync()
-            => BifrostMcpAdapter.CreateProjectionProviderAsync(_factory, _host.Services, principal: null);
+        private Func<CancellationToken, ValueTask<IDictionary<string, object?>>> AnonymousProvider()
+            => McpTestIdentities.ProviderFor(_factory, _host.Services, principal: null);
 
-        private Task<Func<IDictionary<string, object?>>> RoleProviderAsync(params string[] roles)
-        {
-            var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, "user-" + string.Join("-", roles)) };
-            claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, authenticationType: "Test"));
-            return BifrostMcpAdapter.CreateProjectionProviderAsync(_factory, _host.Services, principal);
-        }
+        private Func<CancellationToken, ValueTask<IDictionary<string, object?>>> RoleProvider(params string[] roles)
+            => McpTestIdentities.ProviderFor(_factory, _host.Services, McpTestIdentities.WithRoles(roles));
 
         private Task WithClientAsync(
-            Func<IDictionary<string, object?>> provider, Func<McpClient, Task> body)
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> provider, Func<McpClient, Task> body)
             => WithClientAsync(provider, enableWrites: false, body);
 
         private async Task WithClientAsync(
-            Func<IDictionary<string, object?>> provider, bool enableWrites, Func<McpClient, Task> body)
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> provider, bool enableWrites, Func<McpClient, Task> body)
         {
             var options = BifrostMcpServerFactory.CreateServerOptions(
-                _executor, EndpointPath, provider,
+                _executor, EndpointPath, userContextProviderAsync: provider,
                 mutationExecutor: _host.Services.GetRequiredService<IMutationIntentExecutor>(),
                 enableWrites: enableWrites);
             var clientToServer = new Pipe();

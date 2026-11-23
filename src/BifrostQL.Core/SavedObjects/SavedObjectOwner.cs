@@ -52,7 +52,8 @@ public static class SavedObjectOwner
     /// scopes rows by. Reading the fixed default key instead put two tenants of a deployment that
     /// renamed it (<c>org_id</c>) into one partition whenever their subjects matched. The tenant
     /// is read with <see cref="TenantFilterTransformer.ReadTenantValue(IDictionary{string, object?}, string)"/>,
-    /// so a raw one-element claim array is its single value and a multi-valued claim is refused.</para>
+    /// so a raw one-element claim array is its single value. A multi-valued claim names no single
+    /// tenant, so it is no stable identity either: null, the same refusal.</para>
     /// </summary>
     public static string? FromUserContext(IDictionary<string, object?>? userContext, string tenantContextKey)
     {
@@ -64,7 +65,15 @@ public static class SavedObjectOwner
         if (user is null)
             return null;
 
-        var tenant = TenantFilterTransformer.ReadTenantValue(userContext, tenantContextKey);
+        string? tenant;
+        try
+        {
+            tenant = TenantFilterTransformer.ReadTenantValue(userContext, tenantContextKey);
+        }
+        catch (NonScalarTenantException)
+        {
+            return null;
+        }
         if (string.IsNullOrWhiteSpace(tenant))
             tenant = null;
 

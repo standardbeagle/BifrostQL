@@ -84,6 +84,24 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SavedObject_RefusesAMultiValuedOrgClaim_AsAnUnstableIdentity()
+    {
+        // Two org_id claims name no single tenant to partition by. The tenant read refuses them;
+        // the route must answer that as its identity refusal (401), not an unhandled 500.
+        var twoOrgs = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "same-sub"), new Claim("org_id", "acme"), new Claim("org_id", "globex"),
+        }, authenticationType: "test"));
+
+        using var refused = await SendAsync(HttpMethod.Get, "/_saved-objects", twoOrgs);
+        using var control = await SendAsync(HttpMethod.Get, "/_saved-objects", Member("same-sub", "acme"));
+
+        refused.StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized, await refused.Content.ReadAsStringAsync());
+        (await refused.Content.ReadAsStringAsync()).Should().NotContain("acme").And.NotContain("globex");
+        control.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "control: a single org claim is served");
+    }
+
+    [Fact]
     public async Task DeferredChangeSet_IsStampedWithTheOrg_AndHiddenFromAnotherOrgsReviewQueue()
     {
         var changeSetId = await AcmeEditsItsWidgetAsync();

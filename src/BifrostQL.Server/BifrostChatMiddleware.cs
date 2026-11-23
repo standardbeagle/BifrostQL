@@ -216,8 +216,7 @@ namespace BifrostQL.Server
             }
             if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
-                await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
-                    "forbidden", "The caller identity is not accepted by this deployment.");
+                await WriteUnacceptedIdentityAsync(context);
                 return;
             }
 
@@ -676,12 +675,23 @@ namespace BifrostQL.Server
             }
 
             // The identity is keyed by the same model's tenant claim the plan connector bound the
-            // proposal under.
+            // proposal under. A multi-valued tenant claim names no single tenant, so the caller has
+            // no stable identity key: the mount's identity refusal, like an unprojectable caller.
             var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
+            string identityKey;
+            try
+            {
+                identityKey = ChatPlanConfirmationRegistry.RequireIdentityKey(
+                    userContext, TenantFilterTransformer.ResolveTenantContextKey(model));
+            }
+            catch (NonScalarTenantException)
+            {
+                await WriteUnacceptedIdentityAsync(context);
+                return;
+            }
             var resolved = _confirmations.TryResolve(
                 confirmationId,
-                ChatPlanConfirmationRegistry.RequireIdentityKey(
-                    userContext, TenantFilterTransformer.ResolveTenantContextKey(model)),
+                identityKey,
                 ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId),
                 new ChatPlanDecision(approve, body.Reason));
             if (!resolved)
@@ -974,6 +984,11 @@ namespace BifrostQL.Server
             _logger.LogError(ex, "Chat request failed during execution.");
             return WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "execution-error", InternalMessage);
         }
+
+        /// <summary>The refusal for a caller whose identity this mount cannot key: 403, constant text.</summary>
+        private static Task WriteUnacceptedIdentityAsync(HttpContext context) =>
+            WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                "forbidden", "The caller identity is not accepted by this deployment.");
 
         private static Task WriteErrorAsync(HttpContext context, int statusCode, string code, string message) =>
             WriteJsonAsync(context, statusCode, new { code, message });

@@ -209,6 +209,9 @@ namespace BifrostQL.Server.Test
         public const string UserHeader = "X-Test-User";
         public const string TenantHeader = "X-Test-Tenant";
 
+        /// <summary>Each value becomes one raw <c>org_id</c> claim (a model may name it as its tenant-context-key).</summary>
+        public const string OrgHeader = "X-Test-Org";
+
         public HeaderAuthHandler(
             IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
             : base(options, logger, encoder)
@@ -225,6 +228,8 @@ namespace BifrostQL.Server.Test
             var tenant = Request.Headers[TenantHeader].ToString();
             if (!string.IsNullOrEmpty(tenant))
                 claims.Add(new Claim(BifrostQL.Server.Auth.LocalAuthClaims.Tenant, tenant));
+            foreach (var org in Request.Headers[OrgHeader])
+                claims.Add(new Claim("org_id", org!));
 
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));

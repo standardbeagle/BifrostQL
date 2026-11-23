@@ -291,6 +291,34 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task Confirmation_Endpoint_RefusesAMultiValuedTenantClaim_AsAnUnacceptedIdentity()
+        {
+            // The model keys tenants by org_id; two org_id claims name no single tenant, so the
+            // caller has no stable identity key. That is the mount's identity refusal (403), not
+            // an unhandled 500 from the tenant read.
+            var client = await _h.StartAsync(extraMetadata: new[] { ":root { tenant-context-key: org_id }" });
+
+            HttpRequestMessage Confirm(params string[] orgs)
+            {
+                var request = ChatEndpointHost.Post(
+                    "/_chat/conversations/1/confirmations/0123456789abcdef", new { approve = true }, "same-sub", null);
+                request.Headers.Add(HeaderAuthHandler.OrgHeader, orgs);
+                return request;
+            }
+
+            using var refused = await client.SendAsync(Confirm("acme", "globex"));
+            var body = await refused.Content.ReadAsStringAsync();
+            refused.StatusCode.Should().Be(HttpStatusCode.Forbidden, body);
+            using (var doc = JsonDocument.Parse(body))
+                doc.RootElement.GetProperty("code").GetString().Should().Be("forbidden");
+            body.Should().NotContain("acme").And.NotContain("globex");
+
+            using var control = await client.SendAsync(Confirm("acme"));
+            control.StatusCode.Should().Be(HttpStatusCode.NotFound,
+                "control: a single org claim reaches the registry, which knows no such proposal");
+        }
+
+        [Fact]
         public async Task Confirmation_Endpoint_ValidatesTheRequestShape_AndIsAuthGated()
         {
             var client = await _h.StartAsync(extraMetadata: PlanMetadata);

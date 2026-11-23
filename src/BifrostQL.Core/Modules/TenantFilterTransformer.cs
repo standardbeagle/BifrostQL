@@ -97,7 +97,7 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
     /// context has none. A raw principal claim reaches the user context as a one-element
     /// <c>string[]</c> under its claim type; that is read as its single value, the way the
     /// tenant filter's coercion reads it. A sequence of any other length is refused with
-    /// <see cref="NonScalarTenantMessage"/>: <c>ToString()</c> on it gave
+    /// <see cref="NonScalarTenantException"/>: <c>ToString()</c> on it gave
     /// <c>"System.String[]"</c> for every caller, which merged every tenant into one.
     /// Numbers format with the invariant culture.
     /// </summary>
@@ -142,6 +142,19 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
         }
     }
 
-    private static BifrostExecutionError NonScalarTenant()
-        => new(NonScalarTenantMessage) { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+    private static NonScalarTenantException NonScalarTenant() => new();
+}
+
+/// <summary>
+/// The caller's tenant claim holds several values (or an opaque object), so it names no single
+/// tenant. An access denial (<see cref="BifrostExecutionError.AccessDeniedCode"/>) with the constant
+/// <see cref="TenantFilterTransformer.NonScalarTenantMessage"/>. Typed so an identity-keyed surface
+/// (saved-object owner, plan confirmation) can answer it as its own identity refusal.
+/// </summary>
+public sealed class NonScalarTenantException : BifrostExecutionError
+{
+    public NonScalarTenantException() : base(TenantFilterTransformer.NonScalarTenantMessage)
+    {
+        ErrorCode = AccessDeniedCode;
+    }
 }

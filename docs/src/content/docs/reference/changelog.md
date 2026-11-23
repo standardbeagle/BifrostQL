@@ -33,6 +33,7 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Saved-object owner partitions and plan-confirmation identities are keyed by the model's `tenant-context-key`,** not a fixed `tenant_id`. With `tenant-context-key: org_id`, two organisations whose identity providers issue the same subject shared one saved-object partition and could confirm each other's chat plans.
 - **Plan confirmations compose the caller's tenant and user injectively.** A tenant or user value containing `|` could produce the same identity key as a different caller.
 - **A multi-valued tenant claim is refused** with 401 on `/_saved-objects` and 403 on the chat confirmation route, instead of an unhandled 500.
+- **RESP checks a frame's shape and size before authentication.** An unauthenticated peer could make the server decode and buffer up to `MaxFrameLength` (1 MiB) per connection, nested aggregates included. Until AUTH succeeds a frame must be a flat array of at most seven bulk strings within the new `RespWireOptions.MaxPreAuthFrameLength` (default 4 KiB); anything else gets `ERR Protocol error: unauthenticated command frame refused.` and the connection closes. Authenticated sessions, and doors with `RequireAuthentication` off, keep the regular caps.
 
 ### Breaking
 
@@ -43,6 +44,7 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Every front door refuses to start when the GraphQL endpoint it serves is ambiguous or unknown.** Saved objects, blobs, app metadata, binary WebSocket, chat, S3, OData, feeds, Prometheus, pgwire, RESP, LDAP and MCP over HTTP throw `InvalidOperationException` at startup when their endpoint option is unset on a host with several endpoints, or names no registered endpoint; before, the mount started and every request failed. `UseBifrostFrontend` / `UseBifrostGraphQL` at a path that is not a registered endpoint is refused the same way on a multi-endpoint host (one endpoint still serves any frontend path). The stdio MCP adapter names its endpoint with the new `McpAuthOptions.Endpoint`, which `AddBifrostMcpHttp` refuses (it takes its `endpoint` argument). Saved objects take the new `BifrostSavedObjectsOptions.GraphQlEndpoint`; `UseBifrostBinary()` needs `graphqlPath` on a multi-endpoint host; Prometheus's `Endpoint` defaults to `/graphql`, so a host whose endpoint lives elsewhere must set it.
 - **`IChatConnector.ExecuteAsync` takes a `string? endpoint` before `authContext`,** `ChatToolSet.CreateExecutor` takes `(endpoint, authContext)`, and the built-in connectors drop their `endpoint` constructor parameter. The endpoint comes from `BifrostChatOptions.GraphQlEndpoint`.
 - **`BifrostBlobMiddleware` no longer takes an `ILogger` constructor argument;** its read and model-load failures log through `BifrostErrorSink`, so a host sees them with the logger it attaches there (`BifrostErrorSink.Attach`), not through `ILogger<BifrostBlobMiddleware>`.
+- **RESP clients whose `AUTH` / `HELLO … AUTH` frame exceeds 4 KiB must raise `MaxPreAuthFrameLength`,** and a RESP listener refuses to start unless `MaxPreAuthFrameLength` is between 512 and `MaxFrameLength`.
 
 ### Fixed
 
@@ -56,6 +58,7 @@ On `main` after v0.4.31; not yet on NuGet.
 - **`bifrost config-validate` reports a missing provider package or another load failure outside the file as `Validation failed: …`** (exit 1), not as an error in the config file. Only metadata validation failures are listed as config issues.
 - **Server faults hidden from the wire are logged through the one error seam,** the new `BifrostErrorSink.ServerFault`, at Error with the exception attached and constant detail: a model that fails to load behind `/_saved-objects` or the blob mount, a blob read that fails, and a history writer that is not registered. The unregistered history writer logged only at Debug before. Refusals the client caused stay at Debug.
 - **The engine's multi-endpoint error no longer points at `UseBifrostBinary`,** which cannot reach it; it says the path is not a registered endpoint and asks for the path of the endpoint to serve.
+- **`/auth/session` answers an enrollment-only session with `200 {"status":"mfa-enrollment-required"}`** instead of 401, so a client reloaded mid-enrollment resumes the second-factor step rather than sending the user back to the password. No identity field is returned; no session and an expired one still answer 401.
 
 ## 0.4.31 — 2026-11-22 (async auth and filter operators)
 

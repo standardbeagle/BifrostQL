@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState } from '@codemirror/state';
-import { ensureSyntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { SQLite } from '@codemirror/lang-sql';
 import { buildSchemaCompletionMap, createSchemaCompletionSource } from './sql-completion';
@@ -29,7 +29,11 @@ function completionLabels(doc: string, pos: number): string[] {
   // aliases from that tree. On a starved CPU the FROM clause past the cursor is left unparsed
   // and the alias resolves to nothing, so parse the whole document before asking.
   if (!ensureSyntaxTree(state, state.doc.length, 10_000)) throw new Error('SQL parse did not finish');
-  const result = source(new CompletionContext(state, pos, true)) as CompletionResult | null;
+  // ensureSyntaxTree advances the parse context only; syntaxTree(state), which lang-sql reads,
+  // still returns the tree snapshotted at create. An empty transaction publishes the full tree.
+  const parsed = state.update({}).state;
+  if (syntaxTree(parsed).length < parsed.doc.length) throw new Error('SQL tree does not cover the document');
+  const result = source(new CompletionContext(parsed, pos, true)) as CompletionResult | null;
   return result ? result.options.map((o) => o.label) : [];
 }
 

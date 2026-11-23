@@ -22,9 +22,11 @@ namespace BifrostQL.Server.OData
         public string Realm { get; set; } = "BifrostQL";
 
         /// <summary>
-        /// The registered GraphQL endpoint whose cached model/connection future read slices
-        /// resolve against. Null selects the single registered endpoint. Unused in slice 1
-        /// (no reads yet); carried so the read seam lands without a config change.
+        /// The registered GraphQL endpoint path (e.g. <c>/graphql</c>) whose cached model and
+        /// connection every OData request runs against: the service and <c>$metadata</c> documents
+        /// and every entity-set and <c>$expand</c> read. Null selects the single registered
+        /// endpoint. Checked when the endpoint is mounted: null on a multi-endpoint host, or a path
+        /// no endpoint is registered under, refuses to start.
         /// </summary>
         public string? Endpoint { get; set; }
 

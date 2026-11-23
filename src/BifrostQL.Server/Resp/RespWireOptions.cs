@@ -4,10 +4,11 @@ using System.Security.Cryptography.X509Certificates;
 namespace BifrostQL.Server.Resp
 {
     /// <summary>
-    /// Configuration for the Redis RESP-protocol front door (slice 1: codec, connection
-    /// loop, PING/HELLO/AUTH/SELECT/INFO plumbing, fail-closed identity). The data command
-    /// surface it fronts (GET/SET/HGETALL/SCAN…) attaches at the dispatch seam in later
-    /// slices; the query surface those commands read is selected by <see cref="Endpoint"/>.
+    /// Configuration for the Redis RESP-protocol front door: the codec and connection loop,
+    /// PING/HELLO/AUTH/SELECT/INFO, fail-closed identity, the read commands
+    /// (GET/MGET/HGET/HGETALL/EXISTS/TYPE/SCAN) and the opt-in write commands (SET/HSET/DEL,
+    /// see <see cref="EnableWrites"/>). The endpoint those commands run against is selected by
+    /// <see cref="Endpoint"/>.
     /// </summary>
     public sealed class RespWireOptions
     {
@@ -160,8 +161,8 @@ namespace BifrostQL.Server.Resp
         /// <summary>
         /// Registered BifrostQL endpoint path (e.g. <c>/graphql</c>) whose model, schema and
         /// connection authenticated sessions execute their data commands against. Null selects
-        /// the single registered endpoint. Unused by slice-1 plumbing; carried for the data
-        /// slices.
+        /// the single registered endpoint. Checked as the host resolves the adapter: null on a
+        /// multi-endpoint host, or a path no endpoint is registered under, aborts host startup.
         /// </summary>
         public string? Endpoint { get; set; }
 

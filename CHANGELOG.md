@@ -57,7 +57,7 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Host `AsyncLocal` state does not reach binary WebSocket messages.** Request tasks start without the connection's execution context, so OpenTelemetry Baggage, tenant or impersonation `AsyncLocal`s and logging scopes set by host middleware are absent; the current `Activity` and cultures are carried over. Put per-connection state in `HttpContext.Items` at upgrade instead.
 - **`ISqlDialect.BuildNativePivot` is removed and `PivotSqlGenerator.GenerateCaseWhenPivot` is renamed `GeneratePivot`;** `GenerateEmptyPivot` is no longer public. Dialect authors call `PivotSqlGenerator.GeneratePivot`.
 - **Saved objects stored under a renamed `tenant-context-key` get new owner tokens,** so objects saved before this change no longer appear for those callers. Deployments on the default `tenant_id` key keep their tokens.
-- **`UseBifrostSavedObjects` refuses to start when the endpoint it serves is ambiguous or unknown.** A host with several GraphQL endpoints must set the new `BifrostSavedObjectsOptions.GraphQlEndpoint`; a name that matches no registered endpoint fails startup instead of failing every request.
+- **Every front door refuses to start when the GraphQL endpoint it serves is ambiguous or unknown.** Saved objects, blobs, app metadata, binary WebSocket, chat, S3, OData, feeds, Prometheus, pgwire, RESP, LDAP and MCP over HTTP throw `InvalidOperationException` at startup when their endpoint option is unset on a host with several endpoints, or names no registered endpoint; before, the mount started and every request failed. Saved objects take the new `BifrostSavedObjectsOptions.GraphQlEndpoint`; `UseBifrostBinary()` needs `graphqlPath` on a multi-endpoint host; Prometheus's `Endpoint` defaults to `/graphql`, so a host whose endpoint lives elsewhere must set it.
 - **`IChatConnector.ExecuteAsync` takes a `string? endpoint` before `authContext`,** `ChatToolSet.CreateExecutor` takes `(endpoint, authContext)`, and the built-in connectors drop their `endpoint` constructor parameter. The endpoint comes from `BifrostChatOptions.GraphQlEndpoint`.
 
 ### Fixed
@@ -70,6 +70,8 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Chat tools (explore, media, plan) work on hosts with several GraphQL endpoints;** they asked for an unnamed endpoint and failed on every call.
 - **A model that fails to load on `/_saved-objects` answers 503 with fixed text** instead of an unhandled 500; the driver detail goes to the log only.
 - **`bifrost config-validate` reports a missing provider package or another load failure outside the file as `Validation failed: …`** (exit 1), not as an error in the config file. Only metadata validation failures are listed as config issues.
+- **Server faults hidden from the wire are logged at Error** through the new `BifrostErrorSink.ServerFault`: a model that fails to load behind `/_saved-objects` or the blob mount, and a history writer that is not registered. They logged at Debug, so a database outage behind a 503 was invisible at default levels. Refusals the client caused stay at Debug.
+- **The engine's multi-endpoint error names the frontend mount** (`UseBifrostFrontend` / `UseBifrostGraphQL` at a path that is not an endpoint) instead of `UseBifrostBinary`, which no longer reaches it.
 
 ## 0.4.31 — 2026-11-22 (async auth and filter operators)
 

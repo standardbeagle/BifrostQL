@@ -27,7 +27,7 @@ On `main` after v0.4.30; not yet on NuGet.
 
 ### Security — async auth and identity projection
 
-- **An `IPolicyGateAccessor` resolved from the root service provider (captured by a singleton) throws** instead of serving one caller's gate to every caller, under any DI container.
+- **An `IPolicyGateAccessor` resolved from the root service provider (captured by a singleton) throws** instead of serving one caller's gate to every caller, in MS DI and in containers that cache a root-resolved scoped service, such as Autofac.
 - **A grant resolver that throws any exception after the request is cancelled (for example `SqlException`) refuses the caller** instead of degrading to empty permissions; it surfaces as `OperationCanceledException`, so MCP handles it as a cancellation rather than an unhandled driver exception.
 
 ### Breaking — async auth and identity projection
@@ -36,6 +36,7 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
 - **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
 - **An explicit `--config` path that names no file is refused** (`Config file not found: <path>`) by `serve`, `doctor`, `watch`, `schema`, `export`, `test` and `config-generate`; it used to be ignored silently.
+- **Model-load metadata validation throws `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
 
 ### Fixed — async auth and identity projection
 
@@ -52,6 +53,8 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`bifrost watch`, `schema`, `export`, `test` and `config-generate` read `--config`.** They accepted the flag and ignored it; they now take `connectionStrings.bifrost` from the file when `--connection-string` is absent and refuse a file serve refuses.
 - **`bifrost schema` and `export` build the model with the config file's metadata rules** through serve's own model build, so `schema --config` prints the schema `serve` would serve; a rule the database cannot satisfy is refused with exit 1 and the validator's message, pointing to `bifrost config-validate`. `bifrost config-generate` reads the database without the file's rules, so it bootstraps a fresh database and still detects tables the file hides.
 
+- **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
+- **`bifrost schema` and `export` point at `config-validate` only when metadata validation fails;** other build failures, such as a provider with no registered factory, no longer get that hint.
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 
 Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`

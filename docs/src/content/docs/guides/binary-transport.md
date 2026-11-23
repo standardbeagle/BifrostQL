@@ -133,8 +133,8 @@ Each request also gets its own `HttpContext`, and that is the one your
 `IBifrostAuthContextFactory`, grant resolver, hooks and `IHttpContextAccessor` see. It is a copy
 of the upgrade request, taken once when the connection opens: method, path, query string,
 headers, connection addresses, client certificate, TLS handshake (`ITlsHandshakeFeature`),
-trace identifier, endpoint (`GetEndpoint()`), route values (each request gets its own copy, so
-a mount at `/{tenant}/bifrost-ws` reads `RouteValues["tenant"]`), and a shallow copy of
+trace identifier, endpoint (`GetEndpoint()`), route values (each request gets its own copy; `UseBifrostBinary` mounts on a path prefix, not
+a route template, so they hold only what middleware before the mount set), and a shallow copy of
 `Items`. Its `RequestServices` is the request's scope, and its `User` is the connection's
 principal, refreshed when the local session check reissues it. `Items` is a new dictionary per
 request, so a key one request adds or replaces is not seen by the next, but the values are the

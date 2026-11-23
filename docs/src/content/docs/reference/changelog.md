@@ -41,7 +41,7 @@ On `main` after v0.4.31; not yet on NuGet.
 - **Binary WebSocket transport: concurrent requests on one connection no longer race on the shared upgrade `HttpContext`.** On a mount with no auth middleware the first read of `User` installed a feature concurrently, which could fail a request with "Malformed or unprocessable frame" and close the connection. Each message now gets its own `HttpContext`, a copy of the upgrade request taken when the connection opens; that copy is what `IHttpContextAccessor`, auth-context factories and hooks see. `Items` written during one message no longer carry over to the next.
 - **Model-load metadata validation throws the new `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
 - **An `enum:` value column that does not exist is caught at model load** with the other config errors, and `bifrost schema` and `export` point at `config-validate` for it, instead of failing later in the schema build.
-- **A binary WebSocket message releases its DI scope before the response is sent,** so scoped services (database connections, unit-of-work handles) no longer stay alive while a slow client acknowledges the frame.
+- **A binary WebSocket message releases its DI scope before the response is sent,** while `IHttpContextAccessor` still answers the message, so scoped services (database connections, unit-of-work handles) no longer stay alive while a slow client acknowledges the frame.
 
 ## 0.4.31 — 2026-11-22 (async auth and filter operators)
 

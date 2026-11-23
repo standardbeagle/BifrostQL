@@ -405,7 +405,7 @@ var policy = await policyGates.GetAsync(userContext, http.RequestAborted);
 
 The gate answers for the identity the context holds when you call `GetAsync`: its user id, roles
 and permissions are read at the call, so a change you make to the dictionary afterwards does not
-change what that gate answers. Calls with the same identity share one gate; a call after you
+change what that gate answers. Consecutive calls with the same identity share one gate (the accessor holds only its latest build); a call after you
 changed the identity (say, you removed a permission) gets a new gate for the new contents, never
 the earlier one. An empty context gets the gate that refuses everything.
 

@@ -52,7 +52,6 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`MapBifrostGrpc()` is replaced by `await app.MapBifrostGrpcAsync()`,** which awaits the model load before mapping instead of blocking a thread at startup. A host that mapped inside a synchronous `Configure` callback moves to minimal hosting.
 - **`PrometheusScrapeScopeResolver.ResolveScope` is now `ResolveScopeAsync`** and awaits the host auth factory's async projection.
 - **An explicit `--config` path that names no file is refused** (`Config file not found: <path>`) by `serve`, `doctor`, `watch`, `schema`, `export`, `test` and `config-generate`; it used to be ignored silently.
-- **Model-load metadata validation throws `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
 
 ### Fixed — async auth and identity projection
 
@@ -68,10 +67,11 @@ On `main` after v0.4.30; not yet on NuGet.
 - **`bifrost doctor` refuses every config file `serve` and `config-validate` refuse,** checks `connectionStrings` even when `--connection-string` is given, and reports a file with no `connectionStrings.bifrost` with serve's message. It used to report "All checks passed" for a file serve then refused.
 - **`bifrost watch`, `schema`, `export`, `test` and `config-generate` read `--config`.** They accepted the flag and ignored it; they now take `connectionStrings.bifrost` from the file when `--connection-string` is absent and refuse a file serve refuses.
 - **`bifrost schema` and `export` build the model with the config file's metadata rules** through serve's own model build, so `schema --config` prints the schema `serve` would serve; a rule the database cannot satisfy is refused with exit 1 and the validator's message, pointing to `bifrost config-validate`. `bifrost config-generate` reads the database without the file's rules, so it bootstraps a fresh database and still detects tables the file hides.
-
 - **`IPolicyGateAccessor.GetAsync(userContext, ct)` builds the gate from a context the endpoint already projected,** so the pre-flight gate and the write answer for one identity and the grant resolver runs once per request.
 - **`bifrost schema` and `export` point at `config-validate` only when metadata validation fails;** other build failures, such as a provider with no registered factory, no longer get that hint.
 - **Binary WebSocket transport: concurrent requests on one connection no longer race on the shared upgrade `HttpContext`.** On a mount with no auth middleware the first read of `User` installed a feature concurrently, which could fail a request with "Malformed or unprocessable frame" and close the connection. Each message now gets its own `HttpContext`, a copy of the upgrade request taken when the connection opens; that copy is what `IHttpContextAccessor`, auth-context factories and hooks see. `Items` written during one message no longer carry over to the next.
+- **Model-load metadata validation throws the new `ModelConfigValidationException`,** which derives from `InvalidOperationException`, so existing catches still work.
+
 ## 0.4.30 — 2026-11-22 (link keys and operation-id reads)
 
 Tag `v0.4.30` · NuGet `0.4.831` · npm `@bifrostql/react` and `@bifrostql/types` unchanged at `0.4.1`

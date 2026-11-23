@@ -1,4 +1,6 @@
 using System.Text;
+using BifrostQL.Core.Modules;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.SavedObjects;
 using Microsoft.AspNetCore.Http;
 
@@ -36,6 +38,14 @@ namespace BifrostQL.Server
         /// buffered, so the definition cap is not the first bound a request meets.
         /// </summary>
         public int MaxRequestBodyBytes { get; set; } = 2 * SavedObjectJson.DefaultMaxDefinitionBytes;
+
+        /// <summary>
+        /// The registered GraphQL endpoint path whose model names the tenant claim
+        /// (<c>tenant-context-key</c>) the owner partition is keyed by, and whose auth requirement
+        /// the mount inherits. Null selects the single registered endpoint; with several
+        /// registered and none named, a request with an identity fails rather than guess.
+        /// </summary>
+        public string? GraphQlEndpoint { get; set; }
     }
 
     /// <summary>
@@ -104,7 +114,7 @@ namespace BifrostQL.Server
             // would merge every such caller into one bucket. The anonymous partition is reachable
             // only when the mount does not require auth (an anonymous endpoint, or RequireAuth=false).
             var owner = outcome == BifrostIdentityOutcome.Projected
-                ? SavedObjectOwner.FromUserContext(userContext)
+                ? SavedObjectOwner.FromUserContext(userContext, await ResolveTenantContextKeyAsync(context))
                 : SavedObjectOwner.Anonymous;
             if (owner == null)
             {
@@ -142,6 +152,23 @@ namespace BifrostQL.Server
                 await WriteError(context, StatusCodes.Status413PayloadTooLarge,
                     $"The request body exceeds the {_options.MaxRequestBodyBytes}-byte limit.");
             }
+        }
+
+        /// <summary>
+        /// The tenant claim key the owner partition is keyed by: the served model's
+        /// <c>tenant-context-key</c>, through the same resolver the tenant filter scopes rows by,
+        /// so a deployment that renames the key (<c>org_id</c>) partitions saved objects by the
+        /// claim it isolates data by. A registered data path whose model cannot be resolved throws.
+        /// A host with no Bifrost data path at all (no <see cref="IQueryIntentExecutor"/>) has no
+        /// model to carry a <c>tenant-context-key</c>, so the key is the one every model defaults
+        /// to.
+        /// </summary>
+        private async Task<string> ResolveTenantContextKeyAsync(HttpContext context)
+        {
+            var reads = context.RequestServices.GetService(typeof(IQueryIntentExecutor)) as IQueryIntentExecutor;
+            if (reads is null)
+                return TenantFilterTransformer.DefaultTenantContextKey;
+            return TenantFilterTransformer.ResolveTenantContextKey(await reads.GetModelAsync(_options.GraphQlEndpoint));
         }
 
         private async Task DispatchAsync(HttpContext context, ISavedObjectStore store, string owner, string[] segments)

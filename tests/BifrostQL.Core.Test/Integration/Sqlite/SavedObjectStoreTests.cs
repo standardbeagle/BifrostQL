@@ -57,9 +57,9 @@ public sealed class SavedObjectStoreTests : IDisposable
     // distinct projected identities. Every single-owner test below would pass against a store that
     // ignored the owner entirely, so isolation needs a SECOND owner to be evidence of anything.
     private static readonly string Alice = SavedObjectOwner.FromUserContext(
-        new Dictionary<string, object?> { ["user_id"] = "alice" })!;
+        new Dictionary<string, object?> { ["user_id"] = "alice" }, "tenant_id")!;
     private static readonly string Bob = SavedObjectOwner.FromUserContext(
-        new Dictionary<string, object?> { ["user_id"] = "bob" })!;
+        new Dictionary<string, object?> { ["user_id"] = "bob" }, "tenant_id")!;
 
     private static SavedObject Obj(SavedObjectType type, string id, string name, int version, string definitionJson = """{"a":1}""")
         => new()
@@ -309,7 +309,7 @@ public sealed class SavedObjectStoreTests : IDisposable
         {
             var ctx = new Dictionary<string, object?> { ["user_id"] = user };
             if (tenant != null) ctx["tenant_id"] = tenant;
-            return SavedObjectOwner.FromUserContext(ctx)!;
+            return SavedObjectOwner.FromUserContext(ctx, "tenant_id")!;
         }
 
         Owner("alice").Should().NotBe(Owner("bob"));
@@ -324,10 +324,10 @@ public sealed class SavedObjectStoreTests : IDisposable
         Owner("alice").Should().NotBe(SavedObjectOwner.Anonymous);
 
         // No identity to partition by is a REFUSAL, never a fallback to a shared owner.
-        SavedObjectOwner.FromUserContext(new Dictionary<string, object?>()).Should().BeNull();
+        SavedObjectOwner.FromUserContext(new Dictionary<string, object?>(), "tenant_id").Should().BeNull();
         SavedObjectOwner.FromUserContext(
-            new Dictionary<string, object?> { ["user_id"] = "  " }).Should().BeNull();
-        SavedObjectOwner.FromUserContext(null).Should().BeNull();
+            new Dictionary<string, object?> { ["user_id"] = "  " }, "tenant_id").Should().BeNull();
+        SavedObjectOwner.FromUserContext(null, "tenant_id").Should().BeNull();
     }
 
     [Theory]

@@ -35,10 +35,11 @@ namespace BifrostQL.Server
             ArgumentNullException.ThrowIfNull(app);
             var options = new BifrostSavedObjectsOptions();
             configure?.Invoke(options);
-            // Saved objects belong to no single endpoint: a null path resolves to the single
-            // registered endpoint's requirement, and fails closed with none or several.
+            // The endpoint whose model keys the owner partition also supplies the requirement: a
+            // null path resolves to the single registered endpoint's, and fails closed with none
+            // or several.
             var requiresAuth = options.RequireAuth
-                ?? MountAuthRequirement.Resolve(app.ApplicationServices, endpointPath: null);
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, options.GraphQlEndpoint);
             if (options.Enabled)
                 app.UseMiddleware<BifrostSavedObjectsMiddleware>(options, requiresAuth);
             return app;

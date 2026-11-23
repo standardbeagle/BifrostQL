@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 
 namespace BifrostQL.Core.SavedObjects;
 
@@ -42,14 +43,20 @@ public static class SavedObjectOwner
     /// never fall back to <see cref="Anonymous"/> or to an unscoped store, which would put every
     /// such caller into one shared bucket.
     ///
-    /// <para>Partitions by the canonical <c>user_id</c> claim, plus <c>tenant_id</c> when the
-    /// identity carries one so two tenants whose providers happen to issue the same subject stay
-    /// separate. <c>user_id</c> is the fixed key <c>IdentityContextMapper</c> always writes; the
-    /// tenant key is configurable per model, so a deployment that renames it still gets correct
-    /// per-USER isolation and merely loses the extra tenant separation.</para>
+    /// <para>Partitions by the canonical <c>user_id</c> claim, plus the tenant under
+    /// <paramref name="tenantContextKey"/> when the identity carries one, so two tenants whose
+    /// providers happen to issue the same subject stay separate. <c>user_id</c> is the fixed key
+    /// <c>IdentityContextMapper</c> always writes. The tenant key is the model's
+    /// <c>tenant-context-key</c>, resolved by the caller with
+    /// <see cref="TenantFilterTransformer.ResolveTenantContextKey"/>: the claim the tenant filter
+    /// scopes rows by. Reading the fixed default key instead put two tenants of a deployment that
+    /// renamed it (<c>org_id</c>) into one partition whenever their subjects matched. The tenant
+    /// is read with <see cref="TenantFilterTransformer.ReadTenantValue(IDictionary{string, object?}, string)"/>,
+    /// so a raw one-element claim array is its single value and a multi-valued claim is refused.</para>
     /// </summary>
-    public static string? FromUserContext(IDictionary<string, object?>? userContext)
+    public static string? FromUserContext(IDictionary<string, object?>? userContext, string tenantContextKey)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantContextKey);
         if (userContext is null)
             return null;
 
@@ -57,7 +64,9 @@ public static class SavedObjectOwner
         if (user is null)
             return null;
 
-        var tenant = Claim(userContext, MetadataKeys.Auth.DefaultTenantContextKey);
+        var tenant = TenantFilterTransformer.ReadTenantValue(userContext, tenantContextKey);
+        if (string.IsNullOrWhiteSpace(tenant))
+            tenant = null;
 
         // Length-prefixed composition: "u" and "t" values cannot be rearranged into each other,
         // so no two distinct (tenant, user) pairs hash to the same token.

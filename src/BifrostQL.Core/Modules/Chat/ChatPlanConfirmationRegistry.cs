@@ -173,23 +173,27 @@ namespace BifrostQL.Core.Modules.Chat
 
         /// <summary>
         /// The identity a proposal is bound to: the caller's tenant + user id from the
-        /// auth context (the keys <c>IdentityContextMapper</c> stamps for every
-        /// authenticated transport). An auth context with neither is an anonymous or
+        /// auth context. <paramref name="tenantContextKey"/> is the model's
+        /// <c>tenant-context-key</c>, resolved with
+        /// <see cref="TenantFilterTransformer.ResolveTenantContextKey"/>: the claim the
+        /// tenant filter scopes rows by. Reading the fixed default key instead bound two
+        /// tenants of a deployment that renamed it (<c>org_id</c>) to one identity whenever
+        /// their subjects matched. An auth context with neither is an anonymous or
         /// non-standard identity — fail fast rather than gate a write on nothing.
         /// </summary>
-        public static string RequireIdentityKey(IDictionary<string, object?> authContext)
+        public static string RequireIdentityKey(IDictionary<string, object?> authContext, string tenantContextKey)
         {
             if (authContext is null)
                 throw new ArgumentNullException(nameof(authContext));
+            ArgumentException.ThrowIfNullOrWhiteSpace(tenantContextKey);
 
-            authContext.TryGetValue(MetadataKeys.Auth.DefaultTenantContextKey, out var tenant);
             authContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var user);
-            var tenantKey = Convert.ToString(tenant, CultureInfo.InvariantCulture);
+            var tenantKey = TenantFilterTransformer.ReadTenantValue(authContext, tenantContextKey);
             var userKey = Convert.ToString(user, CultureInfo.InvariantCulture);
             if (string.IsNullOrWhiteSpace(tenantKey) && string.IsNullOrWhiteSpace(userKey))
                 throw new InvalidOperationException(
                     "A plan confirmation requires an authenticated identity " +
-                    $"('{MetadataKeys.Auth.DefaultTenantContextKey}'/'{MetadataKeys.Auth.DefaultUserIdContextKey}' " +
+                    $"('{tenantContextKey}'/'{MetadataKeys.Auth.DefaultUserIdContextKey}' " +
                     "in the auth context); refusing to gate a write on an anonymous caller.");
             return $"{tenantKey}|{userKey}";
         }

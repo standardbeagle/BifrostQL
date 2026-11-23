@@ -104,18 +104,45 @@ public class ChatPlanConfirmationRegistryTests
         {
             ["tenant_id"] = "t-9",
             ["user_id"] = "u-3",
-        }).Should().Be("t-9|u-3");
+        }, "tenant_id").Should().Be("t-9|u-3");
 
         // Either half suffices (single-tenant deployments have no tenant claim) …
         ChatPlanConfirmationRegistry.RequireIdentityKey(new Dictionary<string, object?>
         {
             ["user_id"] = "u-3",
-        }).Should().Be("|u-3");
+        }, "tenant_id").Should().Be("|u-3");
 
         // … but an anonymous context cannot gate a write.
         ((Action)(() => ChatPlanConfirmationRegistry.RequireIdentityKey(
-                new Dictionary<string, object?>())))
+                new Dictionary<string, object?>(), "tenant_id")))
             .Should().Throw<InvalidOperationException>().WithMessage("*anonymous*");
+    }
+
+    [Fact]
+    public void IdentityKey_SeparatesTenants_UnderTheModelsRenamedTenantKey()
+    {
+        // tenant-context-key: org_id, the tenant only in org_id (a raw principal claim lands as a
+        // one-element string[]). Two orgs whose IdPs issue the same subject must not share one
+        // binding, or one org's user confirms the other org's parked write.
+        IDictionary<string, object?> Caller(string org) => new Dictionary<string, object?>
+        {
+            ["user_id"] = "same-subject",
+            ["org_id"] = new[] { org },
+        };
+
+        var acme = ChatPlanConfirmationRegistry.RequireIdentityKey(Caller("acme"), "org_id");
+        var globex = ChatPlanConfirmationRegistry.RequireIdentityKey(Caller("globex"), "org_id");
+
+        acme.Should().NotBe(globex, "the binding is keyed by the model's tenant claim");
+        acme.Should().Be("acme|same-subject");
+
+        // The registry refuses the other org's resolve end to end.
+        var registry = new ChatPlanConfirmationRegistry();
+        var pending = registry.Register(acme, "42", LongTimeout, CancellationToken.None);
+        registry.TryResolve(pending.ConfirmationId, globex, "42", new ChatPlanDecision(true, null))
+            .Should().BeFalse("another org's identity cannot resolve the proposal");
+        registry.TryResolve(pending.ConfirmationId, acme, "42", new ChatPlanDecision(true, null))
+            .Should().BeTrue("control: the proposing identity resolves it");
     }
 
     [Fact]

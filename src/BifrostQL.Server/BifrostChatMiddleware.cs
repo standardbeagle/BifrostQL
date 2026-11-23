@@ -675,9 +675,13 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // The identity is keyed by the same model's tenant claim the plan connector bound the
+            // proposal under.
+            var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
             var resolved = _confirmations.TryResolve(
                 confirmationId,
-                ChatPlanConfirmationRegistry.RequireIdentityKey(userContext),
+                ChatPlanConfirmationRegistry.RequireIdentityKey(
+                    userContext, TenantFilterTransformer.ResolveTenantContextKey(model)),
                 ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId),
                 new ChatPlanDecision(approve, body.Reason));
             if (!resolved)

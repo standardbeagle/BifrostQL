@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.SavedObjects;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
@@ -29,11 +30,13 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
     private const string ClaimsHeader = "X-Test-Claims";
 
     private string _dbPath = null!;
+    private string _savedObjectsDir = null!;
     private IHost? _host;
 
     public async Task InitializeAsync()
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"raw-claim-tenant-{Guid.NewGuid():N}.db");
+        _savedObjectsDir = Path.Combine(Path.GetTempPath(), $"raw-claim-saved-{Guid.NewGuid():N}");
         DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
         await ExecAsync(
             "CREATE TABLE widgets (id INTEGER PRIMARY KEY, org TEXT NOT NULL, name TEXT NULL, version INTEGER NULL DEFAULT 1);" +
@@ -59,7 +62,25 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
         _host?.Dispose();
         SqliteConnection.ClearAllPools();
         if (File.Exists(_dbPath)) File.Delete(_dbPath);
+        if (Directory.Exists(_savedObjectsDir)) Directory.Delete(_savedObjectsDir, recursive: true);
         await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task SavedObject_IsPartitionedByTheOrg_WhenTwoOrgsShareASubject()
+    {
+        // Same subject from two orgs' IdPs. The owner partition used to read the fixed tenant_id
+        // key, absent here, so both orgs hashed to one owner and globex read acme's object.
+        using var put = await SendAsync(HttpMethod.Put, "/_saved-objects/query/q1", Member("same-sub", "acme"),
+            """{"id":"q1","type":"query","name":"acme-query","definition":{},"version":0}""");
+        put.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+
+        using var globex = await SendAsync(HttpMethod.Get, "/_saved-objects/query/q1", Member("same-sub", "globex"));
+        using var acme = await SendAsync(HttpMethod.Get, "/_saved-objects/query/q1", Member("same-sub", "acme"));
+
+        globex.StatusCode.Should().Be(System.Net.HttpStatusCode.NotFound, "another org's saved object is not in its partition");
+        acme.StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "control: the owning org reads it");
+        (await acme.Content.ReadAsStringAsync()).Should().Contain("acme-query");
     }
 
     [Fact]
@@ -274,6 +295,7 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
                     .BindConnectionString($"Data Source={_dbPath}")
                     .BindProvider("sqlite"));
                 services.AddBifrostEngine();
+                services.AddBifrostSavedObjects(new FileSavedObjectStore(_savedObjectsDir));
                 if (authContextFactory is not null)
                     services.AddSingleton(authContextFactory);
             });
@@ -290,6 +312,7 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
                     return next(context);
                 });
                 app.UseBifrostQL();
+                app.UseBifrostSavedObjects(o => o.RequireAuth = true);
             });
         }).StartAsync();
     }
@@ -304,6 +327,16 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
             principal.Claims.Select(c => new[] { c.Type, c.Value }).ToArray())));
         using var response = await _host!.GetTestClient().SendAsync(request);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, ClaimsPrincipal principal, string? json = null)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (json is not null)
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        request.Headers.Add(ClaimsHeader, Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(
+            principal.Claims.Select(c => new[] { c.Type, c.Value }).ToArray())));
+        return await _host!.GetTestClient().SendAsync(request);
     }
 
     private static IReadOnlyList<string> Errors(JsonDocument reply)

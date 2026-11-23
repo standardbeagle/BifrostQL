@@ -211,7 +211,7 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
         };
 
     private static string IdentityOf(int tenantId) =>
-        ChatPlanConfirmationRegistry.RequireIdentityKey(Caller(tenantId));
+        ChatPlanConfirmationRegistry.RequireIdentityKey(Caller(tenantId), "tenant_id");
 
     private async Task<ChatToolResult> ProposeAsync(
         string toolName, string inputJson, IDictionary<string, object?>? caller = null,

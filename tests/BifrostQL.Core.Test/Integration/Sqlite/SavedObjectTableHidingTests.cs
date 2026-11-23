@@ -37,7 +37,7 @@ public sealed class SavedObjectTableHidingTests : IDisposable
             await cmd.ExecuteNonQueryAsync();
 
         var factory = new SqliteDbConnFactory(conn);
-        var owner = SavedObjectOwner.FromUserContext(new Dictionary<string, object?> { ["user_id"] = "alice" })!;
+        var owner = SavedObjectOwner.FromUserContext(new Dictionary<string, object?> { ["user_id"] = "alice" }, "tenant_id")!;
         // Provision both tables through the production store, so the fixture carries the exact
         // names and shape the store creates.
         await new DbSavedObjectStore(factory).ListAsync(owner, null);

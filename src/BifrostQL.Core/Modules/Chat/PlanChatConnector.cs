@@ -123,7 +123,8 @@ namespace BifrostQL.Core.Modules.Chat
 
             // Identity + conversation binding BEFORE registering anything: a transport
             // that cannot bind them cannot host plan tools (configuration fault).
-            var identityKey = ChatPlanConfirmationRegistry.RequireIdentityKey(authContext);
+            var identityKey = ChatPlanConfirmationRegistry.RequireIdentityKey(
+                authContext, TenantFilterTransformer.ResolveTenantContextKey(model));
             var conversationKey = ChatPlanConfirmationRegistry.RequireConversationKey(authContext);
 
             var pending = _confirmations.Register(

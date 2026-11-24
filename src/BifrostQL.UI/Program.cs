@@ -62,7 +62,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     if (connectionString != null)
         currentProvider = DbConnFactoryResolver.DetectProvider(connectionString);
 
-    var bindAddress = expose ? "0.0.0.0" : "localhost";
+    var bindAddress = expose ? "0.0.0.0" : "127.0.0.1";
     var serverUrl = $"http://{bindAddress}:{port}";
     var localUrl = $"http://localhost:{port}";
 

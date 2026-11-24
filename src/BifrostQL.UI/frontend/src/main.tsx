@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import Editor from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
@@ -25,7 +25,8 @@ const API_QUICKSTART = '/api/database/create-quickstart';
 type AppView = 'welcome' | 'quickstart' | 'provider-select' | 'connect' | 'editor';
 
 function App() {
-  const [, setConnectionState] = useState<ConnectionState>('idle');
+  const [_connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>('welcome');
   const [recentConnections, setRecentConnections] = useState<ConnectionInfo[]>(() => loadRecentConnections());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
@@ -33,11 +34,24 @@ function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState('');
 
+  // Health check on mount — surface backend unavailability immediately
+  useEffect(() => {
+    fetch('/api/health')
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+      })
+      .catch(() => {
+        setErrorMessage('Backend server is not reachable. The BifrostQL server may have crashed or failed to start.');
+        setConnectionState('error');
+      });
+  }, []);
+
   const graphqlUri = `${window.location.origin}/graphql`;
 
   const handleTestConnection = useCallback(async (connectionString: string): Promise<boolean> => {
     try {
       setConnectionState('testing');
+      setErrorMessage(null);
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,7 +62,11 @@ function App() {
         throw new Error(result.error || 'Connection test failed');
       }
       return result.success;
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Connection test failed';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
       return false;
     } finally {
       setConnectionState('idle');
@@ -58,6 +76,7 @@ function App() {
   const handleConnect = useCallback(async (connectionString: string, connectionName: string) => {
     try {
       setConnectionState('connecting');
+      setErrorMessage(null);
 
       const response = await fetch(API_TEST_CONNECTION, {
         method: 'POST',
@@ -98,8 +117,12 @@ function App() {
 
       setCurrentView('editor');
       setConnectionState('connected');
-    } catch {
+    } catch (err) {
       setConnectionState('error');
+      const msg = err instanceof Error ? err.message : 'Connection failed';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
     }
   }, [recentConnections, selectedProvider]);
 
@@ -216,8 +239,12 @@ function App() {
         setCurrentView('editor');
         setConnectionState('connected');
       }
-    } catch {
+    } catch (err) {
       setConnectionState('error');
+      const msg = err instanceof Error ? err.message : 'Failed to create quickstart database';
+      setErrorMessage(msg.includes('Failed to fetch')
+        ? 'Cannot reach the backend server. It may have crashed or failed to start.'
+        : msg);
     } finally {
       setIsLaunching(false);
       setLaunchProgress('');
@@ -225,6 +252,7 @@ function App() {
   }, [recentConnections]);
 
   const handleBack = useCallback(() => {
+    setErrorMessage(null);
     switch (currentView) {
       case 'quickstart':
       case 'provider-select':
@@ -245,9 +273,24 @@ function App() {
     }
   }, [currentView]);
 
+  const errorBanner = errorMessage && (
+    <div className="bifrost-error-banner" role="alert">
+      <span className="bifrost-error-banner__icon">!</span>
+      <span className="bifrost-error-banner__message">{errorMessage}</span>
+      <button
+        className="bifrost-error-banner__dismiss"
+        onClick={() => { setErrorMessage(null); setConnectionState('idle'); }}
+        aria-label="Dismiss error"
+      >
+        &times;
+      </button>
+    </div>
+  );
+
   if (currentView === 'quickstart') {
     return (
       <div className="bifrost-connection-container">
+        {errorBanner}
         <QuickStart
           onLaunch={handleQuickStartLaunch}
           onBack={handleBack}
@@ -261,6 +304,7 @@ function App() {
   if (currentView === 'provider-select') {
     return (
       <div className="bifrost-connection-container">
+        {errorBanner}
         <ProviderSelect
           onProviderSelect={handleProviderSelect}
           onBack={handleBack}
@@ -272,6 +316,7 @@ function App() {
   if (currentView === 'connect' && selectedProvider) {
     return (
       <div className="bifrost-connection-container">
+        {errorBanner}
         <ConnectionForm
           provider={selectedProvider}
           onConnect={handleConnect}
@@ -308,6 +353,7 @@ function App() {
   // Welcome view (default)
   return (
     <div className="bifrost-welcome-container">
+      {errorBanner}
       <WelcomePanel
         onConnectClick={() => setCurrentView('provider-select')}
         onCreateTestDatabase={handleTryItNow}

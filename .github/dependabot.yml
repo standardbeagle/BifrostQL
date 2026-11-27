@@ -31,6 +31,16 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "System.IO.Hashing"
         update-types: ["version-update:semver-major"]
+      # Npgsql's major follows .NET too: 11.0.0 ships a net10.0 build only,
+      # and BifrostQL.Ngsql targets net8.0/net9.0/net10.0 (#70).
+      - dependency-name: "Npgsql"
+        update-types: ["version-update:semver-major"]
+      # AWSSDK.Core 4.1 depends on System.IO.Hashing 11.0.0 for every TFM,
+      # which does not support net8.0/net9.0 (the reason it is ignored
+      # above) and collides with the 10.x pin in BifrostQL.Server. Hold the
+      # SDK on 4.0.x until AWS ships a 4.1 that keeps 10.x for older TFMs.
+      - dependency-name: "AWSSDK.*"
+        versions: [">= 4.1.0"]
 
   # GitHub Actions used by the workflows below.
   - package-ecosystem: "github-actions"

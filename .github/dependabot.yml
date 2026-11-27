@@ -41,6 +41,13 @@ updates:
       # SDK on 4.0.x until AWS ships a 4.1 that keeps 10.x for older TFMs.
       - dependency-name: "AWSSDK.*"
         versions: [">= 4.1.0"]
+      # Microsoft.Data.SqlClient 8 ships runnable builds for net10.0 and
+      # net462 only; its netstandard2.0 build throws
+      # PlatformNotSupportedException ("not supported on this platform"),
+      # which is what BifrostQL.SqlServer's net8.0/net9.0 targets resolve.
+      # 132 of 161 SQL Server integration tests failed on each (#75).
+      - dependency-name: "Microsoft.Data.SqlClient"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by the workflows below.
   - package-ecosystem: "github-actions"

@@ -8,7 +8,7 @@ using FluentAssertions;
 namespace BifrostQL.Integration.Test;
 
 /// <summary>
-/// The provisioning SQL in <c>docs/src/content/docs/guides/s3.md</c> ("Indexing the object
+/// The provisioning SQL in <c>site/src/content/docs/guides/s3.md</c> ("Indexing the object
 /// key") makes the engine serve a listing seek from the index instead of computing the key
 /// for every row. The seek is the query <c>S3Listing</c> sends: the table's key and file
 /// columns, <c>file IS NOT NULL</c>, an object-key window resuming after a key, and a page

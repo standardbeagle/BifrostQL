@@ -30,7 +30,7 @@ namespace BifrostQL.Server.Test;
 ///   _dbSchema                              member vs officer differ as the README shows
 ///
 /// The two doc-truth facts read <c>samples/HostedSpa/README.md</c> and
-/// <c>docs/src/content/docs/guides/authorization.md</c> off disk: the README's discovery
+/// <c>site/src/content/docs/guides/authorization.md</c> off disk: the README's discovery
 /// query must execute, and every metadata fragment the authorization guide's
 /// "From application guards to metadata" table quotes must appear verbatim in the
 /// sample's metadata.
@@ -208,7 +208,7 @@ public sealed class HostedSpaPolicyTests
     public void AuthorizationGuideTable_EveryQuotedMetadataFragment_IsInTheSampleMetadata()
     {
         var guide = File.ReadAllText(Path.Combine(
-            RepoRoot(), "docs", "src", "content", "docs", "guides", "authorization.md"));
+            RepoRoot(), "site", "src", "content", "docs", "guides", "authorization.md"));
         var section = Regex.Match(guide,
             "^## From application guards to metadata\\s*$(?<body>.*?)(?=^## )",
             RegexOptions.Multiline | RegexOptions.Singleline);

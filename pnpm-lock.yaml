@@ -34,7 +34,7 @@ importers:
         specifier: ^8.20.0
         version: 8.20.0
 
-  docs:
+  site:
     dependencies:
       '@astrojs/starlight':
         specifier: ^0.42.10

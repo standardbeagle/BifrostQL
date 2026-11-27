@@ -8,7 +8,7 @@ namespace BifrostQL.Samples.HostedSpa;
 /// <summary>
 /// Sidecar workflow endpoints for the Membership Manager domain — the
 /// "endpoints half" of the workflow-mutation convention described in
-/// <c>docs/src/content/docs/guides/workflow-mutations.md</c>.
+/// <c>site/src/content/docs/guides/workflow-mutations.md</c>.
 ///
 /// Each endpoint is a single named operation that orchestrates several Bifrost
 /// mutations server-side through <see cref="IBifrostWorkflowExecutor"/>. Every

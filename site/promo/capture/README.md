@@ -1,6 +1,6 @@
 # Promo capture tooling
 
-The scripts that produced the videos in `docs/promo`. They are here so the
+The scripts that produced the videos in `site/promo`. They are here so the
 footage can be regenerated rather than trusted — every claim in
 `../social-copy.md` is meant to be re-checkable against a running stack.
 
@@ -19,7 +19,7 @@ runner with `BIFROST_CAPTURE_DIR` pointing at an empty directory:
 
 ```bash
 BIFROST_CAPTURE_DIR=/tmp/bifrost-capture  # capture-ui.js writes <dir>/*.webm
-bash docs/promo/capture/build-video.sh /tmp/bifrost-capture docs/promo
+bash site/promo/capture/build-video.sh /tmp/bifrost-capture site/promo
 ```
 
 If you change the beat timings in `capture-ui.js`, take the `atMs` values it
@@ -35,7 +35,7 @@ columns would be describing something the viewer cannot see.
 
 `protocol-transcript.sh` expects a host exposing GraphQL (:5099), pgwire
 (:55432), RESP (:6399) and OData over one database — see
-`docs/src/content/docs/guides/protocol-adapters.md` for the wiring. It masks the
+`site/src/content/docs/guides/protocol-adapters.md` for the wiring. It masks the
 demo password in the echoed commands but not in what it actually sends, so run
 it against a local rig only.
 

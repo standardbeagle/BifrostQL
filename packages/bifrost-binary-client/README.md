@@ -62,7 +62,7 @@ Mount the WebSocket endpoint in your BifrostQL server with `app.UseBifrostBinary
 
 ## Documentation
 
-Full guide: [BifrostQL Binary Transport Guide](https://dev.standardbeagle.com/BifrostQL/guides/binary-transport/) (also at `docs/src/content/docs/guides/binary-transport.md` in the repo).
+Full guide: [BifrostQL Binary Transport Guide](https://dev.standardbeagle.com/BifrostQL/guides/binary-transport/) (also at `site/src/content/docs/guides/binary-transport.md` in the repo).
 
 ## License
 

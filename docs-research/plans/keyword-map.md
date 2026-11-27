@@ -2,7 +2,7 @@
 
 Status: PHASE 0 OUTPUT (2026-08-17). Input to Phase 1 (`seo-optimizer` per-page
 pass) of `content-marketing-plan-2026-08.md`. Covers all **80** pages under
-`docs/src/content/docs`.
+`site/src/content/docs`.
 
 This file assigns exactly one **primary keyword** per page. No two pages share a
 primary — that is the anti-cannibalization contract. Where a concept page and a

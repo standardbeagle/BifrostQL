@@ -6,7 +6,7 @@ Status: PHASE 0 OUTPUT (2026-08-17). Input to Phases 1–2 of
 Method: feature census from `git log origin/main` (the 154-commit push, back
 through the retention/approval/deferred/feeds/crypto/LDAP epics), `AGENTS.md`,
 and the `src/` tree; docs census from the **80** pages under
-`docs/src/content/docs`. Staleness judged at title/section level by reading the
+`site/src/content/docs`. Staleness judged at title/section level by reading the
 shipping source, per the docs-authority rule — not line by line.
 
 Status values:
@@ -82,8 +82,8 @@ month/year on Postgres and SQLite) are the only two that throw
 
 **Key-rotation content location (verified)**: commit `e4b5a580`
 `docs(crypto): add key-rotation guide` landed **162 lines into
-`docs/src/content/docs/guides/field-encryption.md`** plus one sidebar line in
-`docs/astro.config.mjs`. It does cover the DEK-version-in-ciphertext envelope,
+`site/src/content/docs/guides/field-encryption.md`** plus one sidebar line in
+`site/astro.config.mjs`. It does cover the DEK-version-in-ciphertext envelope,
 version-directed decryption, and the online re-encryption sweep — and the sweep
 description matches
 `src/BifrostQL.Core/Modules/Crypto/CryptoReEncryptionSweep.cs` (routes through
@@ -331,19 +331,19 @@ prerequisite for Phase 2 grounding.
 
 ## 9. Astro / SEO technical baseline (Phase 1 starting state)
 
-Read from `docs/astro.config.mjs`, `docs/package.json`, and `docs/public/`.
+Read from `site/astro.config.mjs`, `site/package.json`, and `site/public/`.
 
 | Item | Current state |
 |---|---|
 | `site` | `https://dev.standardbeagle.com` — set |
 | `base` | `/BifrostQL` — set (every canonical URL must include it) |
 | **Sitemap** | **ABSENT** — `@astrojs/sitemap` is not a dependency and not in `integrations` |
-| **robots.txt** | **ABSENT** — `docs/public/` contains only `favicon.svg` |
+| **robots.txt** | **ABSENT** — `site/public/` contains only `favicon.svg` |
 | **OpenGraph / Twitter card tags** | **ABSENT** — no `head` entries in the Starlight config |
 | **Default meta description** | **ABSENT** — no site-level fallback; pages without `description` emit none |
 | **Canonical URL tags** | Starlight default only; not configured explicitly |
 | **JSON-LD** (`TechArticle` / `HowTo` / `SoftwareApplication`) | **ABSENT** |
-| OG image asset | **ABSENT** — nothing in `docs/public/` but the favicon |
+| OG image asset | **ABSENT** — nothing in `site/public/` but the favicon |
 | Custom components | `Header.astro` override only |
 | Custom CSS | `src/styles/custom.css` |
 | Deps | `@astrojs/starlight ^0.41.5`, `astro ^7.1.5`, `sharp ^0.35.3` |
@@ -374,7 +374,7 @@ descriptions are long enough to be truncated in every SERP — several run past
 
 `guides/approval-workflows`, `guides/deferred-effects`, and
 `guides/developer-guide` exist as pages but have no entry in
-`docs/astro.config.mjs`. They are reachable only by direct URL and accrue no
+`site/astro.config.mjs`. They are reachable only by direct URL and accrue no
 internal link equity. Two of the three are also the two pages with no
 `description`. Fixing the sidebar is a Phase 1 prerequisite.
 

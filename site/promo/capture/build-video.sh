@@ -8,7 +8,7 @@ set -euo pipefail
 # <raw-recording-dir> is where capture-ui.js wrote its .webm.
 RAW="${1:?usage: build-video.sh <raw-recording-dir> [output-dir]}"
 SRC="$(ls "$RAW"/*.webm | head -1)"
-OUT="${2:-docs/promo}"
+OUT="${2:-site/promo}"
 FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
 mkdir -p "$OUT"
 

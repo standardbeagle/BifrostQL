@@ -107,7 +107,7 @@ wp_3_users, wp_3_posts, wp_3_options (site 3)
 
 ## PHP Serialization
 
-WordPress stores serialized PHP data in several columns. The bundle marks those columns with `type: php_serialized` metadata. It does not decode or encode the values: reads return the stored PHP `serialize()` text, and writes store what the client sends. Decode on the client (see the [WordPress guide](src/content/docs/guides/wordpress.md)).
+WordPress stores serialized PHP data in several columns. The bundle marks those columns with `type: php_serialized` metadata. It does not decode or encode the values: reads return the stored PHP `serialize()` text, and writes store what the client sends. Decode on the client (see the [WordPress guide](../site/src/content/docs/guides/wordpress.md)).
 
 ### Affected Columns
 
@@ -367,7 +367,7 @@ dotnet test --filter "FullyQualifiedName~WordPressSchemaBundleTests"
 
 - [App Schema Detection Framework](AppSchemaDetection.md) — Framework overview and architecture
 - [Creating Custom Detectors](CreatingCustomDetectors.md) — Guide for building custom detectors
-- [Application Schema Detection](src/content/docs/concepts/app-schema-detection.md) — Concept documentation
-- [WordPress Database Guide](src/content/docs/guides/wordpress.md) — User guide for WordPress databases
+- [Application Schema Detection](../site/src/content/docs/concepts/app-schema-detection.md) — Concept documentation
+- [WordPress Database Guide](../site/src/content/docs/guides/wordpress.md) — User guide for WordPress databases
 - [EAV Module Documentation](EavModule.md) — Entity-Attribute-Value flattening documentation
 - [File Storage Documentation](file-storage-system.md) — File upload/download documentation

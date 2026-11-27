@@ -108,9 +108,9 @@ The new-front-door checklist is in `.claude/rules/protocol-adapter-security.md`.
 
 - The NuGet version is `0.4.<CI run number>`, not the tag: tag `v0.4.28` shipped as NuGet `0.4.740`.
 - New `CHANGELOG.md` entries go only under the single top `## Unreleased` heading.
-- At tag time, rename that section to `## 0.4.N — <date> (<theme>)` with a ``Tag `v0.4.N` · NuGet `0.4.<run>` `` line, add a row to `## Versions`, and open a fresh `## Unreleased`. A failed publish's changes roll into the next successful tag's section. Mirror all of it in `docs/src/content/docs/reference/changelog.md`.
+- At tag time, rename that section to `## 0.4.N — <date> (<theme>)` with a ``Tag `v0.4.N` · NuGet `0.4.<run>` `` line, add a row to `## Versions`, and open a fresh `## Unreleased`. A failed publish's changes roll into the next successful tag's section. Mirror all of it in `site/src/content/docs/reference/changelog.md`.
 - After a tag, bump the package pins in `templates/bifrost/BifrostQLProject.csproj`.
 
 ## Docs
 
-Canonical user docs: `docs/src/content/docs`. `docs-research` is exploratory and may be stale. When a change retires a mechanism, follow `.claude/rules/steering-docs-follow-mechanism-changes.md`.
+Canonical user docs: `site/src/content/docs`. `docs-research` is exploratory and may be stale. When a change retires a mechanism, follow `.claude/rules/steering-docs-follow-mechanism-changes.md`.

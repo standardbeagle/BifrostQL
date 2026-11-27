@@ -140,7 +140,7 @@ matching `AddOpenIdConnect` client id/secret.
 
 OIDC logins map to the **same** `AppIdentity` (id, email, tenant, roles) `LocalUserStore`
 produces, so the policy engine and tenant filter behave identically — app authorization
-semantics are unchanged. See the [Authentication guide](../../docs/src/content/docs/guides/authentication.md)
+semantics are unchanged. See the [Authentication guide](../../site/src/content/docs/guides/authentication.md)
 for the full onboarding path and the claim-shape parity guarantee.
 
 ## Rebuilding the SPA

@@ -421,7 +421,7 @@ src/BifrostQL.UI/wwwroot/index.html
 /dist/
 
 # Demo-video harness working files (seeded db, tts wavs, raw recordings, logs)
-docs/videos/.work/
+site/videos/.work/
 
 # Local secrets for demo capture (never committed)
 .env.local

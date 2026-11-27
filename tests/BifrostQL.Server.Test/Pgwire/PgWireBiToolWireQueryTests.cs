@@ -20,7 +20,7 @@ namespace BifrostQL.Server.Test.Pgwire
     /// libpq/JDBC information_schema/pg_catalog introspection whose exact per-tool string this
     /// repo cannot verify from source, but whose shape Grafana/Metabase sync and query editors
     /// issue). The end-to-end manual smoke against real Grafana + Metabase is the runbook at
-    /// <c>docs/src/content/docs/guides/pgwire-bi-smoke.md</c>; it is deliberately NOT wired into
+    /// <c>site/src/content/docs/guides/pgwire-bi-smoke.md</c>; it is deliberately NOT wired into
     /// <c>dotnet test</c>.</para>
     /// </summary>
     public sealed class PgWireBiToolWireQueryTests : IAsyncLifetime

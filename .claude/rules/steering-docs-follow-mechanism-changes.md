@@ -2,7 +2,7 @@
 
 A change that removes, renames or moves a mechanism (identifier, option, metadata key, call shape) updates every carrier of the old name in the same commit, or in an adjacent `docs(...)` commit. Report the grep in the commit body. Reviewers rerun it.
 
-- `git grep <old name>` across the whole repo, not just the steering docs. Carriers: `AGENTS.md`, `.claude/rules/`, `docs/`, `README.md`, `SKILLS.md`, `CHANGELOG.md`, `examples/`, `templates/`, shipped `**/*.json` / `**/*.kdl` config, and tests that assert the old shape.
+- `git grep <old name>` across the whole repo, not just the steering docs. Carriers: `AGENTS.md`, `.claude/rules/`, `docs/`, `site/`, `README.md`, `SKILLS.md`, `CHANGELOG.md`, `examples/`, `templates/`, shipped `**/*.json` / `**/*.kdl` config, and tests that assert the old shape.
 - A validated key left in shipped config (`appsettings.json`, templates) is a startup failure, not a stale sentence.
 - Code snippets carry as much weight as prose: readers copy them verbatim.
 - A breaking-change entry names only replacements its audience can reach (public symbols). If nothing public replaces the old one, say so and name the seam.

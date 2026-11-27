@@ -72,7 +72,7 @@ catalog probes) plus a tenant-scoped data SELECT, each test explicitly
 labeled VERIFIED-REAL (psql `\dt`, which really is exercised) vs
 REPRESENTATIVE (Grafana/Metabase shapes, reproduced not connected) in
 the class docstring. A separate runbook
-(`docs/src/content/docs/guides/pgwire-bi-smoke.md`) documents the actual
+(`site/src/content/docs/guides/pgwire-bi-smoke.md`) documents the actual
 end-to-end manual path and is deliberately NOT wired into `dotnet test`,
 carrying an explicit "do not claim passed unless actually run" note.
 

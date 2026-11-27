@@ -165,7 +165,7 @@ namespace BifrostQL.Server.Test
         public async Task CustomAdapter_PublicAsyncProjection_WithAsyncResolver_YieldsTheGrants()
         {
             // A third-party IProtocolAdapter projects its carrier through the public contract
-            // (docs/src/content/docs/guides/protocol-adapters.md). With a resolver registered the
+            // (site/src/content/docs/guides/protocol-adapters.md). With a resolver registered the
             // async projection delivers the grants instead of refusing the login.
             var services = new ServiceCollection()
                 .AddBifrostGrantResolver(async (identity, sp, ct) =>

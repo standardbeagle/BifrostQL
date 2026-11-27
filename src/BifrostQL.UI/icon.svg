@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- Exe/installer icon source: docs/public/favicon.svg starburst, white on the
+  <!-- Exe/installer icon source: site/public/favicon.svg starburst, white on the
        frontend accent blue. Regenerate bifrostui.ico from this via
        scripts/build-windows-installer.sh notes (cairosvg + Pillow). -->
   <defs>

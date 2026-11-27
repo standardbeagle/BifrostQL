@@ -43,7 +43,7 @@ Decisions already made:
 
 ## Phase 1 — Docs-site SEO pass (seo-optimizer skill)
 
-Target: every page in `docs/src/content/docs` (~80 pages).
+Target: every page in `site/src/content/docs` (~80 pages).
 
 1. **Technical baseline** (one PR):
    - Astro/Starlight `head` config: default meta description, OpenGraph/Twitter
@@ -99,7 +99,7 @@ merge. dev.to drafts land in `docs-research/devto-drafts/NN-slug.md`.
 
 Adapt `agnt/docs-site/screenshots/` (see its README) to BifrostQL:
 
-1. **Harness** `docs/videos/capture.mjs`: Playwright bundled Chromium →
+1. **Harness** `site/videos/capture.mjs`: Playwright bundled Chromium →
    `src/BifrostQL.Host` running a seeded SQLite schema (one process per
    scene, `scripts/` seed first). Scenes scripted against the real workbench
    UI: connect → schema browse → query → grid grouping → pivot → chart →
@@ -117,7 +117,7 @@ Adapt `agnt/docs-site/screenshots/` (see its README) to BifrostQL:
    `ModeVideo` component). External upload (YouTube) deferred — needs Andy's
    account; when granted, titles/descriptions come from the keyword map.
 
-Acceptance: `node docs/videos/capture.mjs` reproduces every video from a clean
+Acceptance: `node site/videos/capture.mjs` reproduces every video from a clean
 checkout; no hand-recorded footage.
 
 ## Phase 4 — dev.to publication packet

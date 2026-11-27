@@ -5,15 +5,15 @@ real application driven by Playwright's bundled Chromium against a seeded
 database — nothing is hand-recorded, staged against mock data, or edited by
 hand.
 
-Output lands in `docs/public/videos/` as `<scene>.webm` plus a final-frame
+Output lands in `site/public/videos/` as `<scene>.webm` plus a final-frame
 `<scene>-poster.png`, and is embedded through
-`docs/src/components/DemoVideo.astro`.
+`site/src/components/DemoVideo.astro`.
 
 ## Regenerate
 
 ```bash
-node docs/videos/capture.mjs              # every scene
-node docs/videos/capture.mjs workbench-sql # one or more scene ids
+node site/videos/capture.mjs              # every scene
+node site/videos/capture.mjs workbench-sql # one or more scene ids
 ```
 
 The harness builds and starts the apps it needs, drives them, synthesizes the
@@ -58,7 +58,7 @@ Ports 5301 (host) and 5310 (workbench) must be free; override with
    on-screen frame scaled to 960px wide as the poster.
 
 Working files (seeded database, wavs, raw webm, app logs) go to
-`docs/videos/.work/`, which is gitignored. App logs land in
+`site/videos/.work/`, which is gitignored. App logs land in
 `.work/host.log` and `.work/ui.log` — check them first when a scene fails to
 start.
 
@@ -132,7 +132,7 @@ will fail the same way if it is ever requested.)
    wrong number in the script is visible on screen.
 2. Add an `<id>` entry to `scenes` in `capture.mjs` with one beat function per
    narration line.
-3. `node docs/videos/capture.mjs <id>`, check the poster, then embed with
+3. `node site/videos/capture.mjs <id>`, check the poster, then embed with
    `<DemoVideo scene="<id>" title="…" description="…" />`.
 
 Keep the committed total under ~30 MB; the current six scenes are about 17 MB.

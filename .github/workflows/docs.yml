@@ -3,7 +3,7 @@ name: Deploy docs to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: ['docs/**']
+    paths: ['site/**']
   workflow_dispatch:
 
 permissions:
@@ -43,12 +43,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build site
-        run: pnpm --dir docs build
+        run: pnpm --dir site build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: docs/dist
+          path: site/dist
 
   deploy:
     needs: build

@@ -357,5 +357,5 @@ update commits separately from the operation.
   a database function stays reachable only through a table the operation reads or writes
   (a view, or a trigger on a table it writes).
 
-See the [design notes](https://github.com/standardbeagle/BifrostQL/blob/main/docs/superpowers/specs/2026-11-01-server-secured-operations-design.md)
+See the [design notes](https://github.com/standardbeagle/BifrostQL/blob/main/docs/server-secured-operations.md)
 for how this compares with the other extension points.

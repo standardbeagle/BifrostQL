@@ -22,9 +22,9 @@ The GraphQL client and SSE parser are local to this example on purpose — the
 repo intentionally keeps its GraphQL clients separate (see the root
 `AGENTS.md`, "Two Client Stacks").
 
-Endpoint contract: [LLM Chat Endpoints guide](../../docs/src/content/docs/guides/llm-chat.md).
-Metadata contract: [Chat over Your Tables](../../docs/src/content/docs/concepts/chat.md).
-Connector guide: [Chat Connectors](../../docs/src/content/docs/guides/chat-connectors.md).
+Endpoint contract: [LLM Chat Endpoints guide](../../site/src/content/docs/guides/llm-chat.md).
+Metadata contract: [Chat over Your Tables](../../site/src/content/docs/concepts/chat.md).
+Connector guide: [Chat Connectors](../../site/src/content/docs/guides/chat-connectors.md).
 
 ## Backend setup
 
@@ -44,7 +44,7 @@ isolation, add `tenant_id` columns and `tenant-filter: tenant_id` to both
 tables' metadata.
 
 Around the pair, the sample grows three **connector scenarios** (see the
-[Chat Connectors guide](../../docs/src/content/docs/guides/chat-connectors.md)):
+[Chat Connectors guide](../../site/src/content/docs/guides/chat-connectors.md)):
 
 | Table | Connector | Demo |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Server-secured operations: extension review and design
 
-Date: 2026-11-01. Status: implemented on `feat/server-secured-operations`.
+Date: 2026-11-01. Status: implemented.
 
 ## Why
 

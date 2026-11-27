@@ -313,5 +313,5 @@ The builder validates eagerly: an unknown column, an unknown function, or a wron
 whole surface is public (no `InternalsVisibleTo` needed) so an external module assembly can consume
 it. `ISqlDialect.LowerExpression` (implemented by `SqlDialectBase`) is the extension point a
 third-party dialect overrides. See the [Building SQL Expressions
-guide](../../../docs/src/content/docs/guides/expression-builder.md) for the node set, the
+guide](../../../site/src/content/docs/guides/expression-builder.md) for the node set, the
 per-dialect support matrix, and a worked example.

@@ -21,7 +21,7 @@
     "@codemirror/view": "^6.43.15",
     "@standardbeagle/edit-db": "workspace:*",
     "@tanstack/react-query": "^5.108.4",
-    "@uiw/react-codemirror": "^4.25.12",
+    "@uiw/react-codemirror": "^4.25.13",
     "@xyflow/react": "^13.0.3",
     "elkjs": "^0.12.1",
     "graphql": "^17.1.0",
